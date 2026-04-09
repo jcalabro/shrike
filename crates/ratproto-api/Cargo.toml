@@ -1,0 +1,16 @@
+[package]
+name = "ratproto-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Generated AT Protocol API types from Lexicon schemas"
+
+[lints]
+workspace = true
+
+[dependencies]
+ratproto-syntax = { path = "../ratproto-syntax" }
+ratproto-cbor = { path = "../ratproto-cbor" }
+ratproto-xrpc = { path = "../ratproto-xrpc" }
+serde.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "ratproto-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol repository sync and commit verification"
+
+[lints]
+workspace = true
+
+[dependencies]
+ratproto-syntax = { path = "../ratproto-syntax" }
+ratproto-cbor = { path = "../ratproto-cbor" }
+ratproto-mst = { path = "../ratproto-mst" }
+ratproto-repo = { path = "../ratproto-repo" }
+ratproto-car = { path = "../ratproto-car" }
+ratproto-identity = { path = "../ratproto-identity" }
+ratproto-xrpc = { path = "../ratproto-xrpc" }
+ratproto-crypto = { path = "../ratproto-crypto" }
+thiserror.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }

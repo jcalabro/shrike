@@ -1,0 +1,8 @@
+{
+    "packages": [
+        {"prefix": "app.bsky", "module": "app::bsky", "out_dir": "crates/ratproto-api/src/app/bsky"},
+        {"prefix": "com.atproto", "module": "com::atproto", "out_dir": "crates/ratproto-api/src/com/atproto"},
+        {"prefix": "chat.bsky", "module": "chat::bsky", "out_dir": "crates/ratproto-api/src/chat/bsky"},
+        {"prefix": "tools.ozone", "module": "tools::ozone", "out_dir": "crates/ratproto-api/src/tools/ozone"}
+    ]
+}

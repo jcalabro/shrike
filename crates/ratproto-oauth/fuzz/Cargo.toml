@@ -1,0 +1,32 @@
+[package]
+name = "ratproto-oauth-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ratproto-oauth = { path = ".." }
+ratproto-crypto = { path = "../../ratproto-crypto" }
+serde_json = "1"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_parse_as_metadata"
+path = "fuzz_targets/fuzz_parse_as_metadata.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_parse_token_response"
+path = "fuzz_targets/fuzz_parse_token_response.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_dpop_proof"
+path = "fuzz_targets/fuzz_dpop_proof.rs"
+doc = false

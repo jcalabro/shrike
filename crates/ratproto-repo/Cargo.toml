@@ -1,0 +1,24 @@
+[package]
+name = "ratproto-repo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol repository operations — CRUD and signed commits"
+
+[lints]
+workspace = true
+
+[dependencies]
+ratproto-syntax = { path = "../ratproto-syntax" }
+ratproto-cbor = { path = "../ratproto-cbor" }
+ratproto-crypto = { path = "../ratproto-crypto" }
+ratproto-mst = { path = "../ratproto-mst" }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "repo_bench"
+harness = false

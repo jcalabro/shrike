@@ -1,0 +1,33 @@
+[package]
+name = "rat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI tool for interacting with the AT Protocol"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+dirs = "5"
+hickory-resolver = "0.25"
+reqwest = { workspace = true }
+futures = { workspace = true }
+
+ratproto-syntax = { path = "../../crates/ratproto-syntax" }
+ratproto-crypto = { path = "../../crates/ratproto-crypto" }
+ratproto-cbor = { path = "../../crates/ratproto-cbor" }
+ratproto-car = { path = "../../crates/ratproto-car" }
+ratproto-repo = { path = "../../crates/ratproto-repo" }
+ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
+ratproto-identity = { path = "../../crates/ratproto-identity" }
+ratproto-xrpc = { path = "../../crates/ratproto-xrpc" }
+ratproto-streaming = { path = "../../crates/ratproto-streaming" }
+ratproto-api = { path = "../../crates/ratproto-api" }
+ratproto-oauth = { path = "../../crates/ratproto-oauth" }
+axum.workspace = true

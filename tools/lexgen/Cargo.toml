@@ -1,0 +1,15 @@
+[package]
+name = "lexgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Code generator: AT Protocol Lexicon JSON → Rust types"
+
+[lints]
+workspace = true
+
+[dependencies]
+ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
+ratproto-syntax = { path = "../../crates/ratproto-syntax" }
+serde.workspace = true
+serde_json.workspace = true

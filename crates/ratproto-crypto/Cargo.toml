@@ -1,0 +1,21 @@
+[package]
+name = "ratproto-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol cryptography — P-256 and K-256 ECDSA signing"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+p256.workspace = true
+k256.workspace = true
+sha2.workspace = true
+bs58.workspace = true
+rand_core.workspace = true
+zeroize = "1"
+
+[dev-dependencies]
+serde_json.workspace = true
