@@ -45,80 +45,38 @@ impl<E> BatchState<E> {
 // ---------------------------------------------------------------------------
 
 /// Configuration for a streaming client.
+///
+/// Only [`url`](Config::url) is required. All other fields default to `None`,
+/// which means "use the built-in default" (see each field's doc comment).
+///
+/// ```ignore
+/// use ratproto_streaming::{Client, Config};
+///
+/// let client = Client::new(Config {
+///     url: "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos".into(),
+///     cursor: Some(12345),
+///     ..Config::default()
+/// });
+/// ```
+#[derive(Default)]
 pub struct Config {
     /// WebSocket URL (e.g., `"wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"`).
     pub url: String,
     /// Starting cursor (sequence number for firehose, `time_us` for Jetstream).
     pub cursor: Option<i64>,
-    /// Backoff policy for reconnection.
-    pub backoff: BackoffPolicy,
-    /// Maximum WebSocket message size (default 2 MB).
-    pub max_message_size: usize,
+    /// Backoff policy for reconnection. None uses sensible defaults
+    /// (1s initial, 30s max, full jitter).
+    pub backoff: Option<BackoffPolicy>,
+    /// Maximum WebSocket message size. None means 2 MB.
+    pub max_message_size: Option<usize>,
     /// For Jetstream: filter by collections.
     pub collections: Option<Vec<String>>,
     /// For Jetstream: filter by DIDs.
     pub dids: Option<Vec<String>>,
-    /// Maximum number of events per batch (default 50).
-    pub batch_size: usize,
-    /// Maximum time to wait for a full batch before flushing (default 500ms).
-    pub batch_timeout: Duration,
-}
-
-impl Config {
-    /// Create a new configuration for the given WebSocket URL.
-    pub fn new(url: &str) -> Self {
-        Config {
-            url: url.to_string(),
-            cursor: None,
-            backoff: BackoffPolicy::default(),
-            max_message_size: 2 * 1024 * 1024,
-            collections: None,
-            dids: None,
-            batch_size: 50,
-            batch_timeout: Duration::from_millis(500),
-        }
-    }
-
-    /// Create a configuration pre-set for firehose/label streams.
-    pub fn firehose(url: &str) -> Self {
-        Self::new(url)
-    }
-
-    /// Create a configuration pre-set for Jetstream.
-    pub fn jetstream(url: &str) -> Self {
-        Self::new(url)
-    }
-
-    /// Set a starting cursor (sequence number or `time_us` for Jetstream).
-    pub fn with_cursor(mut self, cursor: i64) -> Self {
-        self.cursor = Some(cursor);
-        self
-    }
-
-    /// Set the collections filter (Jetstream `wantedCollections`).
-    pub fn with_collections(mut self, collections: Vec<String>) -> Self {
-        self.collections = Some(collections);
-        self
-    }
-
-    /// Set the DIDs filter (Jetstream `wantedDids`).
-    pub fn with_dids(mut self, dids: Vec<String>) -> Self {
-        self.dids = Some(dids);
-        self
-    }
-
-    /// Set the maximum number of events per batch (default 50).
-    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
-        self.batch_size = batch_size;
-        self
-    }
-
-    /// Set the maximum time to wait for a full batch before flushing
-    /// (default 500ms).
-    pub fn with_batch_timeout(mut self, batch_timeout: Duration) -> Self {
-        self.batch_timeout = batch_timeout;
-        self
-    }
+    /// Maximum number of events per batch. None means 50.
+    pub batch_size: Option<usize>,
+    /// Maximum time to wait for a full batch before flushing. None means 500ms.
+    pub batch_timeout: Option<Duration>,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +96,12 @@ impl Config {
 /// The WebSocket connection is established lazily when [`Client::subscribe`]
 /// or [`Client::jetstream`] is called.
 pub struct Client {
-    config: Config,
+    url: String,
+    collections: Option<Vec<String>>,
+    dids: Option<Vec<String>>,
+    backoff: BackoffPolicy,
+    batch_size: usize,
+    batch_timeout: Duration,
     cursor: Arc<AtomicI64>,
 }
 
@@ -147,7 +110,12 @@ impl Client {
     pub fn new(config: Config) -> Self {
         let cursor_val = config.cursor.unwrap_or(-1);
         Client {
-            config,
+            url: config.url,
+            collections: config.collections,
+            dids: config.dids,
+            backoff: config.backoff.unwrap_or_default(),
+            batch_size: config.batch_size.unwrap_or(50),
+            batch_timeout: config.batch_timeout.unwrap_or(Duration::from_millis(500)),
             cursor: Arc::new(AtomicI64::new(cursor_val)),
         }
     }
@@ -173,9 +141,8 @@ impl Client {
     /// items without terminating the stream.
     pub fn subscribe(&self) -> impl Stream<Item = Result<Vec<Event>, StreamError>> + '_ {
         let cursor = Arc::clone(&self.cursor);
-        let config = &self.config;
-        let batch_size = config.batch_size;
-        let batch_timeout = config.batch_timeout;
+        let batch_size = self.batch_size;
+        let batch_timeout = self.batch_timeout;
 
         futures::stream::unfold(BatchState::<Event>::new(batch_size), move |mut state| {
             let cursor = Arc::clone(&cursor);
@@ -189,10 +156,10 @@ impl Client {
                     // Establish a connection if we don't have one.
                     if state.ws.is_none() {
                         match connect_ws(
-                            &config.url,
+                            &self.url,
                             cursor.load(Ordering::SeqCst),
-                            &config.collections,
-                            &config.dids,
+                            &self.collections,
+                            &self.dids,
                         )
                         .await
                         {
@@ -209,7 +176,7 @@ impl Client {
                                     update_firehose_cursor(&cursor, &batch);
                                     return Some((Ok(batch), state));
                                 }
-                                let delay = config.backoff.delay(state.attempt);
+                                let delay = self.backoff.delay(state.attempt);
                                 state.attempt = state.attempt.saturating_add(1);
                                 tokio::time::sleep(delay).await;
                                 return Some((Err(e), state));
@@ -266,7 +233,7 @@ impl Client {
                                         update_firehose_cursor(&cursor, &batch);
                                         return Some((Ok(batch), state));
                                     }
-                                    let delay = config.backoff.delay(state.attempt);
+                                    let delay = self.backoff.delay(state.attempt);
                                     state.attempt = state.attempt.saturating_add(1);
                                     tokio::time::sleep(delay).await;
                                     continue;
@@ -287,7 +254,7 @@ impl Client {
                                         update_firehose_cursor(&cursor, &batch);
                                         return Some((Ok(batch), state));
                                     }
-                                    let delay = config.backoff.delay(state.attempt);
+                                    let delay = self.backoff.delay(state.attempt);
                                     state.attempt = state.attempt.saturating_add(1);
                                     tokio::time::sleep(delay).await;
                                     return Some((Err(err), state));
@@ -323,9 +290,8 @@ impl Client {
     /// exponential backoff + jitter.
     pub fn jetstream(&self) -> impl Stream<Item = Result<Vec<JetstreamEvent>, StreamError>> + '_ {
         let cursor = Arc::clone(&self.cursor);
-        let config = &self.config;
-        let batch_size = config.batch_size;
-        let batch_timeout = config.batch_timeout;
+        let batch_size = self.batch_size;
+        let batch_timeout = self.batch_timeout;
 
         futures::stream::unfold(
             BatchState::<JetstreamEvent>::new(batch_size),
@@ -339,10 +305,10 @@ impl Client {
                     loop {
                         if state.ws.is_none() {
                             match connect_ws(
-                                &config.url,
+                                &self.url,
                                 cursor.load(Ordering::SeqCst),
-                                &config.collections,
-                                &config.dids,
+                                &self.collections,
+                                &self.dids,
                             )
                             .await
                             {
@@ -358,7 +324,7 @@ impl Client {
                                         update_jetstream_cursor(&cursor, &batch);
                                         return Some((Ok(batch), state));
                                     }
-                                    let delay = config.backoff.delay(state.attempt);
+                                    let delay = self.backoff.delay(state.attempt);
                                     state.attempt = state.attempt.saturating_add(1);
                                     tokio::time::sleep(delay).await;
                                     return Some((Err(e), state));
@@ -410,7 +376,7 @@ impl Client {
                                             update_jetstream_cursor(&cursor, &batch);
                                             return Some((Ok(batch), state));
                                         }
-                                        let delay = config.backoff.delay(state.attempt);
+                                        let delay = self.backoff.delay(state.attempt);
                                         state.attempt = state.attempt.saturating_add(1);
                                         tokio::time::sleep(delay).await;
                                         continue;
@@ -429,7 +395,7 @@ impl Client {
                                             update_jetstream_cursor(&cursor, &batch);
                                             return Some((Ok(batch), state));
                                         }
-                                        let delay = config.backoff.delay(state.attempt);
+                                        let delay = self.backoff.delay(state.attempt);
                                         state.attempt = state.attempt.saturating_add(1);
                                         tokio::time::sleep(delay).await;
                                         return Some((Err(err), state));
@@ -539,73 +505,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_new_defaults() {
-        let cfg = Config::new("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos");
-        assert_eq!(
-            cfg.url,
-            "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"
-        );
+    fn config_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.url.is_empty());
         assert!(cfg.cursor.is_none());
-        assert_eq!(cfg.max_message_size, 2 * 1024 * 1024);
-        assert_eq!(cfg.batch_size, 50);
-        assert_eq!(cfg.batch_timeout, Duration::from_millis(500));
+        assert!(cfg.max_message_size.is_none());
+        assert!(cfg.batch_size.is_none());
+        assert!(cfg.batch_timeout.is_none());
+        assert!(cfg.backoff.is_none());
+        assert!(cfg.collections.is_none());
+        assert!(cfg.dids.is_none());
     }
 
     #[test]
-    fn config_firehose_defaults() {
-        let cfg = Config::firehose("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos");
-        assert_eq!(
-            cfg.url,
-            "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"
-        );
-        assert!(cfg.cursor.is_none());
-        assert_eq!(cfg.max_message_size, 2 * 1024 * 1024);
-        assert_eq!(cfg.batch_size, 50);
-        assert_eq!(cfg.batch_timeout, Duration::from_millis(500));
-    }
-
-    #[test]
-    fn config_with_cursor() {
-        let cfg = Config::firehose("wss://example.com").with_cursor(12345);
+    fn config_struct_literal() {
+        let cfg = Config {
+            url: "wss://example.com".into(),
+            cursor: Some(12345),
+            batch_size: Some(100),
+            batch_timeout: Some(Duration::from_secs(2)),
+            collections: Some(vec!["app.bsky.feed.post".into()]),
+            dids: Some(vec!["did:plc:test123456789abcdefghij".into()]),
+            ..Config::default()
+        };
+        assert_eq!(cfg.url, "wss://example.com");
         assert_eq!(cfg.cursor, Some(12345));
-    }
-
-    #[test]
-    fn config_with_collections() {
-        let cfg = Config::jetstream("wss://example.com")
-            .with_collections(vec!["app.bsky.feed.post".into()]);
+        assert_eq!(cfg.batch_size, Some(100));
+        assert_eq!(cfg.batch_timeout, Some(Duration::from_secs(2)));
         assert_eq!(cfg.collections.as_ref().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn config_with_dids() {
-        let cfg = Config::jetstream("wss://example.com")
-            .with_dids(vec!["did:plc:test123456789abcdefghij".into()]);
         assert_eq!(cfg.dids.as_ref().unwrap().len(), 1);
     }
 
     #[test]
-    fn config_with_batch_size() {
-        let cfg = Config::new("wss://example.com").with_batch_size(100);
-        assert_eq!(cfg.batch_size, 100);
-    }
-
-    #[test]
-    fn config_with_batch_timeout() {
-        let cfg = Config::new("wss://example.com").with_batch_timeout(Duration::from_secs(2));
-        assert_eq!(cfg.batch_timeout, Duration::from_secs(2));
-    }
-
-    #[test]
-    fn client_cursor_none_initially() {
-        let client = Client::new(Config::firehose("wss://example.com"));
+    fn client_resolves_defaults() {
+        let client = Client::new(Config {
+            url: "wss://example.com".into(),
+            ..Config::default()
+        });
         assert_eq!(client.cursor(), None);
+        assert_eq!(client.batch_size, 50);
+        assert_eq!(client.batch_timeout, Duration::from_millis(500));
     }
 
     #[test]
     fn client_cursor_from_config() {
-        let client = Client::new(Config::firehose("wss://example.com").with_cursor(42));
+        let client = Client::new(Config {
+            url: "wss://example.com".into(),
+            cursor: Some(42),
+            ..Config::default()
+        });
         assert_eq!(client.cursor(), Some(42));
+    }
+
+    #[test]
+    fn client_overrides_batch_size() {
+        let client = Client::new(Config {
+            url: "wss://example.com".into(),
+            batch_size: Some(200),
+            ..Config::default()
+        });
+        assert_eq!(client.batch_size, 200);
     }
 
     #[test]

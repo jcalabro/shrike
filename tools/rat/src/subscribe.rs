@@ -57,13 +57,12 @@ pub async fn run(args: Args) -> Result<()> {
     let url = normalize_jetstream_url(&args.url);
     let is_jetstream = is_jetstream_url(&url);
 
-    let mut config = Config::new(&url);
-    if let Some(cursor) = args.cursor {
-        config = config.with_cursor(cursor);
-    }
-    if let Some(ref collections) = args.collection {
-        config = config.with_collections(vec![collections.clone()]);
-    }
+    let config = Config {
+        url: url.clone(),
+        cursor: args.cursor,
+        collections: args.collection.as_ref().map(|c| vec![c.clone()]),
+        ..Config::default()
+    };
 
     let client = Client::new(config);
 

@@ -623,32 +623,35 @@ mod tests {
     // --- Config / Client construction tests ---
 
     #[test]
-    fn config_new() {
-        let cfg = Config::new("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos");
+    fn config_struct_literal() {
+        let cfg = Config {
+            url: "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos".into(),
+            cursor: Some(12345),
+            ..Config::default()
+        };
         assert_eq!(
             cfg.url,
             "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos"
         );
-        assert!(cfg.cursor.is_none());
-    }
-
-    #[test]
-    fn config_with_cursor() {
-        let cfg = Config::new("wss://example.com/subscribe").with_cursor(12345);
         assert_eq!(cfg.cursor, Some(12345));
     }
 
     #[test]
     fn client_cursor_none_when_unset() {
-        let cfg = Config::new("wss://example.com/subscribe");
-        let client = Client::new(cfg);
+        let client = Client::new(Config {
+            url: "wss://example.com/subscribe".into(),
+            ..Config::default()
+        });
         assert!(client.cursor().is_none());
     }
 
     #[test]
     fn client_cursor_returns_value_when_set() {
-        let cfg = Config::new("wss://example.com/subscribe").with_cursor(999);
-        let client = Client::new(cfg);
+        let client = Client::new(Config {
+            url: "wss://example.com/subscribe".into(),
+            cursor: Some(999),
+            ..Config::default()
+        });
         assert_eq!(client.cursor(), Some(999));
     }
 

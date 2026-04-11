@@ -9,22 +9,20 @@ use crate::{
 };
 
 /// Configuration for the backfill engine.
+///
+/// Only [`sync_host`](BackfillConfig::sync_host) is required. All other
+/// fields default to `None`, meaning "use the built-in default" (see each
+/// field's doc comment).
+#[derive(Default)]
 pub struct BackfillConfig {
+    /// Host URL to sync repos from.
     pub sync_host: String,
-    pub workers: usize,
-    pub batch_size: usize,
-    pub checkpoint: Box<dyn Checkpoint>,
-}
-
-impl BackfillConfig {
-    pub fn new(sync_host: &str) -> Self {
-        BackfillConfig {
-            sync_host: sync_host.to_string(),
-            workers: 50,
-            batch_size: 100_000,
-            checkpoint: Box::new(NoopCheckpoint),
-        }
-    }
+    /// Number of concurrent download workers. None means 50.
+    pub workers: Option<usize>,
+    /// Number of DIDs per shuffle batch. None means 100,000.
+    pub batch_size: Option<usize>,
+    /// Checkpoint implementation for resume support. None uses a no-op.
+    pub checkpoint: Option<Box<dyn Checkpoint>>,
 }
 
 /// Statistics collected during a backfill run.
@@ -36,12 +34,26 @@ pub struct BackfillStats {
 
 /// The concurrent backfill engine.
 pub struct BackfillEngine {
-    config: BackfillConfig,
+    // TODO: used once list_repos pagination is implemented.
+    #[allow(dead_code)]
+    sync_host: String,
+    #[allow(dead_code)]
+    workers: usize,
+    #[allow(dead_code)]
+    batch_size: usize,
+    checkpoint: Box<dyn Checkpoint>,
 }
 
 impl BackfillEngine {
     pub fn new(config: BackfillConfig) -> Self {
-        BackfillEngine { config }
+        BackfillEngine {
+            sync_host: config.sync_host,
+            workers: config.workers.unwrap_or(50),
+            batch_size: config.batch_size.unwrap_or(100_000),
+            checkpoint: config
+                .checkpoint
+                .unwrap_or_else(|| Box::new(NoopCheckpoint)),
+        }
     }
 
     /// Run the backfill engine until cancellation.
@@ -64,7 +76,7 @@ impl BackfillEngine {
         let start = tokio::time::Instant::now();
 
         // Load cursor from checkpoint so a restarted run continues where it left off.
-        let _cursor = self.config.checkpoint.load().await?;
+        let _cursor = self.checkpoint.load().await?;
 
         // Placeholder: wait for cancellation. The full implementation would
         // paginate through repos, shuffle each batch, and dispatch to workers.
@@ -72,7 +84,7 @@ impl BackfillEngine {
 
         // On cancel, persist the cursor so the next run can resume.
         // (cursor is empty here since no pages were fetched in the skeleton)
-        self.config.checkpoint.save("").await?;
+        self.checkpoint.save("").await?;
 
         Ok(BackfillStats {
             repos_downloaded: 0,
@@ -103,8 +115,10 @@ mod tests {
 
     #[tokio::test]
     async fn engine_respects_cancellation() {
-        let config = BackfillConfig::new("https://bsky.network");
-        let engine = BackfillEngine::new(config);
+        let engine = BackfillEngine::new(BackfillConfig {
+            sync_host: "https://bsky.network".into(),
+            ..Default::default()
+        });
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
 
@@ -127,9 +141,24 @@ mod tests {
     }
 
     #[test]
-    fn backfill_config_defaults() {
-        let config = BackfillConfig::new("https://bsky.network");
-        assert_eq!(config.workers, 50);
-        assert_eq!(config.batch_size, 100_000);
+    fn engine_resolves_defaults() {
+        let engine = BackfillEngine::new(BackfillConfig {
+            sync_host: "https://bsky.network".into(),
+            ..Default::default()
+        });
+        assert_eq!(engine.workers, 50);
+        assert_eq!(engine.batch_size, 100_000);
+    }
+
+    #[test]
+    fn engine_overrides() {
+        let engine = BackfillEngine::new(BackfillConfig {
+            sync_host: "https://bsky.network".into(),
+            workers: Some(10),
+            batch_size: Some(500),
+            ..Default::default()
+        });
+        assert_eq!(engine.workers, 10);
+        assert_eq!(engine.batch_size, 500);
     }
 }
