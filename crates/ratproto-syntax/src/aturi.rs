@@ -340,8 +340,12 @@ mod tests {
 
     #[test]
     fn aturi_reject_percent_encoding_in_authority() {
+        // Percent-encoding is never valid in AT URI authorities.
         assert!(AtUri::try_from("at://did:web:localhost%3A1234/app.bsky.feed.post/abc").is_err());
         assert!(AtUri::try_from("at://did:method:val%BB").is_err());
+        assert!(AtUri::try_from("at://did%3Aplc%3Amy_did").is_err());
+        assert!(AtUri::try_from("at://did%3Aplc%3Amy_did/com.atproto.feed.post/record").is_err());
+        assert!(AtUri::try_from("at://user%2Ebsky%2Esocial").is_err());
     }
 
     #[test]
