@@ -11,6 +11,14 @@
 //!
 //! The [`Client`] type manages WebSocket connections with automatic
 //! reconnection and exponential backoff.
+//!
+//! Events are delivered in batches for efficient bulk processing. The
+//! [`Config`] fields `batch_size` and `batch_timeout` control batching
+//! behavior (defaults: 50 events, 500ms). Each yield from
+//! [`Client::subscribe`] or [`Client::jetstream`] delivers a `Vec` of 1 to
+//! `batch_size` events. Batches flush when full, when the timeout elapses,
+//! or when an error is encountered — in which case the partial batch is
+//! yielded first, followed by the error.
 
 pub mod client;
 pub mod event;

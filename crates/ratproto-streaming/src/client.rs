@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Duration;
 
 use futures::StreamExt;
 use futures::stream::Stream;
@@ -18,16 +19,23 @@ use crate::reconnect::BackoffPolicy;
 type WsStream =
     futures::stream::SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>;
 
-struct StreamState {
+/// Batching state shared by both firehose and Jetstream streams.
+struct BatchState<E> {
     ws: Option<WsStream>,
     attempt: u32,
+    batch: Vec<E>,
+    pending_error: Option<StreamError>,
+    deadline: Option<tokio::time::Instant>,
 }
 
-impl StreamState {
-    fn new() -> Self {
-        StreamState {
+impl<E> BatchState<E> {
+    fn new(capacity: usize) -> Self {
+        BatchState {
             ws: None,
             attempt: 0,
+            batch: Vec::with_capacity(capacity),
+            pending_error: None,
+            deadline: None,
         }
     }
 }
@@ -50,6 +58,10 @@ pub struct Config {
     pub collections: Option<Vec<String>>,
     /// For Jetstream: filter by DIDs.
     pub dids: Option<Vec<String>>,
+    /// Maximum number of events per batch (default 50).
+    pub batch_size: usize,
+    /// Maximum time to wait for a full batch before flushing (default 500ms).
+    pub batch_timeout: Duration,
 }
 
 impl Config {
@@ -62,6 +74,8 @@ impl Config {
             max_message_size: 2 * 1024 * 1024,
             collections: None,
             dids: None,
+            batch_size: 50,
+            batch_timeout: Duration::from_millis(500),
         }
     }
 
@@ -92,6 +106,19 @@ impl Config {
         self.dids = Some(dids);
         self
     }
+
+    /// Set the maximum number of events per batch (default 50).
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Set the maximum time to wait for a full batch before flushing
+    /// (default 500ms).
+    pub fn with_batch_timeout(mut self, batch_timeout: Duration) -> Self {
+        self.batch_timeout = batch_timeout;
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +127,16 @@ impl Config {
 
 /// Client for consuming AT Protocol event streams (firehose or Jetstream).
 ///
-/// The WebSocket connection is established lazily when [`Client::subscribe`] or
-/// [`Client::jetstream`] is called.
+/// Events are delivered in batches for efficient bulk processing. The
+/// [`Config::batch_size`] and [`Config::batch_timeout`] fields control
+/// batching behavior (defaults: 50 events, 500ms). Each yield from
+/// [`Client::subscribe`] or [`Client::jetstream`] delivers a `Vec` of 1 to
+/// `batch_size` events. Batches flush when full, when the timeout elapses,
+/// or when an error (decode error, connection loss) is encountered — in
+/// which case the partial batch is yielded first, followed by the error.
+///
+/// The WebSocket connection is established lazily when [`Client::subscribe`]
+/// or [`Client::jetstream`] is called.
 pub struct Client {
     config: Config,
     cursor: Arc<AtomicI64>,
@@ -127,18 +162,29 @@ impl Client {
 
     /// Connect to a firehose or label stream (CBOR protocol).
     ///
-    /// Returns an async stream of [`Event`] values. The stream reconnects
-    /// automatically on connection failure with exponential backoff + jitter.
+    /// Returns an async stream of event batches. Events are accumulated up to
+    /// [`Config::batch_size`] (default 50) or until [`Config::batch_timeout`]
+    /// (default 500ms) elapses, whichever comes first. Partial batches are
+    /// flushed before errors or connection loss.
     ///
-    /// Info and sync frames are silently skipped. All other parse/connection
-    /// errors are yielded as `Err` items without terminating the stream.
-    pub fn subscribe(&self) -> impl Stream<Item = Result<Event, StreamError>> + '_ {
+    /// The stream reconnects automatically on connection failure with
+    /// exponential backoff + jitter. Info and sync frames are silently
+    /// skipped. All other parse/connection errors are yielded as `Err`
+    /// items without terminating the stream.
+    pub fn subscribe(&self) -> impl Stream<Item = Result<Vec<Event>, StreamError>> + '_ {
         let cursor = Arc::clone(&self.cursor);
         let config = &self.config;
+        let batch_size = config.batch_size;
+        let batch_timeout = config.batch_timeout;
 
-        futures::stream::unfold(StreamState::new(), move |mut state| {
+        futures::stream::unfold(BatchState::<Event>::new(batch_size), move |mut state| {
             let cursor = Arc::clone(&cursor);
             async move {
+                // Yield any pending error from a previous partial-batch flush.
+                if let Some(err) = state.pending_error.take() {
+                    return Some((Err(err), state));
+                }
+
                 loop {
                     // Establish a connection if we don't have one.
                     if state.ws.is_none() {
@@ -155,6 +201,14 @@ impl Client {
                                 state.attempt = 0;
                             }
                             Err(e) => {
+                                // Flush partial batch before yielding connection error.
+                                if !state.batch.is_empty() {
+                                    state.pending_error = Some(e);
+                                    state.deadline = None;
+                                    let batch = std::mem::take(&mut state.batch);
+                                    update_firehose_cursor(&cursor, &batch);
+                                    return Some((Ok(batch), state));
+                                }
                                 let delay = config.backoff.delay(state.attempt);
                                 state.attempt = state.attempt.saturating_add(1);
                                 tokio::time::sleep(delay).await;
@@ -163,38 +217,95 @@ impl Client {
                         }
                     }
 
-                    // Read the next message from the WebSocket.
-                    let ws = state.ws.as_mut()?;
-                    match ws.next().await {
-                        Some(Ok(Message::Binary(data))) => {
-                            match crate::parse_firehose_frame(&data) {
-                                Ok(event) => {
-                                    let seq = event_seq(&event);
-                                    if seq > 0 {
-                                        cursor.store(seq, Ordering::SeqCst);
+                    let deadline = *state
+                        .deadline
+                        .get_or_insert_with(|| tokio::time::Instant::now() + batch_timeout);
+
+                    // Take ws out of state to avoid borrow conflicts in select!.
+                    let Some(mut ws) = state.ws.take() else {
+                        continue;
+                    };
+
+                    tokio::select! {
+                        msg = ws.next() => {
+                            match msg {
+                                Some(Ok(Message::Binary(data))) => {
+                                    state.ws = Some(ws);
+                                    match crate::parse_firehose_frame(&data) {
+                                        Ok(event) => {
+                                            state.batch.push(event);
+                                            if state.batch.len() >= batch_size {
+                                                state.deadline = None;
+                                                let batch = std::mem::take(&mut state.batch);
+                                                update_firehose_cursor(&cursor, &batch);
+                                                return Some((Ok(batch), state));
+                                            }
+                                        }
+                                        // Info/sync frames return UnknownType — skip.
+                                        Err(StreamError::UnknownType(_)) => continue,
+                                        Err(e) => {
+                                            if !state.batch.is_empty() {
+                                                state.pending_error = Some(e);
+                                                state.deadline = None;
+                                                let batch = std::mem::take(&mut state.batch);
+                                                update_firehose_cursor(&cursor, &batch);
+                                                return Some((Ok(batch), state));
+                                            }
+                                            state.deadline = None;
+                                            return Some((Err(e), state));
+                                        }
                                     }
-                                    return Some((Ok(event), state));
                                 }
-                                // Info/sync frames return UnknownType — skip them.
-                                Err(StreamError::UnknownType(_)) => continue,
-                                Err(e) => return Some((Err(e), state)),
+                                Some(Ok(Message::Close(_))) | None => {
+                                    // Connection closed — flush partial batch,
+                                    // then reconnect on next iteration.
+                                    drop(ws);
+                                    if !state.batch.is_empty() {
+                                        state.deadline = None;
+                                        let batch = std::mem::take(&mut state.batch);
+                                        update_firehose_cursor(&cursor, &batch);
+                                        return Some((Ok(batch), state));
+                                    }
+                                    let delay = config.backoff.delay(state.attempt);
+                                    state.attempt = state.attempt.saturating_add(1);
+                                    tokio::time::sleep(delay).await;
+                                    continue;
+                                }
+                                Some(Ok(_)) => {
+                                    state.ws = Some(ws);
+                                    continue; // ping/pong/text — skip
+                                }
+                                Some(Err(e)) => {
+                                    // WebSocket error — flush partial batch,
+                                    // then reconnect on next iteration.
+                                    drop(ws);
+                                    let err = StreamError::WebSocket(e.to_string());
+                                    if !state.batch.is_empty() {
+                                        state.pending_error = Some(err);
+                                        state.deadline = None;
+                                        let batch = std::mem::take(&mut state.batch);
+                                        update_firehose_cursor(&cursor, &batch);
+                                        return Some((Ok(batch), state));
+                                    }
+                                    let delay = config.backoff.delay(state.attempt);
+                                    state.attempt = state.attempt.saturating_add(1);
+                                    tokio::time::sleep(delay).await;
+                                    return Some((Err(err), state));
+                                }
                             }
                         }
-                        Some(Ok(Message::Close(_))) | None => {
-                            // Connection closed — reconnect.
-                            state.ws = None;
-                            let delay = config.backoff.delay(state.attempt);
-                            state.attempt = state.attempt.saturating_add(1);
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
-                        Some(Ok(_)) => continue, // ping/pong/text — skip
-                        Some(Err(e)) => {
-                            state.ws = None;
-                            let delay = config.backoff.delay(state.attempt);
-                            state.attempt = state.attempt.saturating_add(1);
-                            tokio::time::sleep(delay).await;
-                            return Some((Err(StreamError::WebSocket(e.to_string())), state));
+                        _ = tokio::time::sleep_until(deadline) => {
+                            state.ws = Some(ws);
+                            if !state.batch.is_empty() {
+                                state.deadline = None;
+                                let batch = std::mem::take(&mut state.batch);
+                                update_firehose_cursor(&cursor, &batch);
+                                return Some((Ok(batch), state));
+                            }
+                            // Empty batch — reset deadline and keep waiting.
+                            state.deadline = Some(
+                                tokio::time::Instant::now() + batch_timeout,
+                            );
                         }
                     }
                 }
@@ -204,72 +315,144 @@ impl Client {
 
     /// Connect to a Jetstream endpoint (JSON protocol).
     ///
-    /// Returns an async stream of [`JetstreamEvent`] values. The stream
-    /// reconnects automatically on connection failure with exponential
-    /// backoff + jitter.
-    pub fn jetstream(&self) -> impl Stream<Item = Result<JetstreamEvent, StreamError>> + '_ {
+    /// Returns an async stream of event batches. Batching behavior is
+    /// identical to [`Client::subscribe`] — see its documentation for
+    /// details on batch size, timeout, and partial-batch flushing.
+    ///
+    /// The stream reconnects automatically on connection failure with
+    /// exponential backoff + jitter.
+    pub fn jetstream(&self) -> impl Stream<Item = Result<Vec<JetstreamEvent>, StreamError>> + '_ {
         let cursor = Arc::clone(&self.cursor);
         let config = &self.config;
+        let batch_size = config.batch_size;
+        let batch_timeout = config.batch_timeout;
 
-        futures::stream::unfold(StreamState::new(), move |mut state| {
-            let cursor = Arc::clone(&cursor);
-            async move {
-                loop {
-                    if state.ws.is_none() {
-                        match connect_ws(
-                            &config.url,
-                            cursor.load(Ordering::SeqCst),
-                            &config.collections,
-                            &config.dids,
-                        )
-                        .await
-                        {
-                            Ok(ws) => {
-                                state.ws = Some(ws);
-                                state.attempt = 0;
-                            }
-                            Err(e) => {
-                                let delay = config.backoff.delay(state.attempt);
-                                state.attempt = state.attempt.saturating_add(1);
-                                tokio::time::sleep(delay).await;
-                                return Some((Err(e), state));
-                            }
-                        }
+        futures::stream::unfold(
+            BatchState::<JetstreamEvent>::new(batch_size),
+            move |mut state| {
+                let cursor = Arc::clone(&cursor);
+                async move {
+                    if let Some(err) = state.pending_error.take() {
+                        return Some((Err(err), state));
                     }
 
-                    let ws = state.ws.as_mut()?;
-                    match ws.next().await {
-                        Some(Ok(Message::Text(text))) => {
-                            match crate::jetstream::parse_jetstream_message(&text) {
-                                Ok(event) => {
-                                    let time_us = jetstream_time_us(&event);
-                                    if time_us > 0 {
-                                        cursor.store(time_us, Ordering::SeqCst);
-                                    }
-                                    return Some((Ok(event), state));
+                    loop {
+                        if state.ws.is_none() {
+                            match connect_ws(
+                                &config.url,
+                                cursor.load(Ordering::SeqCst),
+                                &config.collections,
+                                &config.dids,
+                            )
+                            .await
+                            {
+                                Ok(ws) => {
+                                    state.ws = Some(ws);
+                                    state.attempt = 0;
                                 }
-                                Err(e) => return Some((Err(e), state)),
+                                Err(e) => {
+                                    if !state.batch.is_empty() {
+                                        state.pending_error = Some(e);
+                                        state.deadline = None;
+                                        let batch = std::mem::take(&mut state.batch);
+                                        update_jetstream_cursor(&cursor, &batch);
+                                        return Some((Ok(batch), state));
+                                    }
+                                    let delay = config.backoff.delay(state.attempt);
+                                    state.attempt = state.attempt.saturating_add(1);
+                                    tokio::time::sleep(delay).await;
+                                    return Some((Err(e), state));
+                                }
                             }
                         }
-                        Some(Ok(Message::Close(_))) | None => {
-                            state.ws = None;
-                            let delay = config.backoff.delay(state.attempt);
-                            state.attempt = state.attempt.saturating_add(1);
-                            tokio::time::sleep(delay).await;
+
+                        let deadline = *state
+                            .deadline
+                            .get_or_insert_with(|| tokio::time::Instant::now() + batch_timeout);
+
+                        let Some(mut ws) = state.ws.take() else {
                             continue;
-                        }
-                        Some(Ok(_)) => continue,
-                        Some(Err(e)) => {
-                            state.ws = None;
-                            let delay = config.backoff.delay(state.attempt);
-                            state.attempt = state.attempt.saturating_add(1);
-                            tokio::time::sleep(delay).await;
-                            return Some((Err(StreamError::WebSocket(e.to_string())), state));
+                        };
+
+                        tokio::select! {
+                            msg = ws.next() => {
+                                match msg {
+                                    Some(Ok(Message::Text(text))) => {
+                                        state.ws = Some(ws);
+                                        match crate::jetstream::parse_jetstream_message(&text) {
+                                            Ok(event) => {
+                                                state.batch.push(event);
+                                                if state.batch.len() >= batch_size {
+                                                    state.deadline = None;
+                                                    let batch = std::mem::take(&mut state.batch);
+                                                    update_jetstream_cursor(&cursor, &batch);
+                                                    return Some((Ok(batch), state));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                if !state.batch.is_empty() {
+                                                    state.pending_error = Some(e);
+                                                    state.deadline = None;
+                                                    let batch = std::mem::take(&mut state.batch);
+                                                    update_jetstream_cursor(&cursor, &batch);
+                                                    return Some((Ok(batch), state));
+                                                }
+                                                state.deadline = None;
+                                                return Some((Err(e), state));
+                                            }
+                                        }
+                                    }
+                                    Some(Ok(Message::Close(_))) | None => {
+                                        drop(ws);
+                                        if !state.batch.is_empty() {
+                                            state.deadline = None;
+                                            let batch = std::mem::take(&mut state.batch);
+                                            update_jetstream_cursor(&cursor, &batch);
+                                            return Some((Ok(batch), state));
+                                        }
+                                        let delay = config.backoff.delay(state.attempt);
+                                        state.attempt = state.attempt.saturating_add(1);
+                                        tokio::time::sleep(delay).await;
+                                        continue;
+                                    }
+                                    Some(Ok(_)) => {
+                                        state.ws = Some(ws);
+                                        continue;
+                                    }
+                                    Some(Err(e)) => {
+                                        drop(ws);
+                                        let err = StreamError::WebSocket(e.to_string());
+                                        if !state.batch.is_empty() {
+                                            state.pending_error = Some(err);
+                                            state.deadline = None;
+                                            let batch = std::mem::take(&mut state.batch);
+                                            update_jetstream_cursor(&cursor, &batch);
+                                            return Some((Ok(batch), state));
+                                        }
+                                        let delay = config.backoff.delay(state.attempt);
+                                        state.attempt = state.attempt.saturating_add(1);
+                                        tokio::time::sleep(delay).await;
+                                        return Some((Err(err), state));
+                                    }
+                                }
+                            }
+                            _ = tokio::time::sleep_until(deadline) => {
+                                state.ws = Some(ws);
+                                if !state.batch.is_empty() {
+                                    state.deadline = None;
+                                    let batch = std::mem::take(&mut state.batch);
+                                    update_jetstream_cursor(&cursor, &batch);
+                                    return Some((Ok(batch), state));
+                                }
+                                state.deadline = Some(
+                                    tokio::time::Instant::now() + batch_timeout,
+                                );
+                            }
                         }
                     }
                 }
-            }
-        })
+            },
+        )
     }
 }
 
@@ -310,7 +493,7 @@ async fn connect_ws(
     Ok(read)
 }
 
-fn event_seq(event: &Event) -> i64 {
+pub(crate) fn event_seq(event: &Event) -> i64 {
     match event {
         Event::Commit { seq, .. }
         | Event::Identity { seq, .. }
@@ -319,11 +502,25 @@ fn event_seq(event: &Event) -> i64 {
     }
 }
 
-fn jetstream_time_us(event: &JetstreamEvent) -> i64 {
+pub(crate) fn jetstream_time_us(event: &JetstreamEvent) -> i64 {
     match event {
         JetstreamEvent::Commit { time_us, .. }
         | JetstreamEvent::Identity { time_us, .. }
         | JetstreamEvent::Account { time_us, .. } => *time_us,
+    }
+}
+
+/// Update the cursor from the last event in a firehose batch.
+fn update_firehose_cursor(cursor: &AtomicI64, batch: &[Event]) {
+    if let Some(seq) = batch.iter().rev().map(event_seq).find(|&s| s > 0) {
+        cursor.store(seq, Ordering::SeqCst);
+    }
+}
+
+/// Update the cursor from the last event in a Jetstream batch.
+fn update_jetstream_cursor(cursor: &AtomicI64, batch: &[JetstreamEvent]) {
+    if let Some(t) = batch.iter().rev().map(jetstream_time_us).find(|&t| t > 0) {
+        cursor.store(t, Ordering::SeqCst);
     }
 }
 
@@ -350,6 +547,8 @@ mod tests {
         );
         assert!(cfg.cursor.is_none());
         assert_eq!(cfg.max_message_size, 2 * 1024 * 1024);
+        assert_eq!(cfg.batch_size, 50);
+        assert_eq!(cfg.batch_timeout, Duration::from_millis(500));
     }
 
     #[test]
@@ -361,6 +560,8 @@ mod tests {
         );
         assert!(cfg.cursor.is_none());
         assert_eq!(cfg.max_message_size, 2 * 1024 * 1024);
+        assert_eq!(cfg.batch_size, 50);
+        assert_eq!(cfg.batch_timeout, Duration::from_millis(500));
     }
 
     #[test]
@@ -381,6 +582,18 @@ mod tests {
         let cfg = Config::jetstream("wss://example.com")
             .with_dids(vec!["did:plc:test123456789abcdefghij".into()]);
         assert_eq!(cfg.dids.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn config_with_batch_size() {
+        let cfg = Config::new("wss://example.com").with_batch_size(100);
+        assert_eq!(cfg.batch_size, 100);
+    }
+
+    #[test]
+    fn config_with_batch_timeout() {
+        let cfg = Config::new("wss://example.com").with_batch_timeout(Duration::from_secs(2));
+        assert_eq!(cfg.batch_timeout, Duration::from_secs(2));
     }
 
     #[test]
@@ -464,5 +677,41 @@ mod tests {
             active: false,
         };
         assert_eq!(jetstream_time_us(&event), 99);
+    }
+
+    #[test]
+    fn update_firehose_cursor_finds_last_seq() {
+        let cursor = AtomicI64::new(-1);
+        let batch = vec![
+            Event::Identity {
+                did: ratproto_syntax::Did::default(),
+                seq: 10,
+                handle: None,
+            },
+            Event::Identity {
+                did: ratproto_syntax::Did::default(),
+                seq: 20,
+                handle: None,
+            },
+        ];
+        update_firehose_cursor(&cursor, &batch);
+        assert_eq!(cursor.load(Ordering::SeqCst), 20);
+    }
+
+    #[test]
+    fn update_jetstream_cursor_finds_last_time_us() {
+        let cursor = AtomicI64::new(-1);
+        let batch = vec![
+            JetstreamEvent::Identity {
+                did: ratproto_syntax::Did::default(),
+                time_us: 100,
+            },
+            JetstreamEvent::Identity {
+                did: ratproto_syntax::Did::default(),
+                time_us: 200,
+            },
+        ];
+        update_jetstream_cursor(&cursor, &batch);
+        assert_eq!(cursor.load(Ordering::SeqCst), 200);
     }
 }

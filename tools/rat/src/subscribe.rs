@@ -118,10 +118,12 @@ async fn run_firehose(client: &Client, args: &Args) -> Result<()> {
             item = stream.next() => {
                 let Some(result) = item else { break };
                 match result {
-                    Ok(event) => {
-                        if let Some(output) = filter_event(&event, args.collection.as_deref(), args.action.as_deref()) {
-                            let json = serde_json::to_string(&output)?;
-                            println!("{json}");
+                    Ok(batch) => {
+                        for event in &batch {
+                            if let Some(output) = filter_event(event, args.collection.as_deref(), args.action.as_deref()) {
+                                let json = serde_json::to_string(&output)?;
+                                println!("{json}");
+                            }
                         }
                     }
                     Err(ratproto_streaming::StreamError::UnknownType(_)) => {
@@ -147,10 +149,12 @@ async fn run_jetstream(client: &Client, args: &Args) -> Result<()> {
         tokio::select! {
             item = stream.next() => {
                 let Some(result) = item else { break };
-                let event = result.context("stream error")?;
-                if let Some(output) = filter_jetstream_event(&event, args.collection.as_deref(), args.action.as_deref()) {
-                    let json = serde_json::to_string(&output)?;
-                    println!("{json}");
+                let batch = result.context("stream error")?;
+                for event in &batch {
+                    if let Some(output) = filter_jetstream_event(event, args.collection.as_deref(), args.action.as_deref()) {
+                        let json = serde_json::to_string(&output)?;
+                        println!("{json}");
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
