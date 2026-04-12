@@ -1,0 +1,30 @@
+[package]
+name = "shrike-car-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.shrike-car]
+path = ".."
+
+[dependencies.shrike-cbor]
+path = "../../shrike-cbor"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_car_reader"
+path = "fuzz_targets/fuzz_car_reader.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_car_roundtrip"
+path = "fuzz_targets/fuzz_car_roundtrip.rs"
+doc = false

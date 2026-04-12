@@ -33,8 +33,8 @@ test-crate crate:
 # Usage:
 #   just fuzz              # all targets, 30s each
 #   just fuzz 10           # all targets, 10s each
-#   just fuzz 60 ratproto-cbor  # only ratproto-cbor, 60s each
-fuzz DURATION="30" *CRATES="ratproto-cbor ratproto-car ratproto-mst ratproto-syntax ratproto-crypto ratproto-lexicon":
+#   just fuzz 60 shrike-cbor  # only shrike-cbor, 60s each
+fuzz DURATION="30" *CRATES="shrike-cbor shrike-car shrike-mst shrike-syntax shrike-crypto shrike-lexicon":
     #!/usr/bin/env bash
     set -euo pipefail
     for crate in {{CRATES}}; do
@@ -66,9 +66,9 @@ bench *CRATE:
         cargo bench -p {{CRATE}}
     fi
 
-# Run the rat CLI (pass args after --)
-rat *ARGS:
-    cargo run -p rat -- {{ARGS}}
+# Run the shrike CLI (pass args after --)
+shrike *ARGS:
+    cargo run -p shrike-cli --bin shrike -- {{ARGS}}
 
 # Run the code generator
 lexgen:

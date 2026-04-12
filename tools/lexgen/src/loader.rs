@@ -1,4 +1,4 @@
-use ratproto_lexicon::Schema;
+use shrike_lexicon::Schema;
 use std::collections::HashMap;
 use std::path::Path;
 

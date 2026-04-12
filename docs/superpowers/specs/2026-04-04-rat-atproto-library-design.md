@@ -1,4 +1,4 @@
-# rat — AT Protocol Library for Rust
+# shrike — AT Protocol Library for Rust
 
 **Date:** 2026-04-04
 **Status:** Draft
@@ -29,25 +29,25 @@
 ## Workspace Structure
 
 ```
-rat/
+shrike/
 ├── Cargo.toml              # Workspace root
 ├── crates/
-│   ├── rat/                # Facade crate — re-exports everything
-│   ├── ratproto-syntax/         # DID, Handle, NSID, AT-URI, TID, Datetime, RecordKey, Language
-│   ├── ratproto-cbor/           # DRISL codec + CID
-│   ├── ratproto-crypto/         # P-256 & K-256 ECDSA signing, did:key encoding
-│   ├── ratproto-mst/            # Merkle Search Tree
-│   ├── ratproto-repo/           # Repository operations (CRUD, signed commits)
-│   ├── ratproto-car/            # CAR v1 file I/O
-│   ├── ratproto-lexicon/        # Lexicon schema parsing + validation
-│   ├── ratproto-xrpc/           # XRPC HTTP client (reqwest + tokio)
-│   ├── ratproto-xrpc-server/    # XRPC HTTP server framework (axum)
-│   ├── ratproto-identity/       # DID resolution, handle verification, PLC client
-│   ├── ratproto-streaming/      # Firehose, label streams, Jetstream consumer
-│   ├── ratproto-sync/           # Repo sync & commit verification
-│   ├── ratproto-backfill/       # Concurrent repo downloader
-│   ├── ratproto-labeling/       # Label creation & verification
-│   └── ratproto-api/            # Generated types from Lexicon schemas
+│   ├── shrike/             # Facade crate — re-exports everything
+│   ├── shrike-syntax/           # DID, Handle, NSID, AT-URI, TID, Datetime, RecordKey, Language
+│   ├── shrike-cbor/             # DRISL codec + CID
+│   ├── shrike-crypto/           # P-256 & K-256 ECDSA signing, did:key encoding
+│   ├── shrike-mst/              # Merkle Search Tree
+│   ├── shrike-repo/             # Repository operations (CRUD, signed commits)
+│   ├── shrike-car/              # CAR v1 file I/O
+│   ├── shrike-lexicon/          # Lexicon schema parsing + validation
+│   ├── shrike-xrpc/             # XRPC HTTP client (reqwest + tokio)
+│   ├── shrike-xrpc-server/      # XRPC HTTP server framework (axum)
+│   ├── shrike-identity/         # DID resolution, handle verification, PLC client
+│   ├── shrike-streaming/        # Firehose, label streams, Jetstream consumer
+│   ├── shrike-sync/             # Repo sync & commit verification
+│   ├── shrike-backfill/         # Concurrent repo downloader
+│   ├── shrike-labeling/         # Label creation & verification
+│   └── shrike-api/              # Generated types from Lexicon schemas
 ├── tools/
 │   └── lexgen/             # Code generator binary (Lexicon JSON → Rust)
 ├── docs/
@@ -59,27 +59,27 @@ rat/
 Each crate only depends on crates listed above it:
 
 ```
-ratproto-syntax          (no internal deps)
-ratproto-cbor            → ratproto-syntax
-ratproto-crypto          → ratproto-cbor
-ratproto-mst             → ratproto-cbor
-ratproto-repo            → ratproto-syntax, ratproto-cbor, ratproto-crypto, ratproto-mst
-ratproto-car             → ratproto-cbor
-ratproto-lexicon         → ratproto-syntax
-ratproto-xrpc            → ratproto-syntax, ratproto-cbor (+ reqwest, tokio)
-ratproto-xrpc-server     → ratproto-syntax, ratproto-cbor (+ tokio, axum)
-ratproto-identity        → ratproto-syntax, ratproto-crypto, ratproto-xrpc
-ratproto-streaming       → ratproto-syntax, ratproto-cbor (+ tokio, tokio-tungstenite)
-ratproto-sync            → ratproto-syntax, ratproto-cbor, ratproto-mst, ratproto-repo, ratproto-car, ratproto-identity, ratproto-xrpc
-ratproto-backfill        → ratproto-sync, ratproto-xrpc
-ratproto-labeling        → ratproto-syntax, ratproto-cbor, ratproto-crypto
-ratproto-api             → ratproto-syntax, ratproto-cbor, ratproto-xrpc (generated)
-rat                 → re-exports all of the above
+shrike-syntax          (no internal deps)
+shrike-cbor            → shrike-syntax
+shrike-crypto          → shrike-cbor
+shrike-mst             → shrike-cbor
+shrike-repo            → shrike-syntax, shrike-cbor, shrike-crypto, shrike-mst
+shrike-car             → shrike-cbor
+shrike-lexicon         → shrike-syntax
+shrike-xrpc            → shrike-syntax, shrike-cbor (+ reqwest, tokio)
+shrike-xrpc-server     → shrike-syntax, shrike-cbor (+ tokio, axum)
+shrike-identity        → shrike-syntax, shrike-crypto, shrike-xrpc
+shrike-streaming       → shrike-syntax, shrike-cbor (+ tokio, tokio-tungstenite)
+shrike-sync            → shrike-syntax, shrike-cbor, shrike-mst, shrike-repo, shrike-car, shrike-identity, shrike-xrpc
+shrike-backfill        → shrike-sync, shrike-xrpc
+shrike-labeling        → shrike-syntax, shrike-cbor, shrike-crypto
+shrike-api             → shrike-syntax, shrike-cbor, shrike-xrpc (generated)
+shrike                 → re-exports all of the above
 ```
 
 ## Crate Designs
 
-### ratproto-syntax — Core Types
+### shrike-syntax — Core Types
 
 Zero external dependencies beyond `thiserror` and `serde`. All types are validated on construction and cheap to clone.
 
@@ -119,9 +119,9 @@ pub enum SyntaxError {
 }
 ```
 
-### ratproto-cbor — DRISL Codec & CID
+### shrike-cbor — DRISL Codec & CID
 
-Hand-rolled implementation of the DRISL serialization format (DASL's deterministic CBOR profile, built on CBOR/c-42). Depends on `ratproto-syntax`, `sha2`, `unsigned-varint`, `multibase`.
+Hand-rolled implementation of the DRISL serialization format (DASL's deterministic CBOR profile, built on CBOR/c-42). Depends on `shrike-syntax`, `sha2`, `unsigned-varint`, `multibase`.
 
 **DRISL rules (what we enforce):**
 
@@ -185,9 +185,9 @@ pub enum Value<'a> {
 - Pre-computed key bytes eliminate allocation in generated code
 - Inline varint encoding
 
-### ratproto-crypto — Signing & Verification
+### shrike-crypto — Signing & Verification
 
-Depends on `ratproto-cbor`, `p256`, `k256`.
+Depends on `shrike-cbor`, `p256`, `k256`.
 
 **Traits:**
 
@@ -223,9 +223,9 @@ pub struct Signature([u8; 64]);
 - `Signature` is a fixed 64-byte stack value
 - `parse_did_key(s: &str) -> Box<dyn VerifyingKey>` for parsing `did:key:` strings
 
-### ratproto-mst — Merkle Search Tree
+### shrike-mst — Merkle Search Tree
 
-Depends on `ratproto-cbor`.
+Depends on `shrike-cbor`.
 
 **Core types:**
 
@@ -275,9 +275,9 @@ pub struct Diff {
 - Not thread-safe — callers synchronize externally
 - Diff short-circuits when subtree CIDs match
 
-### ratproto-repo — Repository Operations
+### shrike-repo — Repository Operations
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `ratproto-crypto`, `ratproto-mst`.
+Depends on `shrike-syntax`, `shrike-cbor`, `shrike-crypto`, `shrike-mst`.
 
 **Core types:**
 
@@ -328,9 +328,9 @@ impl<S: BlockStore> Repo<S> {
 - Pre-computed DRISL keys for `Commit` field serialization
 - `Commit::verify(&self, key: &dyn VerifyingKey) -> Result<()>` for signature verification
 
-### ratproto-car — CAR v1 File I/O
+### shrike-car — CAR v1 File I/O
 
-Depends on `ratproto-cbor`.
+Depends on `shrike-cbor`.
 
 ```rust
 pub struct Block { pub cid: Cid, pub data: Vec<u8> }
@@ -361,9 +361,9 @@ pub fn verify(reader: impl Read) -> Result<()>;
 - Sync I/O — CAR files read from already-buffered sources
 - `verify()` recomputes every CID and checks match
 
-### ratproto-lexicon — Schema Parsing & Validation
+### shrike-lexicon — Schema Parsing & Validation
 
-Depends on `ratproto-syntax`, `serde`, `serde_json`.
+Depends on `shrike-syntax`, `serde`, `serde_json`.
 
 **Schema types:**
 
@@ -423,9 +423,9 @@ pub fn validate_value(catalog: &Catalog, field: &FieldSchema, value: &serde_json
 - `Catalog` holds all schemas for `$ref` / union resolution
 - Separate from code generation — this is runtime validation
 
-### ratproto-xrpc — XRPC HTTP Client
+### shrike-xrpc — XRPC HTTP Client
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `reqwest`, `tokio`, `serde`.
+Depends on `shrike-syntax`, `shrike-cbor`, `reqwest`, `tokio`, `serde`.
 
 ```rust
 pub struct Client {
@@ -461,9 +461,9 @@ impl Client {
 - Response size limits: 5 MB JSON, 512 MB binary
 - NSID as `&str` for generated code ergonomics
 
-### ratproto-xrpc-server — XRPC HTTP Server
+### shrike-xrpc-server — XRPC HTTP Server
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `serde`, `tokio`, `axum`.
+Depends on `shrike-syntax`, `shrike-cbor`, `serde`, `tokio`, `axum`.
 
 ```rust
 pub struct Server { router: axum::Router }
@@ -484,9 +484,9 @@ impl Server {
 - Standard XRPC error envelope (`{"error": "...", "message": "..."}`)
 - Typed handler functions with `RequestContext` (auth DID, headers)
 
-### ratproto-identity — DID Resolution & Handle Verification
+### shrike-identity — DID Resolution & Handle Verification
 
-Depends on `ratproto-syntax`, `ratproto-crypto`, `ratproto-xrpc`, `serde`, `tokio`.
+Depends on `shrike-syntax`, `shrike-crypto`, `shrike-xrpc`, `serde`, `tokio`.
 
 ```rust
 pub struct Identity {
@@ -518,9 +518,9 @@ impl Directory {
 - Supports `did:plc:` (PLC directory) and `did:web:` (`.well-known/did.json`)
 - PLC client embedded (simple enough — 3 HTTP endpoints)
 
-### ratproto-streaming — Event Stream Consumer
+### shrike-streaming — Event Stream Consumer
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `tokio`, `tokio-tungstenite`, `serde`.
+Depends on `shrike-syntax`, `shrike-cbor`, `tokio`, `tokio-tungstenite`, `serde`.
 
 **Event types (idiomatic Rust enums):**
 
@@ -592,9 +592,9 @@ impl Client {
 - Cursor checkpointing is caller's responsibility
 - Optional `DistributedLocker` trait for HA deployments
 
-### ratproto-sync — Repo Sync & Commit Verification
+### shrike-sync — Repo Sync & Commit Verification
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `ratproto-mst`, `ratproto-repo`, `ratproto-car`, `ratproto-identity`, `ratproto-xrpc`, `tokio`.
+Depends on `shrike-syntax`, `shrike-cbor`, `shrike-mst`, `shrike-repo`, `shrike-car`, `shrike-identity`, `shrike-xrpc`, `tokio`.
 
 ```rust
 pub struct SyncClient { xrpc: Client, identity: Option<Arc<Directory>> }
@@ -615,9 +615,9 @@ impl SyncClient {
 - Full chain verification: commit signature, block CIDs, MST integrity
 - Pagination returns `(items, Option<cursor>)` tuple
 
-### ratproto-backfill — Concurrent Repo Downloader
+### shrike-backfill — Concurrent Repo Downloader
 
-Depends on `ratproto-sync`, `ratproto-xrpc`, `tokio`.
+Depends on `shrike-sync`, `shrike-xrpc`, `tokio`.
 
 ```rust
 pub struct BackfillEngine { config: BackfillConfig }
@@ -641,9 +641,9 @@ pub trait Checkpoint: Send + Sync {
 - Per-repo retry with exponential backoff
 - Configurable worker count (default 50)
 
-### ratproto-labeling — Label Creation & Verification
+### shrike-labeling — Label Creation & Verification
 
-Depends on `ratproto-syntax`, `ratproto-cbor`, `ratproto-crypto`.
+Depends on `shrike-syntax`, `shrike-cbor`, `shrike-crypto`.
 
 ```rust
 pub struct Label {
@@ -663,7 +663,7 @@ pub fn encode_label(label: &Label) -> Result<Vec<u8>>;
 pub fn decode_label(data: &[u8]) -> Result<Label>;
 ```
 
-### ratproto-api — Generated Lexicon Types
+### shrike-api — Generated Lexicon Types
 
 Generated by `lexgen` tool from Lexicon JSON schemas.
 
@@ -679,7 +679,7 @@ Generated by `lexgen` tool from Lexicon JSON schemas.
 **Module structure mirrors Lexicon namespaces:**
 
 ```
-ratproto-api/src/
+shrike-api/src/
 ├── com/atproto/{identity,label,repo,server,sync}.rs
 ├── app/bsky/{actor,feed,graph,notification,embed}.rs
 ├── chat/bsky/...
@@ -688,18 +688,18 @@ ratproto-api/src/
 
 ### lexgen — Code Generator
 
-Dev tool in `tools/lexgen/`. Reads Lexicon JSON files, outputs Rust source for `ratproto-api`. Not a runtime dependency.
+Dev tool in `tools/lexgen/`. Reads Lexicon JSON files, outputs Rust source for `shrike-api`. Not a runtime dependency.
 
 ### rat — Facade Crate
 
 ```rust
-pub use ratproto_syntax as syntax;
-pub use ratproto_cbor as cbor;
+pub use shrike_syntax as syntax;
+pub use shrike_cbor as cbor;
 // ... all crates
 
 // Common types at root for convenience
-pub use ratproto_syntax::{Did, Handle, Nsid, AtUri, Tid, Datetime, RecordKey};
-pub use ratproto_cbor::Cid;
+pub use shrike_syntax::{Did, Handle, Nsid, AtUri, Tid, Datetime, RecordKey};
+pub use shrike_cbor::Cid;
 ```
 
 All sub-crates are optional features for selective dependency pulling.
@@ -708,21 +708,21 @@ All sub-crates are optional features for selective dependency pulling.
 
 Strict bottom-up, each crate fully tested before moving on:
 
-1. `ratproto-syntax`
-2. `ratproto-cbor`
-3. `ratproto-crypto`
-4. `ratproto-mst`
-5. `ratproto-repo`
-6. `ratproto-car`
-7. `ratproto-lexicon`
-8. `ratproto-xrpc`
-9. `ratproto-xrpc-server`
-10. `ratproto-identity`
-11. `ratproto-streaming`
-12. `ratproto-sync`
-13. `ratproto-backfill`
-14. `ratproto-labeling`
-15. `ratproto-api` + `lexgen`
+1. `shrike-syntax`
+2. `shrike-cbor`
+3. `shrike-crypto`
+4. `shrike-mst`
+5. `shrike-repo`
+6. `shrike-car`
+7. `shrike-lexicon`
+8. `shrike-xrpc`
+9. `shrike-xrpc-server`
+10. `shrike-identity`
+11. `shrike-streaming`
+12. `shrike-sync`
+13. `shrike-backfill`
+14. `shrike-labeling`
+15. `shrike-api` + `lexgen`
 16. `rat` (facade)
 
 ## Testing Strategy

@@ -21,7 +21,7 @@
 ```
 Cargo.toml                          # Workspace root
 crates/
-  ratproto-syntax/
+  shrike-syntax/
     Cargo.toml
     src/lib.rs                      # Re-exports + SyntaxError
     src/did.rs                      # Did type
@@ -42,7 +42,7 @@ crates/
       nsid_syntax_invalid.txt
       tid_syntax_valid.txt
       tid_syntax_invalid.txt
-  ratproto-cbor/
+  shrike-cbor/
     Cargo.toml
     src/lib.rs                      # Re-exports + CborError
     src/cid.rs                      # Cid, Codec
@@ -52,7 +52,7 @@ crates/
     src/varint.rs                   # Unsigned varint helpers
     src/key.rs                      # cbor_key! macro
     testdata/                       # Test vectors (copied from atmos)
-  ratproto-crypto/
+  shrike-crypto/
     Cargo.toml
     src/lib.rs                      # Traits + re-exports
     src/p256.rs                     # P256SigningKey, P256VerifyingKey
@@ -60,7 +60,7 @@ crates/
     src/signature.rs                # Signature type
     src/did_key.rs                  # did:key parsing
     testdata/                       # Signature fixtures
-  ratproto-mst/
+  shrike-mst/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/tree.rs                     # Tree<S>
@@ -69,66 +69,66 @@ crates/
     src/block_store.rs              # BlockStore trait + MemBlockStore
     src/height.rs                   # Key height computation
     testdata/                       # Example keys, fixtures
-  ratproto-repo/
+  shrike-repo/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/repo.rs                     # Repo<S>
     src/commit.rs                   # Commit, signing, verification
     testdata/                       # Real repo CAR fixtures
-  ratproto-car/
+  shrike-car/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/reader.rs                   # Reader<R>
     src/writer.rs                   # Writer<W>
     testdata/                       # CAR fixtures
-  ratproto-lexicon/
+  shrike-lexicon/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/schema.rs                   # Schema, Def, FieldSchema
     src/catalog.rs                  # Catalog
     src/validate.rs                 # validate_record, validate_value
     src/error.rs                    # ValidationError
-  ratproto-xrpc/
+  shrike-xrpc/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/client.rs                   # Client
     src/auth.rs                     # AuthInfo, session management
     src/retry.rs                    # RetryPolicy
     src/error.rs                    # Error enum
-  ratproto-xrpc-server/
+  shrike-xrpc-server/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/server.rs                   # Server
     src/error.rs                    # ServerError
     src/context.rs                  # RequestContext
-  ratproto-identity/
+  shrike-identity/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/identity.rs                 # Identity, DidDocument
     src/directory.rs                # Directory (cached resolver)
     src/plc.rs                      # PlcClient
     src/did_web.rs                  # did:web resolution
-  ratproto-streaming/
+  shrike-streaming/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/event.rs                    # Event, Operation enums
     src/jetstream.rs                # JetstreamEvent, JetstreamCommit
     src/client.rs                   # Client, subscribe/jetstream
     src/reconnect.rs                # Reconnection logic
-  ratproto-sync/
+  shrike-sync/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/client.rs                   # SyncClient
     src/verify.rs                   # Verification logic
-  ratproto-backfill/
+  shrike-backfill/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/engine.rs                   # BackfillEngine
     src/checkpoint.rs               # Checkpoint trait
-  ratproto-labeling/
+  shrike-labeling/
     Cargo.toml
     src/lib.rs                      # Label, sign/verify/encode/decode
-  ratproto-api/
+  shrike-api/
     Cargo.toml
     src/lib.rs                      # Re-exports
     src/com/mod.rs                  # com namespace
@@ -152,8 +152,8 @@ tools/
 
 **Files:**
 - Create: `Cargo.toml` (workspace root)
-- Create: `crates/ratproto-syntax/Cargo.toml`
-- Create: `crates/ratproto-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/Cargo.toml`
+- Create: `crates/shrike-syntax/src/lib.rs`
 - Create: `CLAUDE.md`
 
 - [ ] **Step 1: Create workspace root Cargo.toml**
@@ -162,7 +162,7 @@ tools/
 [workspace]
 resolver = "2"
 members = [
-    "crates/ratproto-syntax",
+    "crates/shrike-syntax",
 ]
 
 [workspace.package]
@@ -178,12 +178,12 @@ serde_json = "1"
 sha2 = "0.10"
 ```
 
-- [ ] **Step 2: Create ratproto-syntax crate scaffold**
+- [ ] **Step 2: Create shrike-syntax crate scaffold**
 
-`crates/ratproto-syntax/Cargo.toml`:
+`crates/shrike-syntax/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-syntax"
+name = "shrike-syntax"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -194,7 +194,7 @@ thiserror.workspace = true
 serde.workspace = true
 ```
 
-`crates/ratproto-syntax/src/lib.rs`:
+`crates/shrike-syntax/src/lib.rs`:
 ```rust
 mod did;
 
@@ -215,7 +215,7 @@ mod tests {
 }
 ```
 
-`crates/ratproto-syntax/src/did.rs`:
+`crates/shrike-syntax/src/did.rs`:
 ```rust
 use std::fmt;
 
@@ -269,32 +269,32 @@ Expected: Compiles, 1 test passes
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Cargo.toml CLAUDE.md crates/ratproto-syntax/
-git commit -m "feat: scaffold workspace with ratproto-syntax crate"
+git add Cargo.toml CLAUDE.md crates/shrike-syntax/
+git commit -m "feat: scaffold workspace with shrike-syntax crate"
 ```
 
 ---
 
-## Task 2: ratproto-syntax — Did Type
+## Task 2: shrike-syntax — Did Type
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/did.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
-- Create: `crates/ratproto-syntax/testdata/did_syntax_valid.txt`
-- Create: `crates/ratproto-syntax/testdata/did_syntax_invalid.txt`
+- Create: `crates/shrike-syntax/src/did.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/testdata/did_syntax_valid.txt`
+- Create: `crates/shrike-syntax/testdata/did_syntax_invalid.txt`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/did.go` and `did_test.go`
 
 - [ ] **Step 1: Copy test vectors from atmos**
 
 ```bash
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/did_syntax_valid.txt crates/ratproto-syntax/testdata/
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/did_syntax_invalid.txt crates/ratproto-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/did_syntax_valid.txt crates/shrike-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/did_syntax_invalid.txt crates/shrike-syntax/testdata/
 ```
 
 - [ ] **Step 2: Write the test vector loading helper and DID tests**
 
-Add to `crates/ratproto-syntax/src/did.rs`:
+Add to `crates/shrike-syntax/src/did.rs`:
 ```rust
 #[cfg(test)]
 mod tests {
@@ -381,12 +381,12 @@ mod tests {
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cargo test -p ratproto-syntax`
+Run: `cargo test -p shrike-syntax`
 Expected: FAIL — `Did::try_from`, `method()`, `identifier()` not implemented
 
 - [ ] **Step 4: Implement Did type**
 
-Replace `crates/ratproto-syntax/src/did.rs` with full implementation:
+Replace `crates/shrike-syntax/src/did.rs` with full implementation:
 ```rust
 use std::borrow::Borrow;
 use std::fmt;
@@ -541,7 +541,7 @@ mod tests {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p ratproto-syntax`
+Run: `cargo test -p shrike-syntax`
 Expected: All tests pass
 
 - [ ] **Step 6: Update lib.rs exports**
@@ -576,38 +576,38 @@ pub enum SyntaxError {
 
 - [ ] **Step 7: Run clippy and tests**
 
-Run: `cargo clippy -p ratproto-syntax -- -D warnings && cargo test -p ratproto-syntax`
+Run: `cargo clippy -p shrike-syntax -- -D warnings && cargo test -p shrike-syntax`
 Expected: No warnings, all tests pass
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement Did type with validation and test vectors"
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement Did type with validation and test vectors"
 ```
 
 ---
 
-## Task 3: ratproto-syntax — Handle Type
+## Task 3: shrike-syntax — Handle Type
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/handle.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
-- Create: `crates/ratproto-syntax/testdata/handle_syntax_valid.txt`
-- Create: `crates/ratproto-syntax/testdata/handle_syntax_invalid.txt`
+- Create: `crates/shrike-syntax/src/handle.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/testdata/handle_syntax_valid.txt`
+- Create: `crates/shrike-syntax/testdata/handle_syntax_invalid.txt`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/handle.go` and `handle_test.go`
 
 - [ ] **Step 1: Copy test vectors from atmos**
 
 ```bash
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/handle_syntax_valid.txt crates/ratproto-syntax/testdata/
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/handle_syntax_invalid.txt crates/ratproto-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/handle_syntax_valid.txt crates/shrike-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/handle_syntax_invalid.txt crates/shrike-syntax/testdata/
 ```
 
 - [ ] **Step 2: Write tests**
 
-`crates/ratproto-syntax/src/handle.rs`:
+`crates/shrike-syntax/src/handle.rs`:
 ```rust
 #[cfg(test)]
 mod tests {
@@ -670,12 +670,12 @@ mod tests {
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cargo test -p ratproto-syntax`
+Run: `cargo test -p shrike-syntax`
 Expected: FAIL — Handle not implemented
 
 - [ ] **Step 4: Implement Handle type**
 
-`crates/ratproto-syntax/src/handle.rs`: Follow the same newtype pattern as Did. Handle validation rules:
+`crates/shrike-syntax/src/handle.rs`: Follow the same newtype pattern as Did. Handle validation rules:
 - Max total length: 253
 - At least 2 labels separated by dots
 - Each label: 1-63 chars, alphanumeric + hyphens, no leading/trailing hyphens
@@ -686,33 +686,33 @@ Reference atmos's `handle.go` for the exact validation logic, adapting to idioma
 
 - [ ] **Step 5: Run tests, clippy**
 
-Run: `cargo clippy -p ratproto-syntax -- -D warnings && cargo test -p ratproto-syntax`
+Run: `cargo clippy -p shrike-syntax -- -D warnings && cargo test -p shrike-syntax`
 Expected: All pass
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement Handle type with normalization and test vectors"
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement Handle type with normalization and test vectors"
 ```
 
 ---
 
-## Task 4: ratproto-syntax — Nsid Type
+## Task 4: shrike-syntax — Nsid Type
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/nsid.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
-- Create: `crates/ratproto-syntax/testdata/nsid_syntax_valid.txt`
-- Create: `crates/ratproto-syntax/testdata/nsid_syntax_invalid.txt`
+- Create: `crates/shrike-syntax/src/nsid.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/testdata/nsid_syntax_valid.txt`
+- Create: `crates/shrike-syntax/testdata/nsid_syntax_invalid.txt`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/nsid.go`
 
 - [ ] **Step 1: Copy test vectors**
 
 ```bash
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/nsid_syntax_valid.txt crates/ratproto-syntax/testdata/
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/nsid_syntax_invalid.txt crates/ratproto-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/nsid_syntax_valid.txt crates/shrike-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/nsid_syntax_invalid.txt crates/shrike-syntax/testdata/
 ```
 
 - [ ] **Step 2: Write tests**
@@ -740,17 +740,17 @@ Same TDD cycle as previous types. Nsid rules:
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement Nsid type with authority/name parsing"
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement Nsid type with authority/name parsing"
 ```
 
 ---
 
-## Task 5: ratproto-syntax — AtUri Type
+## Task 5: shrike-syntax — AtUri Type
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/aturi.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/src/aturi.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/aturi.go`
 
@@ -799,27 +799,27 @@ Format: `at://<authority>[/<collection>[/<rkey>]]`
 - [ ] **Step 3: Run tests, clippy, commit**
 
 ```bash
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement AtUri type with path decomposition"
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement AtUri type with path decomposition"
 ```
 
 ---
 
-## Task 6: ratproto-syntax — Tid and TidClock
+## Task 6: shrike-syntax — Tid and TidClock
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/tid.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
-- Create: `crates/ratproto-syntax/testdata/tid_syntax_valid.txt`
-- Create: `crates/ratproto-syntax/testdata/tid_syntax_invalid.txt`
+- Create: `crates/shrike-syntax/src/tid.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/testdata/tid_syntax_valid.txt`
+- Create: `crates/shrike-syntax/testdata/tid_syntax_invalid.txt`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/tid.go`
 
 - [ ] **Step 1: Copy test vectors**
 
 ```bash
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/tid_syntax_valid.txt crates/ratproto-syntax/testdata/
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/tid_syntax_invalid.txt crates/ratproto-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/tid_syntax_valid.txt crates/shrike-syntax/testdata/
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/testdata/tid_syntax_invalid.txt crates/shrike-syntax/testdata/
 ```
 
 - [ ] **Step 2: Write tests**
@@ -872,20 +872,20 @@ fn tid_timestamp_and_clock_id() {
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement Tid and TidClock with atomic monotonic generation"
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement Tid and TidClock with atomic monotonic generation"
 ```
 
 ---
 
-## Task 7: ratproto-syntax — Datetime, RecordKey, Language, AtIdentifier
+## Task 7: shrike-syntax — Datetime, RecordKey, Language, AtIdentifier
 
 **Files:**
-- Create: `crates/ratproto-syntax/src/datetime.rs`
-- Create: `crates/ratproto-syntax/src/recordkey.rs`
-- Create: `crates/ratproto-syntax/src/language.rs`
-- Create: `crates/ratproto-syntax/src/at_identifier.rs`
-- Modify: `crates/ratproto-syntax/src/lib.rs`
+- Create: `crates/shrike-syntax/src/datetime.rs`
+- Create: `crates/shrike-syntax/src/recordkey.rs`
+- Create: `crates/shrike-syntax/src/language.rs`
+- Create: `crates/shrike-syntax/src/at_identifier.rs`
+- Modify: `crates/shrike-syntax/src/lib.rs`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/datetime.go`, `recordkey.go`, `language.go`, `at_identifier.go`
 
@@ -941,35 +941,35 @@ pub use at_identifier::AtIdentifier;
 - [ ] **Step 4: Run full test suite, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-syntax -- -D warnings && cargo test -p ratproto-syntax
-git add crates/ratproto-syntax/
-git commit -m "feat(ratproto-syntax): implement Datetime, RecordKey, Language, AtIdentifier"
+cargo clippy -p shrike-syntax -- -D warnings && cargo test -p shrike-syntax
+git add crates/shrike-syntax/
+git commit -m "feat(shrike-syntax): implement Datetime, RecordKey, Language, AtIdentifier"
 ```
 
 ---
 
-## Task 8: ratproto-cbor — Crate Setup, Varint, CID
+## Task 8: shrike-cbor — Crate Setup, Varint, CID
 
 **Files:**
-- Create: `crates/ratproto-cbor/Cargo.toml`
-- Create: `crates/ratproto-cbor/src/lib.rs`
-- Create: `crates/ratproto-cbor/src/varint.rs`
-- Create: `crates/ratproto-cbor/src/cid.rs`
+- Create: `crates/shrike-cbor/Cargo.toml`
+- Create: `crates/shrike-cbor/src/lib.rs`
+- Create: `crates/shrike-cbor/src/varint.rs`
+- Create: `crates/shrike-cbor/src/cid.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 - [ ] **Step 1: Create crate and add to workspace**
 
-`crates/ratproto-cbor/Cargo.toml`:
+`crates/shrike-cbor/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-cbor"
+name = "shrike-cbor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "DRISL (DASL deterministic CBOR) codec and CID for AT Protocol"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
+shrike-syntax = { path = "../shrike-syntax" }
 thiserror.workspace = true
 sha2.workspace = true
 
@@ -977,7 +977,7 @@ sha2.workspace = true
 serde_json.workspace = true
 ```
 
-Add `"crates/ratproto-cbor"` to workspace members.
+Add `"crates/shrike-cbor"` to workspace members.
 
 - [ ] **Step 2: Write varint tests**
 
@@ -1012,7 +1012,7 @@ mod tests {
 
 - [ ] **Step 3: Implement varint**
 
-`crates/ratproto-cbor/src/varint.rs`: Standard unsigned varint (LEB128) encoding/decoding.
+`crates/shrike-cbor/src/varint.rs`: Standard unsigned varint (LEB128) encoding/decoding.
 
 - [ ] **Step 4: Write CID tests**
 
@@ -1109,19 +1109,19 @@ impl Cid {
 - [ ] **Step 6: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-cbor -- -D warnings && cargo test -p ratproto-cbor
-git add Cargo.toml crates/ratproto-cbor/
-git commit -m "feat(ratproto-cbor): implement CID and varint encoding"
+cargo clippy -p shrike-cbor -- -D warnings && cargo test -p shrike-cbor
+git add Cargo.toml crates/shrike-cbor/
+git commit -m "feat(shrike-cbor): implement CID and varint encoding"
 ```
 
 ---
 
-## Task 9: ratproto-cbor — DRISL Encoder
+## Task 9: shrike-cbor — DRISL Encoder
 
 **Files:**
-- Create: `crates/ratproto-cbor/src/encode.rs`
-- Create: `crates/ratproto-cbor/src/key.rs`
-- Modify: `crates/ratproto-cbor/src/lib.rs`
+- Create: `crates/shrike-cbor/src/encode.rs`
+- Create: `crates/shrike-cbor/src/key.rs`
+- Modify: `crates/shrike-cbor/src/lib.rs`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/cbor/encoding.go`
 
@@ -1239,7 +1239,7 @@ mod tests {
 
 - [ ] **Step 2: Implement Encoder**
 
-`crates/ratproto-cbor/src/encode.rs`:
+`crates/shrike-cbor/src/encode.rs`:
 ```rust
 pub struct Encoder<W: std::io::Write> {
     writer: W,
@@ -1268,7 +1268,7 @@ Map key sorting: sort by the CBOR-encoded byte representation of each key (lengt
 
 - [ ] **Step 3: Implement cbor_key! macro**
 
-`crates/ratproto-cbor/src/key.rs`:
+`crates/shrike-cbor/src/key.rs`:
 ```rust
 /// Pre-compute the CBOR encoding of a text string key at compile time.
 /// Used by generated code for zero-allocation map key encoding.
@@ -1287,19 +1287,19 @@ macro_rules! cbor_key {
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-cbor -- -D warnings && cargo test -p ratproto-cbor
-git add crates/ratproto-cbor/
-git commit -m "feat(ratproto-cbor): implement DRISL encoder with deterministic map sorting"
+cargo clippy -p shrike-cbor -- -D warnings && cargo test -p shrike-cbor
+git add crates/shrike-cbor/
+git commit -m "feat(shrike-cbor): implement DRISL encoder with deterministic map sorting"
 ```
 
 ---
 
-## Task 10: ratproto-cbor — DRISL Decoder
+## Task 10: shrike-cbor — DRISL Decoder
 
 **Files:**
-- Create: `crates/ratproto-cbor/src/decode.rs`
-- Create: `crates/ratproto-cbor/src/value.rs`
-- Modify: `crates/ratproto-cbor/src/lib.rs`
+- Create: `crates/shrike-cbor/src/decode.rs`
+- Create: `crates/shrike-cbor/src/value.rs`
+- Modify: `crates/shrike-cbor/src/lib.rs`
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/cbor/cbor.go` (Unmarshal)
 
@@ -1404,7 +1404,7 @@ mod tests {
 
 - [ ] **Step 2: Implement Value type**
 
-`crates/ratproto-cbor/src/value.rs`:
+`crates/shrike-cbor/src/value.rs`:
 ```rust
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value<'a> {
@@ -1425,7 +1425,7 @@ pub enum Value<'a> {
 
 - [ ] **Step 3: Implement Decoder**
 
-`crates/ratproto-cbor/src/decode.rs`:
+`crates/shrike-cbor/src/decode.rs`:
 ```rust
 pub struct Decoder<'a> {
     buf: &'a [u8],
@@ -1450,37 +1450,37 @@ pub fn decode(data: &[u8]) -> Result<Value, CborError> { /* ... */ }
 - [ ] **Step 5: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-cbor -- -D warnings && cargo test -p ratproto-cbor
-git add crates/ratproto-cbor/
-git commit -m "feat(ratproto-cbor): implement DRISL decoder with strict canonical validation"
+cargo clippy -p shrike-cbor -- -D warnings && cargo test -p shrike-cbor
+git add crates/shrike-cbor/
+git commit -m "feat(shrike-cbor): implement DRISL decoder with strict canonical validation"
 ```
 
 ---
 
-## Task 11: ratproto-crypto — Crate Setup, Traits, P-256
+## Task 11: shrike-crypto — Crate Setup, Traits, P-256
 
 **Files:**
-- Create: `crates/ratproto-crypto/Cargo.toml`
-- Create: `crates/ratproto-crypto/src/lib.rs`
-- Create: `crates/ratproto-crypto/src/signature.rs`
-- Create: `crates/ratproto-crypto/src/p256.rs`
+- Create: `crates/shrike-crypto/Cargo.toml`
+- Create: `crates/shrike-crypto/src/lib.rs`
+- Create: `crates/shrike-crypto/src/signature.rs`
+- Create: `crates/shrike-crypto/src/p256.rs`
 - Modify: `Cargo.toml` (workspace members + deps)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/crypto/`
 
 - [ ] **Step 1: Create crate**
 
-`crates/ratproto-crypto/Cargo.toml`:
+`crates/shrike-crypto/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-crypto"
+name = "shrike-crypto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol cryptography — P-256 and K-256 ECDSA signing"
 
 [dependencies]
-ratproto-cbor = { path = "../ratproto-cbor" }
+shrike-cbor = { path = "../shrike-cbor" }
 thiserror.workspace = true
 p256 = { version = "0.13", features = ["ecdsa"] }
 sha2.workspace = true
@@ -1492,7 +1492,7 @@ serde_json.workspace = true
 
 - [ ] **Step 2: Implement Signature and traits**
 
-`crates/ratproto-crypto/src/signature.rs`:
+`crates/shrike-crypto/src/signature.rs`:
 ```rust
 /// 64-byte compact ECDSA signature [R || S], always low-S normalized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1504,7 +1504,7 @@ impl Signature {
 }
 ```
 
-`crates/ratproto-crypto/src/lib.rs`:
+`crates/shrike-crypto/src/lib.rs`:
 ```rust
 pub trait SigningKey: Send + Sync {
     fn public_key(&self) -> &dyn VerifyingKey;
@@ -1589,24 +1589,24 @@ Use the `p256` crate. Key points:
 - [ ] **Step 5: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-crypto -- -D warnings && cargo test -p ratproto-crypto
-git add Cargo.toml crates/ratproto-crypto/
-git commit -m "feat(ratproto-crypto): implement P-256 signing with low-S normalization"
+cargo clippy -p shrike-crypto -- -D warnings && cargo test -p shrike-crypto
+git add Cargo.toml crates/shrike-crypto/
+git commit -m "feat(shrike-crypto): implement P-256 signing with low-S normalization"
 ```
 
 ---
 
-## Task 12: ratproto-crypto — K-256 and did:key Parsing
+## Task 12: shrike-crypto — K-256 and did:key Parsing
 
 **Files:**
-- Create: `crates/ratproto-crypto/src/k256.rs`
-- Create: `crates/ratproto-crypto/src/did_key.rs`
-- Modify: `crates/ratproto-crypto/Cargo.toml` (add k256 dep)
-- Modify: `crates/ratproto-crypto/src/lib.rs`
+- Create: `crates/shrike-crypto/src/k256.rs`
+- Create: `crates/shrike-crypto/src/did_key.rs`
+- Modify: `crates/shrike-crypto/Cargo.toml` (add k256 dep)
+- Modify: `crates/shrike-crypto/src/lib.rs`
 
 - [ ] **Step 1: Add k256 dependency**
 
-Add to `crates/ratproto-crypto/Cargo.toml`:
+Add to `crates/shrike-crypto/Cargo.toml`:
 ```toml
 k256 = { version = "0.13", features = ["ecdsa"] }
 ```
@@ -1667,23 +1667,23 @@ Same pattern as P-256. `parse_did_key` detects curve from the multicodec prefix:
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-crypto -- -D warnings && cargo test -p ratproto-crypto
-git add crates/ratproto-crypto/
-git commit -m "feat(ratproto-crypto): implement K-256 and did:key parsing"
+cargo clippy -p shrike-crypto -- -D warnings && cargo test -p shrike-crypto
+git add crates/shrike-crypto/
+git commit -m "feat(shrike-crypto): implement K-256 and did:key parsing"
 ```
 
 ---
 
-## Task 13: ratproto-mst — Merkle Search Tree
+## Task 13: shrike-mst — Merkle Search Tree
 
 **Files:**
-- Create: `crates/ratproto-mst/Cargo.toml`
-- Create: `crates/ratproto-mst/src/lib.rs`
-- Create: `crates/ratproto-mst/src/height.rs`
-- Create: `crates/ratproto-mst/src/block_store.rs`
-- Create: `crates/ratproto-mst/src/node.rs`
-- Create: `crates/ratproto-mst/src/tree.rs`
-- Create: `crates/ratproto-mst/src/diff.rs`
+- Create: `crates/shrike-mst/Cargo.toml`
+- Create: `crates/shrike-mst/src/lib.rs`
+- Create: `crates/shrike-mst/src/height.rs`
+- Create: `crates/shrike-mst/src/block_store.rs`
+- Create: `crates/shrike-mst/src/node.rs`
+- Create: `crates/shrike-mst/src/tree.rs`
+- Create: `crates/shrike-mst/src/diff.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/mst/`
@@ -1691,21 +1691,21 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/mst/`
 - [ ] **Step 1: Create crate, copy test data**
 
 ```bash
-mkdir -p crates/ratproto-mst/testdata
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/mst/testdata/example_keys.txt crates/ratproto-mst/testdata/
+mkdir -p crates/shrike-mst/testdata
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/mst/testdata/example_keys.txt crates/shrike-mst/testdata/
 ```
 
-`crates/ratproto-mst/Cargo.toml`:
+`crates/shrike-mst/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-mst"
+name = "shrike-mst"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol Merkle Search Tree"
 
 [dependencies]
-ratproto-cbor = { path = "../ratproto-cbor" }
+shrike-cbor = { path = "../shrike-cbor" }
 thiserror.workspace = true
 sha2.workspace = true
 ```
@@ -1832,20 +1832,20 @@ This is the most complex data structure. Key implementation details:
 - [ ] **Step 7: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-mst -- -D warnings && cargo test -p ratproto-mst
-git add Cargo.toml crates/ratproto-mst/
-git commit -m "feat(ratproto-mst): implement Merkle Search Tree with lazy loading and diff"
+cargo clippy -p shrike-mst -- -D warnings && cargo test -p shrike-mst
+git add Cargo.toml crates/shrike-mst/
+git commit -m "feat(shrike-mst): implement Merkle Search Tree with lazy loading and diff"
 ```
 
 ---
 
-## Task 14: ratproto-repo — Repository Operations
+## Task 14: shrike-repo — Repository Operations
 
 **Files:**
-- Create: `crates/ratproto-repo/Cargo.toml`
-- Create: `crates/ratproto-repo/src/lib.rs`
-- Create: `crates/ratproto-repo/src/repo.rs`
-- Create: `crates/ratproto-repo/src/commit.rs`
+- Create: `crates/shrike-repo/Cargo.toml`
+- Create: `crates/shrike-repo/src/lib.rs`
+- Create: `crates/shrike-repo/src/repo.rs`
+- Create: `crates/shrike-repo/src/commit.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/repo/`
@@ -1853,24 +1853,24 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/repo/`
 - [ ] **Step 1: Create crate, copy test fixtures**
 
 ```bash
-mkdir -p crates/ratproto-repo/testdata
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/repo/testdata/*.car crates/ratproto-repo/testdata/
+mkdir -p crates/shrike-repo/testdata
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/repo/testdata/*.car crates/shrike-repo/testdata/
 ```
 
-`crates/ratproto-repo/Cargo.toml`:
+`crates/shrike-repo/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-repo"
+name = "shrike-repo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol repository operations — CRUD and signed commits"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
-ratproto-crypto = { path = "../ratproto-crypto" }
-ratproto-mst = { path = "../ratproto-mst" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-crypto = { path = "../shrike-crypto" }
+shrike-mst = { path = "../shrike-mst" }
 thiserror.workspace = true
 ```
 
@@ -2029,20 +2029,20 @@ pub enum Mutation {
 - [ ] **Step 7: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-repo -- -D warnings && cargo test -p ratproto-repo
-git add Cargo.toml crates/ratproto-repo/
-git commit -m "feat(ratproto-repo): implement repository CRUD and signed commits"
+cargo clippy -p shrike-repo -- -D warnings && cargo test -p shrike-repo
+git add Cargo.toml crates/shrike-repo/
+git commit -m "feat(shrike-repo): implement repository CRUD and signed commits"
 ```
 
 ---
 
-## Task 15: ratproto-car — CAR v1 File I/O
+## Task 15: shrike-car — CAR v1 File I/O
 
 **Files:**
-- Create: `crates/ratproto-car/Cargo.toml`
-- Create: `crates/ratproto-car/src/lib.rs`
-- Create: `crates/ratproto-car/src/reader.rs`
-- Create: `crates/ratproto-car/src/writer.rs`
+- Create: `crates/shrike-car/Cargo.toml`
+- Create: `crates/shrike-car/src/lib.rs`
+- Create: `crates/shrike-car/src/reader.rs`
+- Create: `crates/shrike-car/src/writer.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/car/`
@@ -2050,8 +2050,8 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/car/`
 - [ ] **Step 1: Create crate, copy test fixtures**
 
 ```bash
-mkdir -p crates/ratproto-car/testdata
-cp /home/jcalabro/go/src/github.com/jcalabro/atmos/car/testdata/*.car crates/ratproto-car/testdata/
+mkdir -p crates/shrike-car/testdata
+cp /home/jcalabro/go/src/github.com/jcalabro/atmos/car/testdata/*.car crates/shrike-car/testdata/
 ```
 
 - [ ] **Step 2: Write tests**
@@ -2104,22 +2104,22 @@ Reader: parse varint header length, decode DRISL header for roots, then iterate 
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-car -- -D warnings && cargo test -p ratproto-car
-git add Cargo.toml crates/ratproto-car/
-git commit -m "feat(ratproto-car): implement CAR v1 reader and writer"
+cargo clippy -p shrike-car -- -D warnings && cargo test -p shrike-car
+git add Cargo.toml crates/shrike-car/
+git commit -m "feat(shrike-car): implement CAR v1 reader and writer"
 ```
 
 ---
 
-## Task 16: ratproto-lexicon — Schema Parsing & Validation
+## Task 16: shrike-lexicon — Schema Parsing & Validation
 
 **Files:**
-- Create: `crates/ratproto-lexicon/Cargo.toml`
-- Create: `crates/ratproto-lexicon/src/lib.rs`
-- Create: `crates/ratproto-lexicon/src/schema.rs`
-- Create: `crates/ratproto-lexicon/src/catalog.rs`
-- Create: `crates/ratproto-lexicon/src/validate.rs`
-- Create: `crates/ratproto-lexicon/src/error.rs`
+- Create: `crates/shrike-lexicon/Cargo.toml`
+- Create: `crates/shrike-lexicon/src/lib.rs`
+- Create: `crates/shrike-lexicon/src/schema.rs`
+- Create: `crates/shrike-lexicon/src/catalog.rs`
+- Create: `crates/shrike-lexicon/src/validate.rs`
+- Create: `crates/shrike-lexicon/src/error.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/lexicon/` and `/home/jcalabro/go/src/github.com/jcalabro/atmos/lexval/`
@@ -2128,14 +2128,14 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/lexicon/` and `/home
 
 ```toml
 [package]
-name = "ratproto-lexicon"
+name = "shrike-lexicon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol Lexicon schema parsing and record validation"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
+shrike-syntax = { path = "../shrike-syntax" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -2222,22 +2222,22 @@ Schema parsing uses serde_json to deserialize Lexicon JSON into the `Schema` str
 - [ ] **Step 5: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-lexicon -- -D warnings && cargo test -p ratproto-lexicon
-git add Cargo.toml crates/ratproto-lexicon/
-git commit -m "feat(ratproto-lexicon): implement schema parsing and record validation"
+cargo clippy -p shrike-lexicon -- -D warnings && cargo test -p shrike-lexicon
+git add Cargo.toml crates/shrike-lexicon/
+git commit -m "feat(shrike-lexicon): implement schema parsing and record validation"
 ```
 
 ---
 
-## Task 17: ratproto-xrpc — XRPC HTTP Client
+## Task 17: shrike-xrpc — XRPC HTTP Client
 
 **Files:**
-- Create: `crates/ratproto-xrpc/Cargo.toml`
-- Create: `crates/ratproto-xrpc/src/lib.rs`
-- Create: `crates/ratproto-xrpc/src/client.rs`
-- Create: `crates/ratproto-xrpc/src/auth.rs`
-- Create: `crates/ratproto-xrpc/src/retry.rs`
-- Create: `crates/ratproto-xrpc/src/error.rs`
+- Create: `crates/shrike-xrpc/Cargo.toml`
+- Create: `crates/shrike-xrpc/src/lib.rs`
+- Create: `crates/shrike-xrpc/src/client.rs`
+- Create: `crates/shrike-xrpc/src/auth.rs`
+- Create: `crates/shrike-xrpc/src/retry.rs`
+- Create: `crates/shrike-xrpc/src/error.rs`
 - Modify: `Cargo.toml` (workspace members + deps)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/xrpc/`
@@ -2250,18 +2250,18 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
-`crates/ratproto-xrpc/Cargo.toml`:
+`crates/shrike-xrpc/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-xrpc"
+name = "shrike-xrpc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol XRPC HTTP client"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -2331,21 +2331,21 @@ Key implementation points:
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-xrpc -- -D warnings && cargo test -p ratproto-xrpc
-git add Cargo.toml crates/ratproto-xrpc/
-git commit -m "feat(ratproto-xrpc): implement XRPC HTTP client with retry and rate limiting"
+cargo clippy -p shrike-xrpc -- -D warnings && cargo test -p shrike-xrpc
+git add Cargo.toml crates/shrike-xrpc/
+git commit -m "feat(shrike-xrpc): implement XRPC HTTP client with retry and rate limiting"
 ```
 
 ---
 
-## Task 18: ratproto-xrpc-server — XRPC HTTP Server
+## Task 18: shrike-xrpc-server — XRPC HTTP Server
 
 **Files:**
-- Create: `crates/ratproto-xrpc-server/Cargo.toml`
-- Create: `crates/ratproto-xrpc-server/src/lib.rs`
-- Create: `crates/ratproto-xrpc-server/src/server.rs`
-- Create: `crates/ratproto-xrpc-server/src/error.rs`
-- Create: `crates/ratproto-xrpc-server/src/context.rs`
+- Create: `crates/shrike-xrpc-server/Cargo.toml`
+- Create: `crates/shrike-xrpc-server/src/lib.rs`
+- Create: `crates/shrike-xrpc-server/src/server.rs`
+- Create: `crates/shrike-xrpc-server/src/error.rs`
+- Create: `crates/shrike-xrpc-server/src/context.rs`
 - Modify: `Cargo.toml` (workspace members + deps)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/xrpcserver/`
@@ -2357,18 +2357,18 @@ Add to workspace deps:
 axum = "0.8"
 ```
 
-`crates/ratproto-xrpc-server/Cargo.toml`:
+`crates/shrike-xrpc-server/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-xrpc-server"
+name = "shrike-xrpc-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol XRPC HTTP server framework"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -2442,22 +2442,22 @@ Route `/xrpc/{nsid}` to registered handlers. Queries accept GET with query param
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-xrpc-server -- -D warnings && cargo test -p ratproto-xrpc-server
-git add Cargo.toml crates/ratproto-xrpc-server/
-git commit -m "feat(ratproto-xrpc-server): implement XRPC server framework on axum"
+cargo clippy -p shrike-xrpc-server -- -D warnings && cargo test -p shrike-xrpc-server
+git add Cargo.toml crates/shrike-xrpc-server/
+git commit -m "feat(shrike-xrpc-server): implement XRPC server framework on axum"
 ```
 
 ---
 
-## Task 19: ratproto-identity — DID Resolution & Handle Verification
+## Task 19: shrike-identity — DID Resolution & Handle Verification
 
 **Files:**
-- Create: `crates/ratproto-identity/Cargo.toml`
-- Create: `crates/ratproto-identity/src/lib.rs`
-- Create: `crates/ratproto-identity/src/identity.rs`
-- Create: `crates/ratproto-identity/src/directory.rs`
-- Create: `crates/ratproto-identity/src/plc.rs`
-- Create: `crates/ratproto-identity/src/did_web.rs`
+- Create: `crates/shrike-identity/Cargo.toml`
+- Create: `crates/shrike-identity/src/lib.rs`
+- Create: `crates/shrike-identity/src/identity.rs`
+- Create: `crates/shrike-identity/src/directory.rs`
+- Create: `crates/shrike-identity/src/plc.rs`
+- Create: `crates/shrike-identity/src/did_web.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/identity/`
@@ -2466,16 +2466,16 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/identity/`
 
 ```toml
 [package]
-name = "ratproto-identity"
+name = "shrike-identity"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol identity resolution — DID documents, handle verification"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-crypto = { path = "../ratproto-crypto" }
-ratproto-xrpc = { path = "../ratproto-xrpc" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-crypto = { path = "../shrike-crypto" }
+shrike-xrpc = { path = "../shrike-xrpc" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -2554,22 +2554,22 @@ pub struct Directory {
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-identity -- -D warnings && cargo test -p ratproto-identity
-git add Cargo.toml crates/ratproto-identity/
-git commit -m "feat(ratproto-identity): implement DID resolution and handle verification"
+cargo clippy -p shrike-identity -- -D warnings && cargo test -p shrike-identity
+git add Cargo.toml crates/shrike-identity/
+git commit -m "feat(shrike-identity): implement DID resolution and handle verification"
 ```
 
 ---
 
-## Task 20: ratproto-streaming — Event Stream Consumer
+## Task 20: shrike-streaming — Event Stream Consumer
 
 **Files:**
-- Create: `crates/ratproto-streaming/Cargo.toml`
-- Create: `crates/ratproto-streaming/src/lib.rs`
-- Create: `crates/ratproto-streaming/src/event.rs`
-- Create: `crates/ratproto-streaming/src/jetstream.rs`
-- Create: `crates/ratproto-streaming/src/client.rs`
-- Create: `crates/ratproto-streaming/src/reconnect.rs`
+- Create: `crates/shrike-streaming/Cargo.toml`
+- Create: `crates/shrike-streaming/src/lib.rs`
+- Create: `crates/shrike-streaming/src/event.rs`
+- Create: `crates/shrike-streaming/src/jetstream.rs`
+- Create: `crates/shrike-streaming/src/client.rs`
+- Create: `crates/shrike-streaming/src/reconnect.rs`
 - Modify: `Cargo.toml` (workspace members + deps)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/streaming/`
@@ -2582,18 +2582,18 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures = "0.3"
 ```
 
-`crates/ratproto-streaming/Cargo.toml`:
+`crates/shrike-streaming/Cargo.toml`:
 ```toml
 [package]
-name = "ratproto-streaming"
+name = "shrike-streaming"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol event streaming — firehose, labels, Jetstream"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -2681,20 +2681,20 @@ Uses tokio-tungstenite for WebSocket. Reconnection: exponential backoff with jit
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-streaming -- -D warnings && cargo test -p ratproto-streaming
-git add Cargo.toml crates/ratproto-streaming/
-git commit -m "feat(ratproto-streaming): implement firehose and Jetstream consumers"
+cargo clippy -p shrike-streaming -- -D warnings && cargo test -p shrike-streaming
+git add Cargo.toml crates/shrike-streaming/
+git commit -m "feat(shrike-streaming): implement firehose and Jetstream consumers"
 ```
 
 ---
 
-## Task 21: ratproto-sync — Repo Sync & Verification
+## Task 21: shrike-sync — Repo Sync & Verification
 
 **Files:**
-- Create: `crates/ratproto-sync/Cargo.toml`
-- Create: `crates/ratproto-sync/src/lib.rs`
-- Create: `crates/ratproto-sync/src/client.rs`
-- Create: `crates/ratproto-sync/src/verify.rs`
+- Create: `crates/shrike-sync/Cargo.toml`
+- Create: `crates/shrike-sync/src/lib.rs`
+- Create: `crates/shrike-sync/src/client.rs`
+- Create: `crates/shrike-sync/src/verify.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/sync/`
@@ -2703,20 +2703,20 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/sync/`
 
 ```toml
 [package]
-name = "ratproto-sync"
+name = "shrike-sync"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol repository sync and commit verification"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
-ratproto-mst = { path = "../ratproto-mst" }
-ratproto-repo = { path = "../ratproto-repo" }
-ratproto-car = { path = "../ratproto-car" }
-ratproto-identity = { path = "../ratproto-identity" }
-ratproto-xrpc = { path = "../ratproto-xrpc" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-mst = { path = "../shrike-mst" }
+shrike-repo = { path = "../shrike-repo" }
+shrike-car = { path = "../shrike-car" }
+shrike-identity = { path = "../shrike-identity" }
+shrike-xrpc = { path = "../shrike-xrpc" }
 thiserror.workspace = true
 tokio.workspace = true
 ```
@@ -2726,8 +2726,8 @@ tokio.workspace = true
 ```rust
 #[test]
 fn verify_car_fixture() {
-    let data = std::fs::read("../ratproto-repo/testdata/greenground.repo.car").unwrap();
-    let (roots, blocks) = ratproto_car::read_all(&data[..]).unwrap();
+    let data = std::fs::read("../shrike-repo/testdata/greenground.repo.car").unwrap();
+    let (roots, blocks) = shrike_car::read_all(&data[..]).unwrap();
     // Build MemBlockStore from blocks
     // Parse commit from root
     // Verify MST structure
@@ -2745,7 +2745,7 @@ async fn list_repos_pagination() {
 pub struct DownloadedRepo {
     pub did: Did,
     pub commit: Commit,
-    pub blocks: Vec<ratproto_car::Block>,
+    pub blocks: Vec<shrike_car::Block>,
 }
 
 pub struct Record {
@@ -2763,30 +2763,30 @@ pub struct RepoEntry {
 }
 
 pub struct SyncClient {
-    xrpc: ratproto_xrpc::Client,
+    xrpc: shrike_xrpc::Client,
     identity: Option<Arc<Directory>>,
 }
 ```
 
-`get_repo` calls `com.atproto.sync.getRepo` via XRPC (returns CAR bytes), parses with ratproto-car. `verify` checks commit signature, recomputes all block CIDs, walks MST. `iter_records` downloads repo then walks the MST extracting individual records. `list_repos` paginates `com.atproto.sync.listRepos`.
+`get_repo` calls `com.atproto.sync.getRepo` via XRPC (returns CAR bytes), parses with shrike-car. `verify` checks commit signature, recomputes all block CIDs, walks MST. `iter_records` downloads repo then walks the MST extracting individual records. `list_repos` paginates `com.atproto.sync.listRepos`.
 
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-sync -- -D warnings && cargo test -p ratproto-sync
-git add Cargo.toml crates/ratproto-sync/
-git commit -m "feat(ratproto-sync): implement repo sync client and verification"
+cargo clippy -p shrike-sync -- -D warnings && cargo test -p shrike-sync
+git add Cargo.toml crates/shrike-sync/
+git commit -m "feat(shrike-sync): implement repo sync client and verification"
 ```
 
 ---
 
-## Task 22: ratproto-backfill — Concurrent Repo Downloader
+## Task 22: shrike-backfill — Concurrent Repo Downloader
 
 **Files:**
-- Create: `crates/ratproto-backfill/Cargo.toml`
-- Create: `crates/ratproto-backfill/src/lib.rs`
-- Create: `crates/ratproto-backfill/src/engine.rs`
-- Create: `crates/ratproto-backfill/src/checkpoint.rs`
+- Create: `crates/shrike-backfill/Cargo.toml`
+- Create: `crates/shrike-backfill/src/lib.rs`
+- Create: `crates/shrike-backfill/src/engine.rs`
+- Create: `crates/shrike-backfill/src/checkpoint.rs`
 - Modify: `Cargo.toml` (workspace members + deps)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/backfill/`
@@ -2801,16 +2801,16 @@ rand = "0.9"
 
 ```toml
 [package]
-name = "ratproto-backfill"
+name = "shrike-backfill"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol concurrent repo backfill engine"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-sync = { path = "../ratproto-sync" }
-ratproto-xrpc = { path = "../ratproto-xrpc" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-sync = { path = "../shrike-sync" }
+shrike-xrpc = { path = "../shrike-xrpc" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -2879,18 +2879,18 @@ Worker pool with tokio tasks, batch accumulation + Fisher-Yates shuffle, Cancell
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-backfill -- -D warnings && cargo test -p ratproto-backfill
-git add Cargo.toml crates/ratproto-backfill/
-git commit -m "feat(ratproto-backfill): implement concurrent repo downloader with shuffle"
+cargo clippy -p shrike-backfill -- -D warnings && cargo test -p shrike-backfill
+git add Cargo.toml crates/shrike-backfill/
+git commit -m "feat(shrike-backfill): implement concurrent repo downloader with shuffle"
 ```
 
 ---
 
-## Task 23: ratproto-labeling — Label Creation & Verification
+## Task 23: shrike-labeling — Label Creation & Verification
 
 **Files:**
-- Create: `crates/ratproto-labeling/Cargo.toml`
-- Create: `crates/ratproto-labeling/src/lib.rs`
+- Create: `crates/shrike-labeling/Cargo.toml`
+- Create: `crates/shrike-labeling/src/lib.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/labeling/`
@@ -2899,16 +2899,16 @@ Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/labeling/`
 
 ```toml
 [package]
-name = "ratproto-labeling"
+name = "shrike-labeling"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "AT Protocol label creation and verification"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
-ratproto-crypto = { path = "../ratproto-crypto" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-crypto = { path = "../shrike-crypto" }
 thiserror.workspace = true
 ```
 
@@ -2976,21 +2976,21 @@ Small crate. `encode_label` serializes all fields except `sig` to DRISL. `sign_l
 - [ ] **Step 4: Run tests, clippy, commit**
 
 ```bash
-cargo clippy -p ratproto-labeling -- -D warnings && cargo test -p ratproto-labeling
-git add Cargo.toml crates/ratproto-labeling/
-git commit -m "feat(ratproto-labeling): implement label sign/verify/encode/decode"
+cargo clippy -p shrike-labeling -- -D warnings && cargo test -p shrike-labeling
+git add Cargo.toml crates/shrike-labeling/
+git commit -m "feat(shrike-labeling): implement label sign/verify/encode/decode"
 ```
 
 ---
 
-## Task 24: lexgen Tool & ratproto-api Generated Types
+## Task 24: lexgen Tool & shrike-api Generated Types
 
 **Files:**
 - Create: `tools/lexgen/Cargo.toml`
 - Create: `tools/lexgen/src/main.rs`
 - Create: `tools/lexgen/src/generator.rs`
-- Create: `crates/ratproto-api/Cargo.toml`
-- Create: `crates/ratproto-api/src/lib.rs`
+- Create: `crates/shrike-api/Cargo.toml`
+- Create: `crates/shrike-api/src/lib.rs`
 - Modify: `Cargo.toml` (workspace members)
 
 Reference: `/home/jcalabro/go/src/github.com/jcalabro/atmos/lexgen/` and `/home/jcalabro/go/src/github.com/jcalabro/atmos/cmd/lexgen/`
@@ -3006,8 +3006,8 @@ license.workspace = true
 description = "Code generator: AT Protocol Lexicon JSON → Rust types"
 
 [dependencies]
-ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
-ratproto-syntax = { path = "../../crates/ratproto-syntax" }
+shrike-lexicon = { path = "../../crates/shrike-lexicon" }
+shrike-syntax = { path = "../../crates/shrike-syntax" }
 serde.workspace = true
 serde_json.workspace = true
 ```
@@ -3093,7 +3093,7 @@ fn generate_xrpc_query_function() {
 
 - [ ] **Step 3: Implement code generator**
 
-`generator.rs`: Takes parsed `Schema` (from ratproto-lexicon), outputs Rust source code string. Handles:
+`generator.rs`: Takes parsed `Schema` (from shrike-lexicon), outputs Rust source code string. Handles:
 - Record → struct with serde derives + `NSID` constant + `to_cbor()` method
 - Object → struct
 - Union → enum with `#[serde(tag = "$type")]`
@@ -3104,52 +3104,52 @@ fn generate_xrpc_query_function() {
 
 `main.rs`: CLI that reads Lexicon JSON directory, runs generator, writes to output directory.
 
-- [ ] **Step 4: Create ratproto-api scaffold**
+- [ ] **Step 4: Create shrike-api scaffold**
 
 ```toml
 [package]
-name = "ratproto-api"
+name = "shrike-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Generated AT Protocol API types from Lexicon schemas"
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-cbor = { path = "../ratproto-cbor" }
-ratproto-xrpc = { path = "../ratproto-xrpc" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-xrpc = { path = "../shrike-xrpc" }
 serde.workspace = true
 serde_json.workspace = true
 ```
 
-`crates/ratproto-api/src/lib.rs`:
+`crates/shrike-api/src/lib.rs`:
 ```rust
 // This crate contains generated code from AT Protocol Lexicon schemas.
-// Regenerate with: cargo run --bin lexgen -- --input <lexicons-dir> --output crates/ratproto-api/src/
+// Regenerate with: cargo run --bin lexgen -- --input <lexicons-dir> --output crates/shrike-api/src/
 
 pub mod com;
 pub mod app;
 ```
 
-- [ ] **Step 5: Run lexgen against official Lexicon schemas to generate ratproto-api**
+- [ ] **Step 5: Run lexgen against official Lexicon schemas to generate shrike-api**
 
 ```bash
 # Clone the official AT Protocol lexicons first
 git clone https://github.com/bluesky-social/atproto.git /tmp/atproto-lexicons
-cargo run --bin lexgen -- --input /tmp/atproto-lexicons/lexicons --output crates/ratproto-api/src/
+cargo run --bin lexgen -- --input /tmp/atproto-lexicons/lexicons --output crates/shrike-api/src/
 ```
 
 - [ ] **Step 6: Verify generated code compiles**
 
 ```bash
-cargo build -p ratproto-api
+cargo build -p shrike-api
 ```
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add Cargo.toml tools/lexgen/ crates/ratproto-api/
-git commit -m "feat: implement lexgen code generator and ratproto-api scaffold"
+git add Cargo.toml tools/lexgen/ crates/shrike-api/
+git commit -m "feat: implement lexgen code generator and shrike-api scaffold"
 ```
 
 ---
@@ -3174,80 +3174,80 @@ description = "AT Protocol library for Rust"
 
 [features]
 default = ["syntax", "cbor", "crypto", "mst", "repo", "car"]
-syntax = ["dep:ratproto-syntax"]
-cbor = ["dep:ratproto-cbor"]
-crypto = ["dep:ratproto-crypto"]
-mst = ["dep:ratproto-mst"]
-repo = ["dep:ratproto-repo"]
-car = ["dep:ratproto-car"]
-lexicon = ["dep:ratproto-lexicon"]
-xrpc = ["dep:ratproto-xrpc"]
-xrpc-server = ["dep:ratproto-xrpc-server"]
-identity = ["dep:ratproto-identity"]
-streaming = ["dep:ratproto-streaming"]
-sync = ["dep:ratproto-sync"]
-backfill = ["dep:ratproto-backfill"]
-labeling = ["dep:ratproto-labeling"]
-api = ["dep:ratproto-api"]
+syntax = ["dep:shrike-syntax"]
+cbor = ["dep:shrike-cbor"]
+crypto = ["dep:shrike-crypto"]
+mst = ["dep:shrike-mst"]
+repo = ["dep:shrike-repo"]
+car = ["dep:shrike-car"]
+lexicon = ["dep:shrike-lexicon"]
+xrpc = ["dep:shrike-xrpc"]
+xrpc-server = ["dep:shrike-xrpc-server"]
+identity = ["dep:shrike-identity"]
+streaming = ["dep:shrike-streaming"]
+sync = ["dep:shrike-sync"]
+backfill = ["dep:shrike-backfill"]
+labeling = ["dep:shrike-labeling"]
+api = ["dep:shrike-api"]
 full = ["syntax", "cbor", "crypto", "mst", "repo", "car", "lexicon", "xrpc", "xrpc-server", "identity", "streaming", "sync", "backfill", "labeling", "api"]
 
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax", optional = true }
-ratproto-cbor = { path = "../ratproto-cbor", optional = true }
-ratproto-crypto = { path = "../ratproto-crypto", optional = true }
-ratproto-mst = { path = "../ratproto-mst", optional = true }
-ratproto-repo = { path = "../ratproto-repo", optional = true }
-ratproto-car = { path = "../ratproto-car", optional = true }
-ratproto-lexicon = { path = "../ratproto-lexicon", optional = true }
-ratproto-xrpc = { path = "../ratproto-xrpc", optional = true }
-ratproto-xrpc-server = { path = "../ratproto-xrpc-server", optional = true }
-ratproto-identity = { path = "../ratproto-identity", optional = true }
-ratproto-streaming = { path = "../ratproto-streaming", optional = true }
-ratproto-sync = { path = "../ratproto-sync", optional = true }
-ratproto-backfill = { path = "../ratproto-backfill", optional = true }
-ratproto-labeling = { path = "../ratproto-labeling", optional = true }
-ratproto-api = { path = "../ratproto-api", optional = true }
+shrike-syntax = { path = "../shrike-syntax", optional = true }
+shrike-cbor = { path = "../shrike-cbor", optional = true }
+shrike-crypto = { path = "../shrike-crypto", optional = true }
+shrike-mst = { path = "../shrike-mst", optional = true }
+shrike-repo = { path = "../shrike-repo", optional = true }
+shrike-car = { path = "../shrike-car", optional = true }
+shrike-lexicon = { path = "../shrike-lexicon", optional = true }
+shrike-xrpc = { path = "../shrike-xrpc", optional = true }
+shrike-xrpc-server = { path = "../shrike-xrpc-server", optional = true }
+shrike-identity = { path = "../shrike-identity", optional = true }
+shrike-streaming = { path = "../shrike-streaming", optional = true }
+shrike-sync = { path = "../shrike-sync", optional = true }
+shrike-backfill = { path = "../shrike-backfill", optional = true }
+shrike-labeling = { path = "../shrike-labeling", optional = true }
+shrike-api = { path = "../shrike-api", optional = true }
 ```
 
 - [ ] **Step 2: Create lib.rs**
 
 ```rust
 #[cfg(feature = "syntax")]
-pub use ratproto_syntax as syntax;
+pub use shrike_syntax as syntax;
 #[cfg(feature = "cbor")]
-pub use ratproto_cbor as cbor;
+pub use shrike_cbor as cbor;
 #[cfg(feature = "crypto")]
-pub use ratproto_crypto as crypto;
+pub use shrike_crypto as crypto;
 #[cfg(feature = "mst")]
-pub use ratproto_mst as mst;
+pub use shrike_mst as mst;
 #[cfg(feature = "repo")]
-pub use ratproto_repo as repo;
+pub use shrike_repo as repo;
 #[cfg(feature = "car")]
-pub use ratproto_car as car;
+pub use shrike_car as car;
 #[cfg(feature = "lexicon")]
-pub use ratproto_lexicon as lexicon;
+pub use shrike_lexicon as lexicon;
 #[cfg(feature = "xrpc")]
-pub use ratproto_xrpc as xrpc;
+pub use shrike_xrpc as xrpc;
 #[cfg(feature = "xrpc-server")]
-pub use ratproto_xrpc_server as xrpc_server;
+pub use shrike_xrpc_server as xrpc_server;
 #[cfg(feature = "identity")]
-pub use ratproto_identity as identity;
+pub use shrike_identity as identity;
 #[cfg(feature = "streaming")]
-pub use ratproto_streaming as streaming;
+pub use shrike_streaming as streaming;
 #[cfg(feature = "sync")]
-pub use ratproto_sync as sync;
+pub use shrike_sync as sync;
 #[cfg(feature = "backfill")]
-pub use ratproto_backfill as backfill;
+pub use shrike_backfill as backfill;
 #[cfg(feature = "labeling")]
-pub use ratproto_labeling as labeling;
+pub use shrike_labeling as labeling;
 #[cfg(feature = "api")]
-pub use ratproto_api as api;
+pub use shrike_api as api;
 
 // Re-export common types at root for convenience
 #[cfg(feature = "syntax")]
-pub use ratproto_syntax::{Did, Handle, Nsid, AtUri, Tid, TidClock, Datetime, RecordKey, Language, AtIdentifier};
+pub use shrike_syntax::{Did, Handle, Nsid, AtUri, Tid, TidClock, Datetime, RecordKey, Language, AtIdentifier};
 #[cfg(feature = "cbor")]
-pub use ratproto_cbor::Cid;
+pub use shrike_cbor::Cid;
 ```
 
 - [ ] **Step 3: Verify it builds with default features and full features**

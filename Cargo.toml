@@ -1,32 +1,32 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ratproto-syntax",
-    "crates/ratproto-cbor",
-    "crates/ratproto-crypto",
-    "crates/ratproto-mst",
-    "crates/ratproto-repo",
-    "crates/ratproto-car",
-    "crates/ratproto-lexicon",
-    "crates/ratproto-xrpc",
-    "crates/ratproto-xrpc-server",
-    "crates/ratproto-identity",
-    "crates/ratproto-streaming",
-    "crates/ratproto-sync",
-    "crates/ratproto-backfill",
-    "crates/ratproto-labeling",
-    "crates/ratproto-oauth",
-    "crates/ratproto-api",
-    "crates/ratproto",
+    "crates/shrike-syntax",
+    "crates/shrike-cbor",
+    "crates/shrike-crypto",
+    "crates/shrike-mst",
+    "crates/shrike-repo",
+    "crates/shrike-car",
+    "crates/shrike-lexicon",
+    "crates/shrike-xrpc",
+    "crates/shrike-xrpc-server",
+    "crates/shrike-identity",
+    "crates/shrike-streaming",
+    "crates/shrike-sync",
+    "crates/shrike-backfill",
+    "crates/shrike-labeling",
+    "crates/shrike-oauth",
+    "crates/shrike-api",
+    "crates/shrike",
     "tools/lexgen",
-    "tools/rat",
+    "tools/shrike",  # CLI tool (binary name: shrike)
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jcalabro/ratproto"
+repository = "https://github.com/jcalabro/shrike"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

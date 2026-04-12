@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a code generator that reads AT Protocol Lexicon JSON schemas and produces the `ratproto-api` crate — typed Rust structs with serde JSON + hand-rolled DRISL CBOR encoding, union dispatch, extra field preservation, and XRPC endpoint functions.
+**Goal:** Build a code generator that reads AT Protocol Lexicon JSON schemas and produces the `shrike-api` crate — typed Rust structs with serde JSON + hand-rolled DRISL CBOR encoding, union dispatch, extra field preservation, and XRPC endpoint functions.
 
-**Architecture:** The `lexgen` binary reads `lexgen.json` config + `lexicons/**/*.json` schemas, resolves cross-schema references, and emits `.rs` files into `crates/ratproto-api/src/`. The generator is structured as a pipeline: parse → resolve → generate structs → generate CBOR → generate unions → generate endpoints → write files. Each stage is independently testable.
+**Architecture:** The `lexgen` binary reads `lexgen.json` config + `lexicons/**/*.json` schemas, resolves cross-schema references, and emits `.rs` files into `crates/shrike-api/src/`. The generator is structured as a pipeline: parse → resolve → generate structs → generate CBOR → generate unions → generate endpoints → write files. Each stage is independently testable.
 
-**Tech Stack:** Rust, serde_json (for schema parsing), ratproto-lexicon (schema types), string-based code generation (no proc macros)
+**Tech Stack:** Rust, serde_json (for schema parsing), shrike-lexicon (schema types), string-based code generation (no proc macros)
 
 **Design spec:** `docs/superpowers/specs/2026-04-05-lexgen-design.md`
 **Reference implementation:** `/home/jcalabro/go/src/github.com/jcalabro/atmos/lexgen/`
@@ -36,7 +36,7 @@ lexgen.json                     # Config file (create)
 lexicons/                       # Vendored lexicon JSON schemas (copy from atproto)
 justfile                        # Add update-lexicons and lexgen recipes (modify)
 
-crates/ratproto-api/
+crates/shrike-api/
   Cargo.toml                    # Already exists (modify deps)
   src/lib.rs                    # Generated: shared types + module re-exports
   src/app/bsky/*.rs             # Generated
@@ -62,10 +62,10 @@ crates/ratproto-api/
 ```json
 {
     "packages": [
-        {"prefix": "app.bsky", "module": "app::bsky", "out_dir": "crates/ratproto-api/src/app/bsky"},
-        {"prefix": "com.atproto", "module": "com::atproto", "out_dir": "crates/ratproto-api/src/com/atproto"},
-        {"prefix": "chat.bsky", "module": "chat::bsky", "out_dir": "crates/ratproto-api/src/chat/bsky"},
-        {"prefix": "tools.ozone", "module": "tools::ozone", "out_dir": "crates/ratproto-api/src/tools/ozone"}
+        {"prefix": "app.bsky", "module": "app::bsky", "out_dir": "crates/shrike-api/src/app/bsky"},
+        {"prefix": "com.atproto", "module": "com::atproto", "out_dir": "crates/shrike-api/src/com/atproto"},
+        {"prefix": "chat.bsky", "module": "chat::bsky", "out_dir": "crates/shrike-api/src/chat/bsky"},
+        {"prefix": "tools.ozone", "module": "tools::ozone", "out_dir": "crates/shrike-api/src/tools/ozone"}
     ]
 }
 ```
@@ -206,8 +206,8 @@ pub fn schema_file_name(nsid: &str) -> String {
 Add dependencies:
 ```toml
 [dependencies]
-ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
-ratproto-syntax = { path = "../../crates/ratproto-syntax" }
+shrike-lexicon = { path = "../../crates/shrike-lexicon" }
+shrike-syntax = { path = "../../crates/shrike-syntax" }
 serde.workspace = true
 serde_json.workspace = true
 ```
@@ -304,10 +304,10 @@ Commit: `git commit -m "feat(lexgen): add config, util, justfile recipes, vendor
 
 - [ ] **Step 1: Implement loader.rs**
 
-Recursively find all `.json` files in the lexicons directory, parse each as a `ratproto_lexicon::Schema`:
+Recursively find all `.json` files in the lexicons directory, parse each as a `shrike_lexicon::Schema`:
 
 ```rust
-use ratproto_lexicon::Schema;
+use shrike_lexicon::Schema;
 use std::path::Path;
 use std::collections::HashMap;
 
@@ -381,7 +381,7 @@ The resolver takes the loaded schemas + config and produces:
 ```rust
 use crate::config::Config;
 use crate::util;
-use ratproto_lexicon::schema::split_ref;
+use shrike_lexicon::schema::split_ref;
 use std::collections::HashMap;
 
 /// Resolved reference target
@@ -401,7 +401,7 @@ pub fn resolve_ref(
     cfg: &Config,
     context_nsid: &str,
     reference: &str,
-    schemas: &HashMap<String, ratproto_lexicon::Schema>,
+    schemas: &HashMap<String, shrike_lexicon::Schema>,
 ) -> Result<ResolvedRef, String> {
     let (target_nsid, def_name) = split_ref(context_nsid, reference);
     
@@ -520,7 +520,7 @@ This is the core generator — it takes an object/record def and produces a Rust
 The function takes a schema def and produces a Rust source code string:
 
 ```rust
-use ratproto_lexicon::schema::*;
+use shrike_lexicon::schema::*;
 use crate::config::Config;
 use crate::resolver;
 use crate::util;
@@ -607,14 +607,14 @@ pub fn field_type(
     match field {
         FieldSchema::String { format, .. } => {
             match format.as_deref() {
-                Some("datetime") => "ratproto_syntax::Datetime".to_string(),
-                Some("did") => "ratproto_syntax::Did".to_string(),
-                Some("handle") => "ratproto_syntax::Handle".to_string(),
-                Some("at-uri") => "ratproto_syntax::AtUri".to_string(),
-                Some("nsid") => "ratproto_syntax::Nsid".to_string(),
-                Some("tid") => "ratproto_syntax::Tid".to_string(),
-                Some("language") => "ratproto_syntax::Language".to_string(),
-                Some("record-key") => "ratproto_syntax::RecordKey".to_string(),
+                Some("datetime") => "shrike_syntax::Datetime".to_string(),
+                Some("did") => "shrike_syntax::Did".to_string(),
+                Some("handle") => "shrike_syntax::Handle".to_string(),
+                Some("at-uri") => "shrike_syntax::AtUri".to_string(),
+                Some("nsid") => "shrike_syntax::Nsid".to_string(),
+                Some("tid") => "shrike_syntax::Tid".to_string(),
+                Some("language") => "shrike_syntax::Language".to_string(),
+                Some("record-key") => "shrike_syntax::RecordKey".to_string(),
                 Some("at-identifier") => "String".to_string(), // AtIdentifier deserializes from string
                 Some("cid") => "String".to_string(), // CID in JSON is a string
                 Some("uri") => "String".to_string(),
@@ -726,10 +726,10 @@ mod tests {
         let module = "crate::app::bsky";
 
         let dt = FieldSchema::String { format: Some("datetime".into()), min_length: None, max_length: None, max_graphemes: None, known_values: vec![], r#enum: None, description: None, default: None, const_val: None };
-        assert_eq!(field_type(&cfg, "test", &dt, &schemas, module), "ratproto_syntax::Datetime");
+        assert_eq!(field_type(&cfg, "test", &dt, &schemas, module), "shrike_syntax::Datetime");
 
         let did = FieldSchema::String { format: Some("did".into()), min_length: None, max_length: None, max_graphemes: None, known_values: vec![], r#enum: None, description: None, default: None, const_val: None };
-        assert_eq!(field_type(&cfg, "test", &did, &schemas, module), "ratproto_syntax::Did");
+        assert_eq!(field_type(&cfg, "test", &did, &schemas, module), "shrike_syntax::Did");
 
         let int = FieldSchema::Integer { minimum: None, maximum: None, r#enum: None, default: None, description: None };
         assert_eq!(field_type(&cfg, "test", &int, &schemas, module), "i64");
@@ -928,17 +928,17 @@ fn main() {
 just lexgen
 ```
 
-Verify it produces files in `crates/ratproto-api/src/`.
+Verify it produces files in `crates/shrike-api/src/`.
 
 - [ ] **Step 4: Verify generated code compiles**
 
 ```bash
-cargo build -p ratproto-api
+cargo build -p shrike-api
 ```
 
 - [ ] **Step 5: Commit**
 
-`git commit -m "feat(lexgen): implement full pipeline, generate ratproto-api from lexicons"`
+`git commit -m "feat(lexgen): implement full pipeline, generate shrike-api from lexicons"`
 
 ---
 
@@ -981,7 +981,7 @@ Generate a struct, compile it (as a string check), verify the generated to_cbor/
 ## Task 10: Integration Test — Full Generation + Compile + Test
 
 **Files:**
-- Modify: `crates/ratproto-api/Cargo.toml`
+- Modify: `crates/shrike-api/Cargo.toml`
 - Modify various generated files if needed
 
 - [ ] **Step 1: Run full generation**
@@ -990,15 +990,15 @@ Generate a struct, compile it (as a string check), verify the generated to_cbor/
 just lexgen
 ```
 
-- [ ] **Step 2: Verify ratproto-api compiles**
+- [ ] **Step 2: Verify shrike-api compiles**
 
 ```bash
-cargo build -p ratproto-api
+cargo build -p shrike-api
 ```
 
 Fix any compilation errors in the generator.
 
-- [ ] **Step 3: Add integration tests in ratproto-api**
+- [ ] **Step 3: Add integration tests in shrike-api**
 
 Add tests that exercise the generated types:
 ```rust
@@ -1006,7 +1006,7 @@ Add tests that exercise the generated types:
 fn feed_post_serde_roundtrip() {
     let post = app::bsky::FeedPost {
         text: "Hello world".into(),
-        created_at: ratproto_syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
+        created_at: shrike_syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
         ..Default::default()
     };
     let json = serde_json::to_string(&post).unwrap();
@@ -1017,7 +1017,7 @@ fn feed_post_serde_roundtrip() {
 #[test]
 fn strong_ref_serde_roundtrip() {
     let sr = com::atproto::RepoStrongRef {
-        uri: ratproto_syntax::AtUri::try_from("at://did:plc:abc/app.bsky.feed.post/123").unwrap(),
+        uri: shrike_syntax::AtUri::try_from("at://did:plc:abc/app.bsky.feed.post/123").unwrap(),
         cid: "bafyreihffx5a2e4gzlcbsuaamgoxwaqlodtip3r5ln4vpqwlpz6ji7ydnm".into(),
         ..Default::default()
     };
@@ -1037,5 +1037,5 @@ just check
 
 ```bash
 git add -A
-git commit -m "feat: generate ratproto-api from lexicons, full integration"
+git commit -m "feat: generate shrike-api from lexicons, full integration"
 ```

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use ratproto_lexicon::{FieldSchema, ObjectDef, Schema};
+use shrike_lexicon::{FieldSchema, ObjectDef, Schema};
 
 use crate::config::Config;
 use crate::gen_cbor;
@@ -251,15 +251,15 @@ pub fn resolve_field_type(
 
     let base_type = match field {
         FieldSchema::String { format, .. } => match format.as_deref() {
-            Some("datetime") => "ratproto_syntax::Datetime".to_string(),
-            Some("did") => "ratproto_syntax::Did".to_string(),
-            Some("handle") => "ratproto_syntax::Handle".to_string(),
-            Some("at-uri") => "ratproto_syntax::AtUri".to_string(),
-            Some("nsid") => "ratproto_syntax::Nsid".to_string(),
-            Some("tid") => "ratproto_syntax::Tid".to_string(),
-            Some("language") => "ratproto_syntax::Language".to_string(),
-            Some("record-key") => "ratproto_syntax::RecordKey".to_string(),
-            Some("at-identifier") => "ratproto_syntax::AtIdentifier".to_string(),
+            Some("datetime") => "shrike_syntax::Datetime".to_string(),
+            Some("did") => "shrike_syntax::Did".to_string(),
+            Some("handle") => "shrike_syntax::Handle".to_string(),
+            Some("at-uri") => "shrike_syntax::AtUri".to_string(),
+            Some("nsid") => "shrike_syntax::Nsid".to_string(),
+            Some("tid") => "shrike_syntax::Tid".to_string(),
+            Some("language") => "shrike_syntax::Language".to_string(),
+            Some("record-key") => "shrike_syntax::RecordKey".to_string(),
+            Some("at-identifier") => "shrike_syntax::AtIdentifier".to_string(),
             _ => "String".to_string(),
         },
         FieldSchema::Integer { .. } => "i64".to_string(),
@@ -342,7 +342,7 @@ mod tests {
             schemas: &schemas,
             caller_module: "crate::com::atproto",
         };
-        if let ratproto_lexicon::Def::Object(obj) = &schema.defs["main"] {
+        if let shrike_lexicon::Def::Object(obj) = &schema.defs["main"] {
             let code = gen_object(&ctx, "main", obj).unwrap();
             assert!(code.contains("pub struct RepoStrongRef"), "code:\n{code}");
             assert!(code.contains("pub uri:"), "code:\n{code}");
@@ -362,7 +362,7 @@ mod tests {
             schemas: &schemas,
             caller_module: "crate::app::bsky",
         };
-        if let ratproto_lexicon::Def::Record(rec) = &schema.defs["main"] {
+        if let shrike_lexicon::Def::Record(rec) = &schema.defs["main"] {
             let code = gen_record(&ctx, "main", &rec.record).unwrap();
             assert!(code.contains("pub struct FeedPost"), "code:\n{code}");
             assert!(code.contains("pub text:"), "code:\n{code}");
@@ -382,7 +382,7 @@ mod tests {
             schemas: &schemas,
             caller_module: "crate::app::bsky",
         };
-        if let ratproto_lexicon::Def::Object(obj) = &schema.defs["profileViewBasic"] {
+        if let shrike_lexicon::Def::Object(obj) = &schema.defs["profileViewBasic"] {
             let code = gen_object(&ctx, "profileViewBasic", obj).unwrap();
             assert!(
                 code.contains("pub struct ActorDefsProfileViewBasic"),

@@ -1,4 +1,4 @@
-# ratproto-oauth Design
+# shrike-oauth Design
 
 AT Protocol OAuth 2.0 client implementing Authorization Code with PKCE,
 DPoP (Demonstration of Proof-of-Possession), and PAR (Pushed Authorization
@@ -10,7 +10,7 @@ Reference implementations: TypeScript (`@atproto/oauth-client` in
 ## Crate Structure
 
 ```
-crates/ratproto-oauth/
+crates/shrike-oauth/
 ├── Cargo.toml
 └── src/
     ├── lib.rs           — public exports, OAuthError type
@@ -29,10 +29,10 @@ crates/ratproto-oauth/
 
 ```toml
 [dependencies]
-ratproto-syntax = { path = "../ratproto-syntax" }
-ratproto-crypto = { path = "../ratproto-crypto" }
-ratproto-identity = { path = "../ratproto-identity" }
-ratproto-xrpc = { path = "../ratproto-xrpc" }
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-crypto = { path = "../shrike-crypto" }
+shrike-identity = { path = "../shrike-identity" }
+shrike-xrpc = { path = "../shrike-xrpc" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -45,14 +45,14 @@ url.workspace = true
 ```
 
 No JWT crate — JWTs are built manually (base64url header + payload +
-ES256 signature). No new crypto dependencies beyond what ratproto-crypto
+ES256 signature). No new crypto dependencies beyond what shrike-crypto
 already provides.
 
 ## OAuth Flow
 
 ### Phase 0: Service Discovery
 
-1. Resolve user's handle/DID to a PDS endpoint via `ratproto-identity`
+1. Resolve user's handle/DID to a PDS endpoint via `shrike-identity`
 2. Fetch protected resource metadata: `GET {pds}/.well-known/oauth-protected-resource`
 3. Extract the authorization server URL from `authorization_servers[0]`
 4. Fetch AS metadata: `GET {as}/.well-known/oauth-authorization-server`

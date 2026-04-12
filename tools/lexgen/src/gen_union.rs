@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use ratproto_lexicon::split_ref;
+use shrike_lexicon::split_ref;
 
 use crate::gen_cbor;
 use crate::gen_struct::GenContext;
@@ -207,7 +207,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, ratproto_lexicon::Schema>) {
+    fn test_ctx() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
         (cfg, schemas)

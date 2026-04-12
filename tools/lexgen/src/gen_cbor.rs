@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-use ratproto_lexicon::{FieldSchema, ObjectDef};
+use shrike_lexicon::{FieldSchema, ObjectDef};
 
 use crate::gen_struct::GenContext;
 use crate::gen_union;
@@ -25,8 +25,8 @@ struct CborField {
 enum FieldKind {
     /// String field: encode as CBOR text.
     Text,
-    /// Typed syntax field (e.g. ratproto_syntax::Datetime): encode as CBOR text via `.as_str()` / `.to_string()`.
-    /// The String is the fully-qualified Rust type (e.g. "ratproto_syntax::Datetime").
+    /// Typed syntax field (e.g. shrike_syntax::Datetime): encode as CBOR text via `.as_str()` / `.to_string()`.
+    /// The String is the fully-qualified Rust type (e.g. "shrike_syntax::Datetime").
     SyntaxText(String),
     /// Integer field: encode as CBOR i64.
     Integer,
@@ -115,7 +115,7 @@ pub fn gen_union_cbor(
 
     for ref_str in refs {
         let variant_name = gen_union::variant_short_name(&ctx.schema.id, ref_str);
-        let (target_nsid, def_name) = ratproto_lexicon::split_ref(&ctx.schema.id, ref_str);
+        let (target_nsid, def_name) = shrike_lexicon::split_ref(&ctx.schema.id, ref_str);
         let type_id = if def_name == "main" {
             target_nsid.clone()
         } else {
@@ -138,7 +138,7 @@ pub fn gen_union_cbor(
     // to_cbor
     writeln!(
         out,
-        "    pub fn to_cbor(&self) -> Result<Vec<u8>, ratproto_cbor::CborError> {{"
+        "    pub fn to_cbor(&self) -> Result<Vec<u8>, shrike_cbor::CborError> {{"
     )
     .ok();
     writeln!(out, "        let mut buf = Vec::new();").ok();
@@ -148,7 +148,7 @@ pub fn gen_union_cbor(
     out.push('\n');
 
     // encode_cbor
-    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), ratproto_cbor::CborError> {{").ok();
+    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{").ok();
     writeln!(out, "        match self {{").ok();
     for v in &variant_names {
         writeln!(
@@ -163,7 +163,7 @@ pub fn gen_union_cbor(
         writeln!(out, "                    buf.extend_from_slice(data);").ok();
         writeln!(out, "                    Ok(())").ok();
         writeln!(out, "                }} else {{").ok();
-        writeln!(out, "                    Err(ratproto_cbor::CborError::InvalidCbor(\"no CBOR data for unknown union variant\".into()))").ok();
+        writeln!(out, "                    Err(shrike_cbor::CborError::InvalidCbor(\"no CBOR data for unknown union variant\".into()))").ok();
         writeln!(out, "                }}").ok();
         writeln!(out, "            }}").ok();
     }
@@ -174,12 +174,12 @@ pub fn gen_union_cbor(
     // from_cbor
     writeln!(
         out,
-        "    pub fn from_cbor(data: &[u8]) -> Result<Self, ratproto_cbor::CborError> {{"
+        "    pub fn from_cbor(data: &[u8]) -> Result<Self, shrike_cbor::CborError> {{"
     )
     .ok();
     writeln!(
         out,
-        "        let mut decoder = ratproto_cbor::Decoder::new(data);"
+        "        let mut decoder = shrike_cbor::Decoder::new(data);"
     )
     .ok();
     writeln!(
@@ -190,7 +190,7 @@ pub fn gen_union_cbor(
     writeln!(out, "        if !decoder.is_empty() {{").ok();
     writeln!(
         out,
-        "            return Err(ratproto_cbor::CborError::InvalidCbor(\"trailing data\".into()));"
+        "            return Err(shrike_cbor::CborError::InvalidCbor(\"trailing data\".into()));"
     )
     .ok();
     writeln!(out, "        }}").ok();
@@ -199,7 +199,7 @@ pub fn gen_union_cbor(
     out.push('\n');
 
     // decode_cbor
-    writeln!(out, "    pub fn decode_cbor(decoder: &mut ratproto_cbor::Decoder) -> Result<Self, ratproto_cbor::CborError> {{").ok();
+    writeln!(out, "    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {{").ok();
     writeln!(
         out,
         "        // Save position, decode the value, look for $type key."
@@ -212,17 +212,17 @@ pub fn gen_union_cbor(
     writeln!(out, "        let entries = match val {{").ok();
     writeln!(
         out,
-        "            ratproto_cbor::Value::Map(entries) => entries,"
+        "            shrike_cbor::Value::Map(entries) => entries,"
     )
     .ok();
-    writeln!(out, "            _ => return Err(ratproto_cbor::CborError::InvalidCbor(\"expected map for union\".into())),").ok();
+    writeln!(out, "            _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected map for union\".into())),").ok();
     writeln!(out, "        }};").ok();
     writeln!(out, "        let type_str = entries.iter()").ok();
     writeln!(out, "            .find(|(k, _)| *k == \"$type\")").ok();
     writeln!(out, "            .and_then(|(_, v)| match v {{").ok();
     writeln!(
         out,
-        "                ratproto_cbor::Value::Text(s) => Some(*s),"
+        "                shrike_cbor::Value::Text(s) => Some(*s),"
     )
     .ok();
     writeln!(out, "                _ => None,").ok();
@@ -236,7 +236,7 @@ pub fn gen_union_cbor(
         writeln!(out, "            {type_id:?} => {{").ok();
         writeln!(
             out,
-            "                let mut dec = ratproto_cbor::Decoder::new(raw);"
+            "                let mut dec = shrike_cbor::Decoder::new(raw);"
         )
         .ok();
         writeln!(
@@ -248,7 +248,7 @@ pub fn gen_union_cbor(
         writeln!(out, "            }}").ok();
     }
     if is_closed {
-        writeln!(out, "            other => Err(ratproto_cbor::CborError::InvalidCbor(format!(\"unknown type {{:?}} in closed union {type_name}\", other))),").ok();
+        writeln!(out, "            other => Err(shrike_cbor::CborError::InvalidCbor(format!(\"unknown type {{:?}} in closed union {type_name}\", other))),").ok();
     } else {
         writeln!(out, "            _ => {{").ok();
         writeln!(
@@ -275,7 +275,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     // to_cbor: convenience wrapper
     writeln!(
         out,
-        "    pub fn to_cbor(&self) -> Result<Vec<u8>, ratproto_cbor::CborError> {{"
+        "    pub fn to_cbor(&self) -> Result<Vec<u8>, shrike_cbor::CborError> {{"
     )
     .ok();
     writeln!(out, "        let mut buf = Vec::new();").ok();
@@ -285,7 +285,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     out.push('\n');
 
     // encode_cbor: write directly to buf (no Encoder wrapper needed for nested calls)
-    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), ratproto_cbor::CborError> {{").ok();
+    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{").ok();
 
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
@@ -308,7 +308,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     }
     writeln!(
         out,
-        "            ratproto_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;"
+        "            shrike_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;"
     )
     .ok();
 
@@ -318,7 +318,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
         if f.required {
             writeln!(
                 out,
-                "            ratproto_cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
+                "            shrike_cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
             )
             .ok();
             gen_encode_field(out, f, "            ");
@@ -327,7 +327,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             writeln!(out, "            if {check} {{").ok();
             writeln!(
                 out,
-                "                ratproto_cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
+                "                shrike_cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
             )
             .ok();
             gen_encode_field(out, f, "                ");
@@ -372,18 +372,18 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     writeln!(out, "            }}").ok();
     writeln!(
         out,
-        "            pairs.sort_by(|a, b| ratproto_cbor::cbor_key_cmp(a.0, b.0));"
+        "            pairs.sort_by(|a, b| shrike_cbor::cbor_key_cmp(a.0, b.0));"
     )
     .ok();
     writeln!(
         out,
-        "            ratproto_cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;"
+        "            shrike_cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;"
     )
     .ok();
     writeln!(out, "            for (k, v) in &pairs {{").ok();
     writeln!(
         out,
-        "                ratproto_cbor::Encoder::new(&mut *buf).encode_text(k)?;"
+        "                shrike_cbor::Encoder::new(&mut *buf).encode_text(k)?;"
     )
     .ok();
     writeln!(out, "                buf.extend_from_slice(v);").ok();
@@ -401,12 +401,12 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
     // from_cbor: convenience wrapper
     writeln!(
         out,
-        "    pub fn from_cbor(data: &[u8]) -> Result<Self, ratproto_cbor::CborError> {{"
+        "    pub fn from_cbor(data: &[u8]) -> Result<Self, shrike_cbor::CborError> {{"
     )
     .ok();
     writeln!(
         out,
-        "        let mut decoder = ratproto_cbor::Decoder::new(data);"
+        "        let mut decoder = shrike_cbor::Decoder::new(data);"
     )
     .ok();
     writeln!(
@@ -417,7 +417,7 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
     writeln!(out, "        if !decoder.is_empty() {{").ok();
     writeln!(
         out,
-        "            return Err(ratproto_cbor::CborError::InvalidCbor(\"trailing data\".into()));"
+        "            return Err(shrike_cbor::CborError::InvalidCbor(\"trailing data\".into()));"
     )
     .ok();
     writeln!(out, "        }}").ok();
@@ -426,15 +426,15 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
     out.push('\n');
 
     // decode_cbor
-    writeln!(out, "    pub fn decode_cbor(decoder: &mut ratproto_cbor::Decoder) -> Result<Self, ratproto_cbor::CborError> {{").ok();
+    writeln!(out, "    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {{").ok();
     writeln!(out, "        let val = decoder.decode()?;").ok();
     writeln!(out, "        let entries = match val {{").ok();
     writeln!(
         out,
-        "            ratproto_cbor::Value::Map(entries) => entries,"
+        "            shrike_cbor::Value::Map(entries) => entries,"
     )
     .ok();
-    writeln!(out, "            _ => return Err(ratproto_cbor::CborError::InvalidCbor(\"expected map\".into())),").ok();
+    writeln!(out, "            _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected map\".into())),").ok();
     writeln!(out, "        }};").ok();
     out.push('\n');
 
@@ -486,7 +486,7 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
     writeln!(out, "                _ => {{").ok();
     writeln!(
         out,
-        "                    let raw = ratproto_cbor::encode_value(&value)?;"
+        "                    let raw = shrike_cbor::encode_value(&value)?;"
     )
     .ok();
     writeln!(
@@ -514,7 +514,7 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
         } else {
             // Required field -- must be present.
             let key = &f.json_name;
-            writeln!(out, "            {rust_field}: field_{clean_var}.ok_or_else(|| ratproto_cbor::CborError::InvalidCbor(\"missing required field '{key}'\".into()))?,").ok();
+            writeln!(out, "            {rust_field}: field_{clean_var}.ok_or_else(|| shrike_cbor::CborError::InvalidCbor(\"missing required field '{key}'\".into()))?,").ok();
         }
     }
     writeln!(out, "            extra: std::collections::HashMap::new(),").ok();
@@ -546,35 +546,35 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
                 )
                 .ok();
             }
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
             } else {
-                writeln!(out, "{indent}{{ let __s = {access}.to_string(); ratproto_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
+                writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
             }
         }
         FieldKind::Integer => {
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_i64(*{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_i64(*{access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_i64({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_i64({access})?;"
                 )
                 .ok();
             }
@@ -583,13 +583,13 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_bool(*{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_bool(*{access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_bool({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_bool({access})?;"
                 )
                 .ok();
             }
@@ -599,22 +599,22 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
                 )
                 .ok();
             }
         }
         FieldKind::CidLink => {
-            writeln!(out, "{indent}let cid = {access}.link.parse::<ratproto_cbor::Cid>().map_err(|e| ratproto_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
+            writeln!(out, "{indent}let cid = {access}.link.parse::<shrike_cbor::Cid>().map_err(|e| shrike_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;"
             )
             .ok();
         }
@@ -623,10 +623,10 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
         }
         FieldKind::Array(inner_kind) => {
             if is_ref {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in {access}.iter() {{").ok();
             } else {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in &{access} {{").ok();
             }
             gen_encode_array_item(out, inner_kind, "item", &format!("{indent}    "));
@@ -641,36 +641,36 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
         FieldKind::Text => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
             )
             .ok();
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
             } else {
-                writeln!(out, "{indent}{{ let __s = {access}.to_string(); ratproto_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
+                writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
             }
         }
         FieldKind::Integer => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_i64(*{access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_i64(*{access})?;"
             )
             .ok();
         }
         FieldKind::Bool => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_bool(*{access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_bool(*{access})?;"
             )
             .ok();
         }
         FieldKind::CidLink => {
-            writeln!(out, "{indent}let cid = {access}.link.parse::<ratproto_cbor::Cid>().map_err(|e| ratproto_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
+            writeln!(out, "{indent}let cid = {access}.link.parse::<shrike_cbor::Cid>().map_err(|e| shrike_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;"
             )
             .ok();
         }
@@ -680,12 +680,12 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
         FieldKind::Bytes => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access})?;"
             )
             .ok();
         }
         FieldKind::Array(inner) => {
-            writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
+            writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
             writeln!(out, "{indent}for inner_item in {access} {{").ok();
             gen_encode_array_item(out, inner, "inner_item", &format!("{indent}    "));
             writeln!(out, "{indent}}}").ok();
@@ -719,35 +719,35 @@ fn gen_encode_value_vbuf(
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
                 )
                 .ok();
             }
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
             } else {
-                writeln!(out, "{indent}{{ let __s = {access}.to_string(); ratproto_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
+                writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
             }
         }
         FieldKind::Integer => {
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_i64(*{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_i64(*{access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_i64({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_i64({access})?;"
                 )
                 .ok();
             }
@@ -756,13 +756,13 @@ fn gen_encode_value_vbuf(
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_bool(*{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_bool(*{access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_bool({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_bool({access})?;"
                 )
                 .ok();
             }
@@ -771,22 +771,22 @@ fn gen_encode_value_vbuf(
             if is_ref {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
                 )
                 .ok();
             } else {
                 writeln!(
                     out,
-                    "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
                 )
                 .ok();
             }
         }
         FieldKind::CidLink => {
-            writeln!(out, "{indent}let cid = {access}.link.parse::<ratproto_cbor::Cid>().map_err(|e| ratproto_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
+            writeln!(out, "{indent}let cid = {access}.link.parse::<shrike_cbor::Cid>().map_err(|e| shrike_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;"
             )
             .ok();
         }
@@ -795,10 +795,10 @@ fn gen_encode_value_vbuf(
         }
         FieldKind::Array(inner_kind) => {
             if is_ref {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in {access}.iter() {{").ok();
             } else {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in &{access} {{").ok();
             }
             gen_encode_array_item_vbuf(out, inner_kind, "item", &format!("{indent}    "));
@@ -813,36 +813,36 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
         FieldKind::Text => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
             )
             .ok();
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
+                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
             } else {
-                writeln!(out, "{indent}{{ let __s = {access}.to_string(); ratproto_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
+                writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
             }
         }
         FieldKind::Integer => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_i64(*{access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_i64(*{access})?;"
             )
             .ok();
         }
         FieldKind::Bool => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_bool(*{access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_bool(*{access})?;"
             )
             .ok();
         }
         FieldKind::CidLink => {
-            writeln!(out, "{indent}let cid = {access}.link.parse::<ratproto_cbor::Cid>().map_err(|e| ratproto_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
+            writeln!(out, "{indent}let cid = {access}.link.parse::<shrike_cbor::Cid>().map_err(|e| shrike_cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;"
             )
             .ok();
         }
@@ -852,12 +852,12 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
         FieldKind::Bytes => {
             writeln!(
                 out,
-                "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
+                "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
             )
             .ok();
         }
         FieldKind::Array(inner) => {
-            writeln!(out, "{indent}ratproto_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
+            writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
             writeln!(out, "{indent}for inner_item in {access} {{").ok();
             gen_encode_array_item_vbuf(out, inner, "inner_item", &format!("{indent}    "));
             writeln!(out, "{indent}}}").ok();
@@ -898,62 +898,62 @@ fn gen_decode_single(
         FieldKind::Text => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = value {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
             )
             .ok();
             writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::SyntaxText(ty) => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = value {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
             )
             .ok();
-            writeln!(out, "{indent}    {assign_pre}{ty}::try_from(s).map_err(|e| ratproto_cbor::CborError::InvalidCbor(e.to_string()))?{assign_post}").ok();
+            writeln!(out, "{indent}    {assign_pre}{ty}::try_from(s).map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?{assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Integer => {
             writeln!(out, "{indent}match value {{").ok();
-            writeln!(out, "{indent}    ratproto_cbor::Value::Unsigned(n) => {{ {assign_pre}n as i64{assign_post} }}").ok();
+            writeln!(out, "{indent}    shrike_cbor::Value::Unsigned(n) => {{ {assign_pre}n as i64{assign_post} }}").ok();
             writeln!(
                 out,
-                "{indent}    ratproto_cbor::Value::Signed(n) => {{ {assign_pre}n{assign_post} }}"
+                "{indent}    shrike_cbor::Value::Signed(n) => {{ {assign_pre}n{assign_post} }}"
             )
             .ok();
-            writeln!(out, "{indent}    _ => return Err(ratproto_cbor::CborError::InvalidCbor(\"expected integer\".into())),").ok();
+            writeln!(out, "{indent}    _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected integer\".into())),").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bool => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Bool(b) = value {{"
+                "{indent}if let shrike_cbor::Value::Bool(b) = value {{"
             )
             .ok();
             writeln!(out, "{indent}    {assign_pre}b{assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected bool\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected bool\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bytes => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = value {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
             )
             .ok();
             writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text for bytes field\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text for bytes field\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::CidLink => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Cid(c) = value {{"
+                "{indent}if let shrike_cbor::Value::Cid(c) = value {{"
             )
             .ok();
             writeln!(
@@ -962,18 +962,18 @@ fn gen_decode_single(
             )
             .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected CID\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected CID\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
             writeln!(
                 out,
-                "{indent}let raw = ratproto_cbor::encode_value(&value)?;"
+                "{indent}let raw = shrike_cbor::encode_value(&value)?;"
             )
             .ok();
             writeln!(
                 out,
-                "{indent}let mut dec = ratproto_cbor::Decoder::new(&raw);"
+                "{indent}let mut dec = shrike_cbor::Decoder::new(&raw);"
             )
             .ok();
             writeln!(
@@ -999,7 +999,7 @@ fn gen_decode_vec(out: &mut String, f: &CborField, var: &str, indent: &str) {
 
     writeln!(
         out,
-        "{indent}if let ratproto_cbor::Value::Array(items) = value {{"
+        "{indent}if let shrike_cbor::Value::Array(items) = value {{"
     )
     .ok();
     writeln!(out, "{indent}    for item in items {{").ok();
@@ -1014,7 +1014,7 @@ fn gen_decode_vec(out: &mut String, f: &CborField, var: &str, indent: &str) {
     writeln!(out, "{indent}}} else {{").ok();
     writeln!(
         out,
-        "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected array\".into()));"
+        "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected array\".into()));"
     )
     .ok();
     writeln!(out, "{indent}}}").ok();
@@ -1031,71 +1031,71 @@ fn gen_decode_array_item(
         FieldKind::Text => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = item {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
             )
             .ok();
             writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::SyntaxText(ty) => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = item {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
             )
             .ok();
-            writeln!(out, "{indent}    field_{var}.push({ty}::try_from(s).map_err(|e| ratproto_cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
+            writeln!(out, "{indent}    field_{var}.push({ty}::try_from(s).map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Integer => {
             writeln!(out, "{indent}match item {{").ok();
             writeln!(
                 out,
-                "{indent}    ratproto_cbor::Value::Unsigned(n) => field_{var}.push(n as i64),"
+                "{indent}    shrike_cbor::Value::Unsigned(n) => field_{var}.push(n as i64),"
             )
             .ok();
             writeln!(
                 out,
-                "{indent}    ratproto_cbor::Value::Signed(n) => field_{var}.push(n),"
+                "{indent}    shrike_cbor::Value::Signed(n) => field_{var}.push(n),"
             )
             .ok();
-            writeln!(out, "{indent}    _ => return Err(ratproto_cbor::CborError::InvalidCbor(\"expected integer in array\".into())),").ok();
+            writeln!(out, "{indent}    _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected integer in array\".into())),").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bool => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Bool(b) = item {{"
+                "{indent}if let shrike_cbor::Value::Bool(b) = item {{"
             )
             .ok();
             writeln!(out, "{indent}    field_{var}.push(b);").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected bool in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected bool in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::CidLink => {
-            writeln!(out, "{indent}if let ratproto_cbor::Value::Cid(c) = item {{").ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Cid(c) = item {{").ok();
             writeln!(
                 out,
                 "{indent}    field_{var}.push(crate::CidLink {{ link: c.to_string() }});"
             )
             .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected CID in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected CID in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
             writeln!(
                 out,
-                "{indent}let raw = ratproto_cbor::encode_value(&item)?;"
+                "{indent}let raw = shrike_cbor::encode_value(&item)?;"
             )
             .ok();
             writeln!(
                 out,
-                "{indent}let mut dec = ratproto_cbor::Decoder::new(&raw);"
+                "{indent}let mut dec = shrike_cbor::Decoder::new(&raw);"
             )
             .ok();
             writeln!(
@@ -1107,12 +1107,12 @@ fn gen_decode_array_item(
         FieldKind::Bytes => {
             writeln!(
                 out,
-                "{indent}if let ratproto_cbor::Value::Text(s) = item {{"
+                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
             )
             .ok();
             writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(ratproto_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Array(_) | FieldKind::JsonValue => {}
@@ -1128,15 +1128,15 @@ fn gen_decode_array_item(
 fn classify_field(ctx: &GenContext<'_>, field: &FieldSchema, rust_type: &str) -> FieldKind {
     match field {
         FieldSchema::String { format, .. } => match format.as_deref() {
-            Some("datetime") => FieldKind::SyntaxText("ratproto_syntax::Datetime".into()),
-            Some("did") => FieldKind::SyntaxText("ratproto_syntax::Did".into()),
-            Some("handle") => FieldKind::SyntaxText("ratproto_syntax::Handle".into()),
-            Some("at-uri") => FieldKind::SyntaxText("ratproto_syntax::AtUri".into()),
-            Some("nsid") => FieldKind::SyntaxText("ratproto_syntax::Nsid".into()),
-            Some("tid") => FieldKind::SyntaxText("ratproto_syntax::Tid".into()),
-            Some("language") => FieldKind::SyntaxText("ratproto_syntax::Language".into()),
-            Some("record-key") => FieldKind::SyntaxText("ratproto_syntax::RecordKey".into()),
-            Some("at-identifier") => FieldKind::SyntaxText("ratproto_syntax::AtIdentifier".into()),
+            Some("datetime") => FieldKind::SyntaxText("shrike_syntax::Datetime".into()),
+            Some("did") => FieldKind::SyntaxText("shrike_syntax::Did".into()),
+            Some("handle") => FieldKind::SyntaxText("shrike_syntax::Handle".into()),
+            Some("at-uri") => FieldKind::SyntaxText("shrike_syntax::AtUri".into()),
+            Some("nsid") => FieldKind::SyntaxText("shrike_syntax::Nsid".into()),
+            Some("tid") => FieldKind::SyntaxText("shrike_syntax::Tid".into()),
+            Some("language") => FieldKind::SyntaxText("shrike_syntax::Language".into()),
+            Some("record-key") => FieldKind::SyntaxText("shrike_syntax::RecordKey".into()),
+            Some("at-identifier") => FieldKind::SyntaxText("shrike_syntax::AtIdentifier".into()),
             _ => FieldKind::Text,
         },
         FieldSchema::Integer { .. } => FieldKind::Integer,
@@ -1158,17 +1158,17 @@ fn classify_field(ctx: &GenContext<'_>, field: &FieldSchema, rust_type: &str) ->
 /// Classify a $ref to determine if the target is a text alias, integer alias,
 /// blob, CID link, or a full struct.
 fn classify_ref(ctx: &GenContext<'_>, reference: &str, _rust_type: &str) -> FieldKind {
-    let (target_nsid, def_name) = ratproto_lexicon::split_ref(&ctx.schema.id, reference);
+    let (target_nsid, def_name) = shrike_lexicon::split_ref(&ctx.schema.id, reference);
 
     // Look up the target def.
     if let Some(schema) = ctx.schemas.get(&target_nsid)
         && let Some(def) = schema.defs.get(def_name)
     {
         return match def {
-            ratproto_lexicon::Def::StringDef(_) => FieldKind::Text,
-            ratproto_lexicon::Def::IntegerDef(_) => FieldKind::Integer,
-            ratproto_lexicon::Def::BooleanDef(_) => FieldKind::Bool,
-            ratproto_lexicon::Def::BytesDef(_) => FieldKind::Bytes,
+            shrike_lexicon::Def::StringDef(_) => FieldKind::Text,
+            shrike_lexicon::Def::IntegerDef(_) => FieldKind::Integer,
+            shrike_lexicon::Def::BooleanDef(_) => FieldKind::Bool,
+            shrike_lexicon::Def::BytesDef(_) => FieldKind::Bytes,
             _ => FieldKind::Struct,
         };
     }
@@ -1180,7 +1180,7 @@ fn classify_ref(ctx: &GenContext<'_>, reference: &str, _rust_type: &str) -> Fiel
 /// Types backed by a `String` (not `u64` or enum) have `as_str()`.
 /// `Tid` (u64) and `AtIdentifier` (enum) do not — use `.to_string()` instead.
 fn syntax_has_as_str(ty: &str) -> bool {
-    !matches!(ty, "ratproto_syntax::Tid" | "ratproto_syntax::AtIdentifier")
+    !matches!(ty, "shrike_syntax::Tid" | "shrike_syntax::AtIdentifier")
 }
 
 /// Strip `r#` prefix from a Rust field name for use as a variable name.
@@ -1209,7 +1209,7 @@ fn option_check(f: &CborField) -> String {
     }
 }
 
-/// Compare two string keys by CBOR encoding order (same as ratproto_cbor::encode::cbor_key_cmp).
+/// Compare two string keys by CBOR encoding order (same as shrike_cbor::encode::cbor_key_cmp).
 fn cbor_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let a_len = cbor_header_len(a.len() as u64) + a.len();
     let b_len = cbor_header_len(b.len() as u64) + b.len();
@@ -1242,7 +1242,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, ratproto_lexicon::Schema>) {
+    fn test_ctx() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
         (cfg, schemas)
@@ -1258,7 +1258,7 @@ mod tests {
             schemas: &schemas,
             caller_module: "crate::com::atproto",
         };
-        if let ratproto_lexicon::Def::Object(obj) = &schema.defs["main"] {
+        if let shrike_lexicon::Def::Object(obj) = &schema.defs["main"] {
             let code = gen_cbor_impl(&ctx, "RepoStrongRef", obj).unwrap();
             assert!(code.contains("pub fn to_cbor(&self)"), "code:\n{code}");
             assert!(code.contains("pub fn encode_cbor(&self"), "code:\n{code}");
@@ -1293,7 +1293,7 @@ mod tests {
             schemas: &schemas,
             caller_module: "crate::app::bsky",
         };
-        if let ratproto_lexicon::Def::Record(rec) = &schema.defs["main"] {
+        if let shrike_lexicon::Def::Record(rec) = &schema.defs["main"] {
             let code = gen_cbor_impl(&ctx, "FeedPost", &rec.record).unwrap();
             assert!(code.contains("pub fn to_cbor(&self)"), "code:\n{code}");
             assert!(

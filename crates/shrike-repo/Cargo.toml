@@ -1,0 +1,24 @@
+[package]
+name = "shrike-repo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol repository operations — CRUD and signed commits"
+
+[lints]
+workspace = true
+
+[dependencies]
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-crypto = { path = "../shrike-crypto" }
+shrike-mst = { path = "../shrike-mst" }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "repo_bench"
+harness = false

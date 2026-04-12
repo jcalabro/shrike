@@ -1,0 +1,22 @@
+[package]
+name = "shrike-backfill"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol concurrent repo backfill engine"
+
+[lints]
+workspace = true
+
+[dependencies]
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-sync = { path = "../shrike-sync" }
+shrike-xrpc = { path = "../shrike-xrpc" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+rand.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }

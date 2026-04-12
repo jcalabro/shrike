@@ -1,0 +1,25 @@
+[package]
+name = "shrike-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol repository sync and commit verification"
+
+[lints]
+workspace = true
+
+[dependencies]
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-mst = { path = "../shrike-mst" }
+shrike-repo = { path = "../shrike-repo" }
+shrike-car = { path = "../shrike-car" }
+shrike-identity = { path = "../shrike-identity" }
+shrike-xrpc = { path = "../shrike-xrpc" }
+shrike-crypto = { path = "../shrike-crypto" }
+thiserror.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }

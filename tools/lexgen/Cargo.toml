@@ -9,7 +9,7 @@ description = "Code generator: AT Protocol Lexicon JSON → Rust types"
 workspace = true
 
 [dependencies]
-ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
-ratproto-syntax = { path = "../../crates/ratproto-syntax" }
+shrike-lexicon = { path = "../../crates/shrike-lexicon" }
+shrike-syntax = { path = "../../crates/shrike-syntax" }
 serde.workspace = true
 serde_json.workspace = true

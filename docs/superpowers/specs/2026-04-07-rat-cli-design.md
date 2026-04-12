@@ -1,7 +1,7 @@
 # `rat` CLI Tool Design
 
 A command-line tool for interacting with the AT Protocol, built on top of the
-ratproto library. Serves as both a practical utility and a manual testing
+shrike library. Serves as both a practical utility and a manual testing
 harness for the library crates.
 
 Modeled after the existing Go-based `atp` CLI (which uses `atmos`), adapted to
@@ -9,7 +9,7 @@ idiomatic Rust.
 
 ## Crate Setup
 
-Binary crate at `tools/rat` inside the ratproto workspace. Not published to
+Binary crate at `tools/rat` inside the shrike workspace. Not published to
 crates.io — this is a development/testing tool.
 
 ```
@@ -41,15 +41,15 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 dirs = "6"
 
 # Workspace crates
-ratproto-syntax = { path = "../../crates/ratproto-syntax" }
-ratproto-crypto = { path = "../../crates/ratproto-crypto" }
-ratproto-cbor = { path = "../../crates/ratproto-cbor" }
-ratproto-car = { path = "../../crates/ratproto-car" }
-ratproto-lexicon = { path = "../../crates/ratproto-lexicon" }
-ratproto-identity = { path = "../../crates/ratproto-identity" }
-ratproto-xrpc = { path = "../../crates/ratproto-xrpc" }
-ratproto-streaming = { path = "../../crates/ratproto-streaming" }
-ratproto-api = { path = "../../crates/ratproto-api" }
+shrike-syntax = { path = "../../crates/shrike-syntax" }
+shrike-crypto = { path = "../../crates/shrike-crypto" }
+shrike-cbor = { path = "../../crates/shrike-cbor" }
+shrike-car = { path = "../../crates/shrike-car" }
+shrike-lexicon = { path = "../../crates/shrike-lexicon" }
+shrike-identity = { path = "../../crates/shrike-identity" }
+shrike-xrpc = { path = "../../crates/shrike-xrpc" }
+shrike-streaming = { path = "../../crates/shrike-streaming" }
+shrike-api = { path = "../../crates/shrike-api" }
 ```
 
 ## Commands
@@ -91,7 +91,7 @@ JSON output:
 }
 ```
 
-Exercises: `ratproto-syntax` (TryFrom/FromStr, Display).
+Exercises: `shrike-syntax` (TryFrom/FromStr, Display).
 
 #### `rat key generate [--type p256|k256]`
 
@@ -109,7 +109,7 @@ public:   04ab...
 
 JSON output: same fields as object.
 
-Exercises: `ratproto-crypto` (key generation, did:key encoding).
+Exercises: `shrike-crypto` (key generation, did:key encoding).
 
 #### `rat key inspect <did-key-or-multibase>`
 
@@ -119,7 +119,7 @@ Flags: `--json`
 
 Output: same format as `key generate`.
 
-Exercises: `ratproto-crypto` (did:key parsing, multibase decoding).
+Exercises: `shrike-crypto` (did:key parsing, multibase decoding).
 
 #### `rat resolve <handle-or-did>`
 
@@ -137,8 +137,8 @@ signing: did:key:z...
 
 `--did-only` prints just the DID string on a single line.
 
-Exercises: `ratproto-identity` (DID resolution, handle extraction),
-`ratproto-syntax` (DID/Handle parsing).
+Exercises: `shrike-identity` (DID resolution, handle extraction),
+`shrike-syntax` (DID/Handle parsing).
 
 #### `rat plc resolve <did>`
 
@@ -148,7 +148,7 @@ Flags: `--json`
 
 Default output: same labeled format as `resolve`.
 
-Exercises: `ratproto-identity` (PLC directory resolution).
+Exercises: `shrike-identity` (PLC directory resolution).
 
 #### `rat plc history <did>`
 
@@ -162,7 +162,7 @@ Default output:
 2  2024-03-20T14:22:00Z  bafy...  (active)
 ```
 
-Exercises: `ratproto-xrpc` (raw GET to PLC directory).
+Exercises: `shrike-xrpc` (raw GET to PLC directory).
 
 #### `rat repo inspect <car-file>`
 
@@ -183,8 +183,8 @@ collections:
   ...
 ```
 
-Exercises: `ratproto-car` (CAR reader), `ratproto-cbor` (commit/record
-decoding), `ratproto-repo` (commit structure).
+Exercises: `shrike-car` (CAR reader), `shrike-cbor` (commit/record
+decoding), `shrike-repo` (commit structure).
 
 #### `rat repo ls <car-file> [collection]`
 
@@ -198,7 +198,7 @@ app.bsky.feed.post/3k...  bafy...
 app.bsky.feed.post/3k...  bafy...
 ```
 
-Exercises: `ratproto-car`, `ratproto-cbor`.
+Exercises: `shrike-car`, `shrike-cbor`.
 
 #### `rat validate <collection> <json-file>`
 
@@ -219,7 +219,7 @@ invalid
   error: field "text" is required (at /record/text)
 ```
 
-Exercises: `ratproto-lexicon` (schema loading, catalog, validation).
+Exercises: `shrike-lexicon` (schema loading, catalog, validation).
 
 ### Layer 2: Session Management
 
@@ -274,8 +274,8 @@ Output:
 exported did:plc:xyz to did:plc:xyz.car (2.3 MB)
 ```
 
-Exercises: `ratproto-xrpc` (authenticated binary download),
-`ratproto-syntax` (DID parsing).
+Exercises: `shrike-xrpc` (authenticated binary download),
+`shrike-syntax` (DID parsing).
 
 #### `rat record get <at-uri>`
 
@@ -283,8 +283,8 @@ Fetch a single record by AT-URI via `com.atproto.repo.getRecord`.
 
 Output: pretty-printed JSON of the record to stdout.
 
-Exercises: `ratproto-xrpc`, `ratproto-syntax` (AT-URI parsing),
-`ratproto-api`.
+Exercises: `shrike-xrpc`, `shrike-syntax` (AT-URI parsing),
+`shrike-api`.
 
 #### `rat record list <did-or-handle> [collection]`
 
@@ -299,7 +299,7 @@ at://did:plc:xyz/app.bsky.feed.post/3k...  bafy...
 at://did:plc:xyz/app.bsky.feed.post/3k...  bafy...
 ```
 
-Exercises: `ratproto-xrpc`, `ratproto-syntax`, `ratproto-api`.
+Exercises: `shrike-xrpc`, `shrike-syntax`, `shrike-api`.
 
 #### `rat subscribe`
 
@@ -313,7 +313,7 @@ Flags:
 
 Output: one compact JSON object per line to stdout. Ctrl-C to stop.
 
-Exercises: `ratproto-streaming` (WebSocket, event parsing, filtering).
+Exercises: `shrike-streaming` (WebSocket, event parsing, filtering).
 
 ## Output Conventions
 
@@ -356,31 +356,31 @@ Exercises: `ratproto-streaming` (WebSocket, event parsing, filtering).
 ## Implementation Layers
 
 **Layer 1** — all no-auth commands fully working. This exercises:
-`ratproto-syntax`, `ratproto-crypto`, `ratproto-identity`, `ratproto-car`,
-`ratproto-cbor`, `ratproto-repo`, `ratproto-lexicon`, `ratproto-xrpc`.
+`shrike-syntax`, `shrike-crypto`, `shrike-identity`, `shrike-car`,
+`shrike-cbor`, `shrike-repo`, `shrike-lexicon`, `shrike-xrpc`.
 
 **Layer 2** — `account login/logout/status` with session persistence.
-This adds: session.json management, `ratproto-xrpc` auth, `ratproto-api`
+This adds: session.json management, `shrike-xrpc` auth, `shrike-api`
 (createSession/deleteSession).
 
 **Layer 3** — authenticated commands and streaming. This adds:
-`ratproto-streaming`, authenticated XRPC calls.
+`shrike-streaming`, authenticated XRPC calls.
 
 ## Crate Coverage
 
 | Crate | Exercised by |
 |-------|-------------|
-| `ratproto-syntax` | syntax, resolve, record, repo export |
-| `ratproto-crypto` | key generate, key inspect |
-| `ratproto-cbor` | repo inspect, repo ls |
-| `ratproto-car` | repo inspect, repo ls |
-| `ratproto-lexicon` | validate |
-| `ratproto-identity` | resolve, plc resolve |
-| `ratproto-xrpc` | plc history, account, record, repo export |
-| `ratproto-streaming` | subscribe |
-| `ratproto-api` | account, record get, record list |
-| `ratproto-repo` | repo inspect |
+| `shrike-syntax` | syntax, resolve, record, repo export |
+| `shrike-crypto` | key generate, key inspect |
+| `shrike-cbor` | repo inspect, repo ls |
+| `shrike-car` | repo inspect, repo ls |
+| `shrike-lexicon` | validate |
+| `shrike-identity` | resolve, plc resolve |
+| `shrike-xrpc` | plc history, account, record, repo export |
+| `shrike-streaming` | subscribe |
+| `shrike-api` | account, record get, record list |
+| `shrike-repo` | repo inspect |
 
 Not directly exercised (server-side/batch concerns):
-`ratproto-mst` (used internally by repo), `ratproto-sync`,
-`ratproto-backfill`, `ratproto-labeling`, `ratproto-xrpc-server`.
+`shrike-mst` (used internally by repo), `shrike-sync`,
+`shrike-backfill`, `shrike-labeling`, `shrike-xrpc-server`.

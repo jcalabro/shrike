@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::util;
-use ratproto_lexicon::split_ref;
+use shrike_lexicon::split_ref;
 use std::collections::HashMap;
 
 /// Resolved reference target.
@@ -18,7 +18,7 @@ pub fn resolve_ref(
     cfg: &Config,
     context_nsid: &str,
     reference: &str,
-    schemas: &HashMap<String, ratproto_lexicon::Schema>,
+    schemas: &HashMap<String, shrike_lexicon::Schema>,
 ) -> Result<ResolvedRef, String> {
     let (target_nsid, def_name) = split_ref(context_nsid, reference);
 
@@ -61,7 +61,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    fn load_test_data() -> (Config, HashMap<String, ratproto_lexicon::Schema>) {
+    fn load_test_data() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
         let cfg = Config::load(std::path::Path::new("../../lexgen.json")).unwrap();
         let schemas = crate::loader::load_schemas(std::path::Path::new("../../lexicons")).unwrap();
         (cfg, schemas)

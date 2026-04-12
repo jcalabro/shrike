@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 
-use ratproto_lexicon::{ArrayTypeDef, Def, FieldSchema, Schema};
+use shrike_lexicon::{ArrayTypeDef, Def, FieldSchema, Schema};
 
 use crate::config::Config;
 use crate::gen_endpoint;
@@ -94,7 +94,7 @@ pub fn generate(
 
     // Generate shared types (lib.rs).
     let lib_content = gen_shared::gen_shared_types(&top_modules);
-    files.insert("crates/ratproto-api/src/lib.rs".to_string(), lib_content);
+    files.insert("crates/shrike-api/src/lib.rs".to_string(), lib_content);
 
     Ok(files)
 }
@@ -218,7 +218,7 @@ mod tests {
 
         // Check that key files exist
         assert!(
-            files.contains_key("crates/ratproto-api/src/lib.rs"),
+            files.contains_key("crates/shrike-api/src/lib.rs"),
             "missing lib.rs"
         );
         assert!(
@@ -230,7 +230,7 @@ mod tests {
             "missing repo_strong_ref.rs"
         );
         assert!(
-            files.contains_key("crates/ratproto-api/src/app/mod.rs"),
+            files.contains_key("crates/shrike-api/src/app/mod.rs"),
             "missing app/mod.rs"
         );
     }
@@ -239,7 +239,7 @@ mod tests {
     fn generated_lib_has_modules() {
         let (cfg, schemas) = test_data();
         let files = generate(&cfg, &schemas).unwrap();
-        let lib = &files["crates/ratproto-api/src/lib.rs"];
+        let lib = &files["crates/shrike-api/src/lib.rs"];
         assert!(lib.contains("pub mod app;"), "lib:\n{lib}");
         assert!(lib.contains("pub mod com;"), "lib:\n{lib}");
     }

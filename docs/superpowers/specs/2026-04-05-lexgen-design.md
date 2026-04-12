@@ -5,17 +5,17 @@
 
 ## Goal
 
-Generate Rust types and XRPC endpoint functions from AT Protocol Lexicon JSON schemas, producing the `ratproto-api` crate.
+Generate Rust types and XRPC endpoint functions from AT Protocol Lexicon JSON schemas, producing the `shrike-api` crate.
 
 ## Pipeline
 
 ```
-lexicons/*.json → ratproto-lexicon (parse) → lexgen (generate) → crates/ratproto-api/src/**/*.rs
+lexicons/*.json → shrike-lexicon (parse) → lexgen (generate) → crates/shrike-api/src/**/*.rs
 ```
 
 1. `just update-lexicons` copies JSON schemas from local `bluesky-social/atproto` checkout into `lexicons/`
 2. `just lexgen` runs the generator binary
-3. Generated code depends on `ratproto-syntax`, `ratproto-cbor`, `ratproto-xrpc`, `serde`, `serde_json`
+3. Generated code depends on `shrike-syntax`, `shrike-cbor`, `shrike-xrpc`, `serde`, `serde_json`
 
 ## Config
 
@@ -23,10 +23,10 @@ lexicons/*.json → ratproto-lexicon (parse) → lexgen (generate) → crates/ra
 ```json
 {
     "packages": [
-        {"prefix": "app.bsky", "module": "app::bsky", "out_dir": "crates/ratproto-api/src/app/bsky"},
-        {"prefix": "com.atproto", "module": "com::atproto", "out_dir": "crates/ratproto-api/src/com/atproto"},
-        {"prefix": "chat.bsky", "module": "chat::bsky", "out_dir": "crates/ratproto-api/src/chat/bsky"},
-        {"prefix": "tools.ozone", "module": "tools::ozone", "out_dir": "crates/ratproto-api/src/tools/ozone"}
+        {"prefix": "app.bsky", "module": "app::bsky", "out_dir": "crates/shrike-api/src/app/bsky"},
+        {"prefix": "com.atproto", "module": "com::atproto", "out_dir": "crates/shrike-api/src/com/atproto"},
+        {"prefix": "chat.bsky", "module": "chat::bsky", "out_dir": "crates/shrike-api/src/chat/bsky"},
+        {"prefix": "tools.ozone", "module": "tools::ozone", "out_dir": "crates/shrike-api/src/tools/ozone"}
     ]
 }
 ```
@@ -145,9 +145,9 @@ Same enum but without the `Unknown` variant. Unrecognized `$type` returns an err
 Query endpoints:
 ```rust
 pub async fn get_timeline(
-    client: &ratproto_xrpc::Client,
+    client: &shrike_xrpc::Client,
     params: &GetTimelineParams,
-) -> Result<GetTimelineOutput, ratproto_xrpc::Error> {
+) -> Result<GetTimelineOutput, shrike_xrpc::Error> {
     client.query("app.bsky.feed.getTimeline", params).await
 }
 ```
@@ -155,9 +155,9 @@ pub async fn get_timeline(
 Procedure endpoints:
 ```rust
 pub async fn create_record(
-    client: &ratproto_xrpc::Client,
+    client: &shrike_xrpc::Client,
     input: &RepoCreateRecordInput,
-) -> Result<RepoCreateRecordOutput, ratproto_xrpc::Error> {
+) -> Result<RepoCreateRecordOutput, shrike_xrpc::Error> {
     client.procedure("com.atproto.repo.createRecord", input).await
 }
 ```
@@ -196,7 +196,7 @@ pub enum UnknownValue {
 ## Generated File Structure
 
 ```
-crates/ratproto-api/src/
+crates/shrike-api/src/
 ├── lib.rs              # Shared types, re-exports
 ├── app/
 │   ├── mod.rs
@@ -245,4 +245,4 @@ update-api: update-lexicons lexgen
 - **Generator unit tests**: Parse a small schema, generate code, verify the output string contains expected structs/fields/derives
 - **Roundtrip tests**: Generate types, compile them, serialize → deserialize and verify equality (JSON and CBOR)
 - **Snapshot tests**: Compare generated output against known-good snapshots for a subset of schemas
-- **Integration**: Run the full generator against the vendored lexicons and verify `cargo build -p ratproto-api` compiles
+- **Integration**: Run the full generator against the vendored lexicons and verify `cargo build -p shrike-api` compiles

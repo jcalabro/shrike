@@ -1,0 +1,45 @@
+[package]
+name = "shrike"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol library for Rust"
+
+[lints]
+workspace = true
+
+[features]
+default = ["syntax", "cbor", "crypto", "mst", "repo", "car"]
+syntax = ["dep:shrike-syntax"]
+cbor = ["dep:shrike-cbor"]
+crypto = ["dep:shrike-crypto"]
+mst = ["dep:shrike-mst"]
+repo = ["dep:shrike-repo"]
+car = ["dep:shrike-car"]
+lexicon = ["dep:shrike-lexicon"]
+xrpc = ["dep:shrike-xrpc"]
+xrpc-server = ["dep:shrike-xrpc-server"]
+identity = ["dep:shrike-identity"]
+streaming = ["dep:shrike-streaming"]
+sync = ["dep:shrike-sync"]
+backfill = ["dep:shrike-backfill"]
+labeling = ["dep:shrike-labeling"]
+api = ["dep:shrike-api"]
+full = ["syntax", "cbor", "crypto", "mst", "repo", "car", "lexicon", "xrpc", "xrpc-server", "identity", "streaming", "sync", "backfill", "labeling", "api"]
+
+[dependencies]
+shrike-syntax = { path = "../shrike-syntax", optional = true }
+shrike-cbor = { path = "../shrike-cbor", optional = true }
+shrike-crypto = { path = "../shrike-crypto", optional = true }
+shrike-mst = { path = "../shrike-mst", optional = true }
+shrike-repo = { path = "../shrike-repo", optional = true }
+shrike-car = { path = "../shrike-car", optional = true }
+shrike-lexicon = { path = "../shrike-lexicon", optional = true }
+shrike-xrpc = { path = "../shrike-xrpc", optional = true }
+shrike-xrpc-server = { path = "../shrike-xrpc-server", optional = true }
+shrike-identity = { path = "../shrike-identity", optional = true }
+shrike-streaming = { path = "../shrike-streaming", optional = true }
+shrike-sync = { path = "../shrike-sync", optional = true }
+shrike-backfill = { path = "../shrike-backfill", optional = true }
+shrike-labeling = { path = "../shrike-labeling", optional = true }
+shrike-api = { path = "../shrike-api", optional = true }

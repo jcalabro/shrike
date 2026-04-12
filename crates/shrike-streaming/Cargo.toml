@@ -1,0 +1,25 @@
+[package]
+name = "shrike-streaming"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AT Protocol event streaming — firehose, labels, Jetstream"
+
+[lints]
+workspace = true
+
+[dependencies]
+shrike-syntax = { path = "../shrike-syntax" }
+shrike-cbor = { path = "../shrike-cbor" }
+shrike-car = { path = "../shrike-car" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures.workspace = true
+url.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
