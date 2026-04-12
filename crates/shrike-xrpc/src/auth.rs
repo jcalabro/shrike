@@ -1,5 +1,5 @@
-use shrike_syntax::{Did, Handle};
 use serde::{Deserialize, Serialize};
+use shrike_syntax::{Did, Handle};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

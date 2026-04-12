@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use shrike_identity::Directory;
 use shrike_syntax::Did;
-use serde::{Deserialize, Serialize};
 
 #[derive(clap::Subcommand)]
 pub enum Command {

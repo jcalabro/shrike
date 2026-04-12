@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use serde::Deserialize;
 use shrike_crypto::VerifyingKey;
 use shrike_syntax::{Did, Handle};
-use serde::Deserialize;
 
 use crate::IdentityError;
 

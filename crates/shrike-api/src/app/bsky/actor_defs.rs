@@ -52,16 +52,12 @@ impl ActorDefsAdultContentPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -77,9 +73,7 @@ impl ActorDefsAdultContentPref {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_enabled = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -151,16 +145,12 @@ impl ActorDefsBskyAppProgressGuide {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -176,9 +166,7 @@ impl ActorDefsBskyAppProgressGuide {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_guide = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -239,8 +227,7 @@ impl ActorDefsBskyAppStatePref {
             shrike_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             if !self.nuxs.is_empty() {
                 shrike_cbor::Encoder::new(&mut *buf).encode_text("nuxs")?;
-                shrike_cbor::Encoder::new(&mut *buf)
-                    .encode_array_header(self.nuxs.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut *buf).encode_array_header(self.nuxs.len() as u64)?;
                 for item in &self.nuxs {
                     item.encode_cbor(buf)?;
                 }
@@ -264,8 +251,7 @@ impl ActorDefsBskyAppStatePref {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             if !self.nuxs.is_empty() {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.nuxs.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.nuxs.len() as u64)?;
                 for item in &self.nuxs {
                     item.encode_cbor(&mut vbuf)?;
                 }
@@ -304,16 +290,12 @@ impl ActorDefsBskyAppStatePref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -335,9 +317,7 @@ impl ActorDefsBskyAppStatePref {
                             field_nuxs.push(ActorDefsNux::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "queuedNudges" => {
@@ -352,9 +332,7 @@ impl ActorDefsBskyAppStatePref {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "activeProgressGuide" => {
@@ -458,16 +436,12 @@ impl ActorDefsContentLabelPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -485,30 +459,24 @@ impl ActorDefsContentLabelPref {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_label = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "labelerDid" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_labeler_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_labeler_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "visibility" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_visibility = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -630,16 +598,12 @@ impl ActorDefsDeclaredAgePref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -657,27 +621,21 @@ impl ActorDefsDeclaredAgePref {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_over_age13 = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "isOverAge16" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_over_age16 = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "isOverAge18" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_over_age18 = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -839,16 +797,12 @@ impl ActorDefsFeedViewPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -869,36 +823,28 @@ impl ActorDefsFeedViewPref {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_feed = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "hideReplies" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_replies = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "hideReposts" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_reposts = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "hideQuotePosts" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_quote_posts = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "hideRepliesByLikeCount" => match value {
@@ -918,9 +864,7 @@ impl ActorDefsFeedViewPref {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_replies_by_unfollowed = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -981,8 +925,7 @@ impl ActorDefsHiddenPostsPref {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.items.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.items.len() as u64)?;
                 for item in &self.items {
                     shrike_cbor::Encoder::new(&mut vbuf).encode_text(item.as_str())?;
                 }
@@ -1005,16 +948,12 @@ impl ActorDefsHiddenPostsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1040,9 +979,7 @@ impl ActorDefsHiddenPostsPref {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -1096,8 +1033,7 @@ impl ActorDefsInterestsPref {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.tags.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.tags.len() as u64)?;
                 for item in &self.tags {
                     shrike_cbor::Encoder::new(&mut vbuf).encode_text(item)?;
                 }
@@ -1120,16 +1056,12 @@ impl ActorDefsInterestsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1153,9 +1085,7 @@ impl ActorDefsInterestsPref {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -1203,8 +1133,7 @@ impl ActorDefsKnownFollowers {
             shrike_cbor::Encoder::new(&mut *buf).encode_text("count")?;
             shrike_cbor::Encoder::new(&mut *buf).encode_i64(self.count)?;
             shrike_cbor::Encoder::new(&mut *buf).encode_text("followers")?;
-            shrike_cbor::Encoder::new(&mut *buf)
-                .encode_array_header(self.followers.len() as u64)?;
+            shrike_cbor::Encoder::new(&mut *buf).encode_array_header(self.followers.len() as u64)?;
             for item in &self.followers {
                 item.encode_cbor(buf)?;
             }
@@ -1242,16 +1171,12 @@ impl ActorDefsKnownFollowers {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1285,9 +1210,7 @@ impl ActorDefsKnownFollowers {
                             field_followers.push(ActorDefsProfileViewBasic::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -1360,16 +1283,12 @@ impl ActorDefsLabelerPrefItem {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1383,14 +1302,12 @@ impl ActorDefsLabelerPrefItem {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -1437,8 +1354,7 @@ impl ActorDefsLabelersPref {
             let count = 1u64;
             shrike_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             shrike_cbor::Encoder::new(&mut *buf).encode_text("labelers")?;
-            shrike_cbor::Encoder::new(&mut *buf)
-                .encode_array_header(self.labelers.len() as u64)?;
+            shrike_cbor::Encoder::new(&mut *buf).encode_array_header(self.labelers.len() as u64)?;
             for item in &self.labelers {
                 item.encode_cbor(buf)?;
             }
@@ -1471,16 +1387,12 @@ impl ActorDefsLabelersPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1500,9 +1412,7 @@ impl ActorDefsLabelersPref {
                             field_labelers.push(ActorDefsLabelerPrefItem::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -1604,16 +1514,12 @@ impl ActorDefsLiveEventPreferences {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1630,9 +1536,7 @@ impl ActorDefsLiveEventPreferences {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_all_feeds = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "hiddenFeedIds" => {
@@ -1647,9 +1551,7 @@ impl ActorDefsLiveEventPreferences {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -1790,16 +1692,12 @@ impl ActorDefsMutedWord {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1819,18 +1717,14 @@ impl ActorDefsMutedWord {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_id = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "value" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_value = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "targets" => {
@@ -1845,30 +1739,24 @@ impl ActorDefsMutedWord {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "expiresAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_expires_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_expires_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "actorTarget" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_actor_target = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -1931,8 +1819,7 @@ impl ActorDefsMutedWordsPref {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.items.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.items.len() as u64)?;
                 for item in &self.items {
                     item.encode_cbor(&mut vbuf)?;
                 }
@@ -1955,16 +1842,12 @@ impl ActorDefsMutedWordsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1984,9 +1867,7 @@ impl ActorDefsMutedWordsPref {
                             field_items.push(ActorDefsMutedWord::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -2100,16 +1981,12 @@ impl ActorDefsNux {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -2128,39 +2005,31 @@ impl ActorDefsNux {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_id = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "data" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_data = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "completed" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_completed = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "expiresAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_expires_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_expires_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -2247,16 +2116,12 @@ impl ActorDefsPersonalDetailsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -2270,14 +2135,12 @@ impl ActorDefsPersonalDetailsPref {
             match key {
                 "birthDate" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_birth_date =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_birth_date = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -2393,16 +2256,12 @@ impl ActorDefsPostInteractionSettingsPrefPostgateEmbeddingRulesUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -2566,16 +2425,12 @@ impl ActorDefsPostInteractionSettingsPrefThreadgateAllowRulesUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -2703,16 +2558,12 @@ impl ActorDefsPostInteractionSettingsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -2737,9 +2588,7 @@ impl ActorDefsPostInteractionSettingsPref {
                             field_threadgate_allow_rules.push(ActorDefsPostInteractionSettingsPrefThreadgateAllowRulesUnion::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "postgateEmbeddingRules" => {
@@ -2750,9 +2599,7 @@ impl ActorDefsPostInteractionSettingsPref {
                             field_postgate_embedding_rules.push(ActorDefsPostInteractionSettingsPrefPostgateEmbeddingRulesUnion::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -3180,16 +3027,12 @@ impl ActorDefsPreferencesItem {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -3506,16 +3349,12 @@ impl ActorDefsProfileAssociated {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -3562,9 +3401,7 @@ impl ActorDefsProfileAssociated {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_labeler = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "feedgens" => match value {
@@ -3673,16 +3510,12 @@ impl ActorDefsProfileAssociatedActivitySubscription {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -3698,9 +3531,7 @@ impl ActorDefsProfileAssociatedActivitySubscription {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_allow_subscriptions = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -3774,16 +3605,12 @@ impl ActorDefsProfileAssociatedChat {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -3799,9 +3626,7 @@ impl ActorDefsProfileAssociatedChat {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_allow_incoming = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -3813,9 +3638,7 @@ impl ActorDefsProfileAssociatedChat {
 
         Ok(ActorDefsProfileAssociatedChat {
             allow_incoming: field_allow_incoming.ok_or_else(|| {
-                shrike_cbor::CborError::InvalidCbor(
-                    "missing required field 'allowIncoming'".into(),
-                )
+                shrike_cbor::CborError::InvalidCbor("missing required field 'allowIncoming'".into())
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
@@ -3883,16 +3706,12 @@ impl ActorDefsProfileAssociatedGerm {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -3909,18 +3728,14 @@ impl ActorDefsProfileAssociatedGerm {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_message_me_url = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "showButtonTo" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_show_button_to = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -3932,14 +3747,10 @@ impl ActorDefsProfileAssociatedGerm {
 
         Ok(ActorDefsProfileAssociatedGerm {
             message_me_url: field_message_me_url.ok_or_else(|| {
-                shrike_cbor::CborError::InvalidCbor(
-                    "missing required field 'messageMeUrl'".into(),
-                )
+                shrike_cbor::CborError::InvalidCbor("missing required field 'messageMeUrl'".into())
             })?,
             show_button_to: field_show_button_to.ok_or_else(|| {
-                shrike_cbor::CborError::InvalidCbor(
-                    "missing required field 'showButtonTo'".into(),
-                )
+                shrike_cbor::CborError::InvalidCbor("missing required field 'showButtonTo'".into())
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
@@ -4210,16 +4021,12 @@ impl ActorDefsProfileView {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -4245,35 +4052,29 @@ impl ActorDefsProfileView {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "avatar" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_avatar = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "handle" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_handle =
-                            Some(shrike_syntax::Handle::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_handle = Some(
+                            shrike_syntax::Handle::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "labels" => {
@@ -4285,9 +4086,7 @@ impl ActorDefsProfileView {
                                 .push(crate::com::atproto::LabelDefsLabel::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "status" => {
@@ -4304,33 +4103,27 @@ impl ActorDefsProfileView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_pronouns = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "indexedAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_indexed_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_indexed_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "associated" => {
@@ -4342,18 +4135,14 @@ impl ActorDefsProfileView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_description = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "displayName" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "verification" => {
@@ -4620,16 +4409,12 @@ impl ActorDefsProfileViewBasic {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -4653,35 +4438,29 @@ impl ActorDefsProfileViewBasic {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "avatar" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_avatar = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "handle" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_handle =
-                            Some(shrike_syntax::Handle::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_handle = Some(
+                            shrike_syntax::Handle::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "labels" => {
@@ -4693,9 +4472,7 @@ impl ActorDefsProfileViewBasic {
                                 .push(crate::com::atproto::LabelDefsLabel::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "status" => {
@@ -4712,21 +4489,17 @@ impl ActorDefsProfileViewBasic {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_pronouns = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "associated" => {
@@ -4738,9 +4511,7 @@ impl ActorDefsProfileViewBasic {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "verification" => {
@@ -5167,16 +4938,12 @@ impl ActorDefsProfileViewDetailed {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -5211,44 +4978,36 @@ impl ActorDefsProfileViewDetailed {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "avatar" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_avatar = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "banner" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_banner = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "handle" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_handle =
-                            Some(shrike_syntax::Handle::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_handle = Some(
+                            shrike_syntax::Handle::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "labels" => {
@@ -5260,9 +5019,7 @@ impl ActorDefsProfileViewDetailed {
                                 .push(crate::com::atproto::LabelDefsLabel::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "status" => {
@@ -5279,42 +5036,34 @@ impl ActorDefsProfileViewDetailed {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_website = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "pronouns" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_pronouns = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "indexedAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_indexed_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_indexed_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "associated" => {
@@ -5345,18 +5094,14 @@ impl ActorDefsProfileViewDetailed {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_description = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "displayName" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "followsCount" => match value {
@@ -5512,16 +5257,12 @@ impl ActorDefsSavedFeed {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -5540,36 +5281,28 @@ impl ActorDefsSavedFeed {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_id = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "type" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_type = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "value" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_value = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "pinned" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_pinned = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -5652,8 +5385,7 @@ impl ActorDefsSavedFeedsPref {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.saved.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.saved.len() as u64)?;
                 for item in &self.saved {
                     shrike_cbor::Encoder::new(&mut vbuf).encode_text(item.as_str())?;
                 }
@@ -5692,16 +5424,12 @@ impl ActorDefsSavedFeedsPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -5729,9 +5457,7 @@ impl ActorDefsSavedFeedsPref {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "pinned" => {
@@ -5748,9 +5474,7 @@ impl ActorDefsSavedFeedsPref {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "timelineIndex" => match value {
@@ -5819,8 +5543,7 @@ impl ActorDefsSavedFeedsPrefV2 {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.items.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.items.len() as u64)?;
                 for item in &self.items {
                     item.encode_cbor(&mut vbuf)?;
                 }
@@ -5843,16 +5566,12 @@ impl ActorDefsSavedFeedsPrefV2 {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -5872,9 +5591,7 @@ impl ActorDefsSavedFeedsPrefV2 {
                             field_items.push(ActorDefsSavedFeed::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 _ => {
@@ -6005,16 +5722,12 @@ impl ActorDefsStatusViewEmbedUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -6190,16 +5903,12 @@ impl ActorDefsStatusView {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -6221,21 +5930,17 @@ impl ActorDefsStatusView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_cid = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "uri" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_uri =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_uri = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "embed" => {
@@ -6247,39 +5952,31 @@ impl ActorDefsStatusView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_status = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "isActive" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_active = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "expiresAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_expires_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_expires_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "isDisabled" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_disabled = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -6368,16 +6065,12 @@ impl ActorDefsThreadViewPref {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -6393,9 +6086,7 @@ impl ActorDefsThreadViewPref {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_sort = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -6475,16 +6166,12 @@ impl ActorDefsVerificationPrefs {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -6500,9 +6187,7 @@ impl ActorDefsVerificationPrefs {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_hide_badges = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 _ => {
@@ -6577,8 +6262,7 @@ impl ActorDefsVerificationState {
             }
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_text(&self.trusted_verifier_status)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_text(&self.trusted_verifier_status)?;
                 pairs.push(("trustedVerifierStatus", vbuf));
             }
             for (k, v) in &self.extra_cbor {
@@ -6598,16 +6282,12 @@ impl ActorDefsVerificationState {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -6630,27 +6310,21 @@ impl ActorDefsVerificationState {
                                 .push(ActorDefsVerificationView::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "verifiedStatus" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_verified_status = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "trustedVerifierStatus" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_trusted_verifier_status = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -6754,16 +6428,12 @@ impl ActorDefsVerificationView {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -6780,47 +6450,39 @@ impl ActorDefsVerificationView {
             match key {
                 "uri" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_uri =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_uri = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "issuer" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_issuer =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_issuer = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "isValid" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_is_valid = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -7055,16 +6717,12 @@ impl ActorDefsViewerState {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -7090,54 +6748,44 @@ impl ActorDefsViewerState {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_muted = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "blocking" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_blocking =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_blocking = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "blockedBy" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_blocked_by = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "following" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_following =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_following = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "followedBy" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_followed_by =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_followed_by = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "mutedByList" => {

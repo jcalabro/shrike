@@ -99,16 +99,12 @@ impl VerificationDefsVerificationViewIssuerProfileUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -265,16 +261,12 @@ impl VerificationDefsVerificationViewIssuerRepoUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -397,16 +389,12 @@ impl VerificationDefsVerificationViewSubjectProfileUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -561,16 +549,12 @@ impl VerificationDefsVerificationViewSubjectRepoUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -806,16 +790,12 @@ impl VerificationDefsVerificationView {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -843,86 +823,72 @@ impl VerificationDefsVerificationView {
             match key {
                 "uri" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_uri =
-                            Some(shrike_syntax::AtUri::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_uri = Some(
+                            shrike_syntax::AtUri::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "handle" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_handle =
-                            Some(shrike_syntax::Handle::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_handle = Some(
+                            shrike_syntax::Handle::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "issuer" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_issuer =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_issuer = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "subject" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_subject =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_subject = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "revokedAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_revoked_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_revoked_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "revokedBy" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_revoked_by =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_revoked_by = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "issuerRepo" => {
@@ -936,9 +902,7 @@ impl VerificationDefsVerificationView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "subjectRepo" => {
@@ -952,9 +916,7 @@ impl VerificationDefsVerificationView {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_revoke_reason = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "issuerProfile" => {

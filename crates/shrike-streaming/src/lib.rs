@@ -195,10 +195,7 @@ fn extract_frame_header(header: shrike_cbor::Value<'_>) -> Result<(i64, String),
 
 type Fields<'a> = Vec<(&'a str, shrike_cbor::Value<'a>)>;
 
-fn require_map<'a>(
-    val: shrike_cbor::Value<'a>,
-    context: &str,
-) -> Result<Fields<'a>, StreamError> {
+fn require_map<'a>(val: shrike_cbor::Value<'a>, context: &str) -> Result<Fields<'a>, StreamError> {
     match val {
         shrike_cbor::Value::Map(m) => Ok(m),
         _ => Err(StreamError::ParseCbor(format!(
@@ -553,8 +550,7 @@ mod tests {
             cid: record_cid,
             data: record_data.to_vec(),
         };
-        let car_bytes =
-            shrike_car::write_all(&[record_cid], std::slice::from_ref(&block)).unwrap();
+        let car_bytes = shrike_car::write_all(&[record_cid], std::slice::from_ref(&block)).unwrap();
 
         // Encode the full frame: header + body
         let mut frame = Vec::new();

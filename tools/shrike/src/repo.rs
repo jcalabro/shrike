@@ -3,11 +3,11 @@ use std::fs::File;
 use std::io::BufReader;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use shrike_api::com::atproto::{SyncGetRepoParams, sync_get_repo};
 use shrike_cbor::{Cid, Value};
 use shrike_repo::Commit;
 use shrike_xrpc::Client;
-use serde::Serialize;
 
 #[derive(clap::Subcommand)]
 pub enum Command {

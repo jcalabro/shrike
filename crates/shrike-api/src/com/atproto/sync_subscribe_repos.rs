@@ -94,16 +94,12 @@ impl SyncSubscribeReposAccount {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -121,14 +117,12 @@ impl SyncSubscribeReposAccount {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "seq" => match value {
@@ -146,32 +140,26 @@ impl SyncSubscribeReposAccount {
                 },
                 "time" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_time =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_time = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "active" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_active = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "status" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_status = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -283,11 +271,10 @@ impl SyncSubscribeReposCommit {
             shrike_cbor::Encoder::new(&mut *buf).encode_text("blocks")?;
             shrike_cbor::Encoder::new(&mut *buf).encode_text(&self.blocks)?;
             shrike_cbor::Encoder::new(&mut *buf).encode_text("commit")?;
-            let cid = self
-                .commit
-                .link
-                .parse::<shrike_cbor::Cid>()
-                .map_err(|e| shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}")))?;
+            let cid =
+                self.commit.link.parse::<shrike_cbor::Cid>().map_err(|e| {
+                    shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
+                })?;
             shrike_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;
             shrike_cbor::Encoder::new(&mut *buf).encode_text("rebase")?;
             shrike_cbor::Encoder::new(&mut *buf).encode_bool(self.rebase)?;
@@ -338,8 +325,7 @@ impl SyncSubscribeReposCommit {
             }
             {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.blobs.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.blobs.len() as u64)?;
                 for item in &self.blobs {
                     let cid = item.link.parse::<shrike_cbor::Cid>().map_err(|e| {
                         shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
@@ -365,13 +351,9 @@ impl SyncSubscribeReposCommit {
             }
             {
                 let mut vbuf = Vec::new();
-                let cid = self
-                    .commit
-                    .link
-                    .parse::<shrike_cbor::Cid>()
-                    .map_err(|e| {
-                        shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
-                    })?;
+                let cid = self.commit.link.parse::<shrike_cbor::Cid>().map_err(|e| {
+                    shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
+                })?;
                 shrike_cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;
                 pairs.push(("commit", vbuf));
             }
@@ -412,16 +394,12 @@ impl SyncSubscribeReposCommit {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -452,21 +430,17 @@ impl SyncSubscribeReposCommit {
                             field_ops.push(SyncSubscribeReposRepoOp::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "rev" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_rev =
-                            Some(shrike_syntax::Tid::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_rev = Some(
+                            shrike_syntax::Tid::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "seq" => match value {
@@ -484,26 +458,22 @@ impl SyncSubscribeReposCommit {
                 },
                 "repo" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_repo =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_repo = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "time" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_time =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_time = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "blobs" => {
@@ -520,21 +490,17 @@ impl SyncSubscribeReposCommit {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "since" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_since =
-                            Some(shrike_syntax::Tid::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_since = Some(
+                            shrike_syntax::Tid::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "blocks" => {
@@ -559,18 +525,14 @@ impl SyncSubscribeReposCommit {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_rebase = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "tooBig" => {
                     if let shrike_cbor::Value::Bool(b) = value {
                         field_too_big = Some(b);
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected bool".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "prevData" => {
@@ -710,16 +672,12 @@ impl SyncSubscribeReposIdentity {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -736,14 +694,12 @@ impl SyncSubscribeReposIdentity {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "seq" => match value {
@@ -761,26 +717,22 @@ impl SyncSubscribeReposIdentity {
                 },
                 "time" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_time =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_time = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "handle" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_handle =
-                            Some(shrike_syntax::Handle::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_handle = Some(
+                            shrike_syntax::Handle::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -877,16 +829,12 @@ impl SyncSubscribeReposInfo {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -903,18 +851,14 @@ impl SyncSubscribeReposInfo {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_name = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "message" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_message = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -1043,16 +987,12 @@ impl SyncSubscribeReposRepoOp {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1080,9 +1020,7 @@ impl SyncSubscribeReposRepoOp {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_path = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "prev" => {
@@ -1098,9 +1036,7 @@ impl SyncSubscribeReposRepoOp {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_action = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -1209,16 +1145,12 @@ impl SyncSubscribeReposSync {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1236,23 +1168,19 @@ impl SyncSubscribeReposSync {
             match key {
                 "did" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_did =
-                            Some(shrike_syntax::Did::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_did = Some(
+                            shrike_syntax::Did::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "rev" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_rev = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "seq" => match value {
@@ -1270,14 +1198,12 @@ impl SyncSubscribeReposSync {
                 },
                 "time" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_time =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_time = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "blocks" => {

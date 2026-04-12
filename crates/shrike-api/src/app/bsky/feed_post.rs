@@ -68,16 +68,12 @@ impl FeedPostEntity {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -95,9 +91,7 @@ impl FeedPostEntity {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_type = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "index" => {
@@ -109,9 +103,7 @@ impl FeedPostEntity {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_value = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -323,16 +315,12 @@ impl FeedPostEmbedUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -472,16 +460,12 @@ impl FeedPostLabelsUnion {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         // Save position, decode the value, look for $type key.
         let start = decoder.position();
         let val = decoder.decode()?;
@@ -553,8 +537,7 @@ impl FeedPost {
             shrike_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             if !self.tags.is_empty() {
                 shrike_cbor::Encoder::new(&mut *buf).encode_text("tags")?;
-                shrike_cbor::Encoder::new(&mut *buf)
-                    .encode_array_header(self.tags.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut *buf).encode_array_header(self.tags.len() as u64)?;
                 for item in &self.tags {
                     shrike_cbor::Encoder::new(&mut *buf).encode_text(item)?;
                 }
@@ -569,8 +552,7 @@ impl FeedPost {
             }
             if !self.langs.is_empty() {
                 shrike_cbor::Encoder::new(&mut *buf).encode_text("langs")?;
-                shrike_cbor::Encoder::new(&mut *buf)
-                    .encode_array_header(self.langs.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut *buf).encode_array_header(self.langs.len() as u64)?;
                 for item in &self.langs {
                     shrike_cbor::Encoder::new(&mut *buf).encode_text(item.as_str())?;
                 }
@@ -610,8 +592,7 @@ impl FeedPost {
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
             if !self.tags.is_empty() {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.tags.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.tags.len() as u64)?;
                 for item in &self.tags {
                     shrike_cbor::Encoder::new(&mut vbuf).encode_text(item)?;
                 }
@@ -631,8 +612,7 @@ impl FeedPost {
             }
             if !self.langs.is_empty() {
                 let mut vbuf = Vec::new();
-                shrike_cbor::Encoder::new(&mut vbuf)
-                    .encode_array_header(self.langs.len() as u64)?;
+                shrike_cbor::Encoder::new(&mut vbuf).encode_array_header(self.langs.len() as u64)?;
                 for item in &self.langs {
                     shrike_cbor::Encoder::new(&mut vbuf).encode_text(item.as_str())?;
                 }
@@ -692,16 +672,12 @@ impl FeedPost {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -733,18 +709,14 @@ impl FeedPost {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "text" => {
                     if let shrike_cbor::Value::Text(s) = value {
                         field_text = Some(s.to_string());
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 "embed" => {
@@ -766,9 +738,7 @@ impl FeedPost {
                             }
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "reply" => {
@@ -785,9 +755,7 @@ impl FeedPost {
                                 .push(crate::app::bsky::RichtextFacet::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "labels" => {
@@ -803,21 +771,17 @@ impl FeedPost {
                             field_entities.push(FeedPostEntity::decode_cbor(&mut dec)?);
                         }
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected array".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "createdAt" => {
                     if let shrike_cbor::Value::Text(s) = value {
-                        field_created_at =
-                            Some(shrike_syntax::Datetime::try_from(s).map_err(|e| {
-                                shrike_cbor::CborError::InvalidCbor(e.to_string())
-                            })?);
+                        field_created_at = Some(
+                            shrike_syntax::Datetime::try_from(s)
+                                .map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
                     } else {
-                        return Err(shrike_cbor::CborError::InvalidCbor(
-                            "expected text".into(),
-                        ));
+                        return Err(shrike_cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
                 _ => {
@@ -907,16 +871,12 @@ impl FeedPostReplyRef {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -1019,16 +979,12 @@ impl FeedPostTextSlice {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,

@@ -92,8 +92,7 @@ fn feed_post_reply_ref_roundtrip() {
             extra_cbor: Vec::new(),
         },
         root: shrike_api::com::atproto::RepoStrongRef {
-            uri: shrike_syntax::AtUri::try_from("at://did:plc:root/app.bsky.feed.post/0")
-                .unwrap(),
+            uri: shrike_syntax::AtUri::try_from("at://did:plc:root/app.bsky.feed.post/0").unwrap(),
             cid: "bafyrei_root".into(),
             extra: Default::default(),
             extra_cbor: Vec::new(),

@@ -148,7 +148,11 @@ pub fn gen_union_cbor(
     out.push('\n');
 
     // encode_cbor
-    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{").ok();
+    writeln!(
+        out,
+        "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{"
+    )
+    .ok();
     writeln!(out, "        match self {{").ok();
     for v in &variant_names {
         writeln!(
@@ -285,7 +289,11 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     out.push('\n');
 
     // encode_cbor: write directly to buf (no Encoder wrapper needed for nested calls)
-    writeln!(out, "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{").ok();
+    writeln!(
+        out,
+        "    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {{"
+    )
+    .ok();
 
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
@@ -434,7 +442,11 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
         "            shrike_cbor::Value::Map(entries) => entries,"
     )
     .ok();
-    writeln!(out, "            _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected map\".into())),").ok();
+    writeln!(
+        out,
+        "            _ => return Err(shrike_cbor::CborError::InvalidCbor(\"expected map\".into())),"
+    )
+    .ok();
     writeln!(out, "        }};").ok();
     out.push('\n');
 
@@ -559,7 +571,11 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
+                writeln!(
+                    out,
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;"
+                )
+                .ok();
             } else {
                 writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
             }
@@ -647,7 +663,11 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;").ok();
+                writeln!(
+                    out,
+                    "{indent}shrike_cbor::Encoder::new(&mut *buf).encode_text({access}.as_str())?;"
+                )
+                .ok();
             } else {
                 writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut *buf).encode_text(&__s)?; }}").ok();
             }
@@ -732,7 +752,11 @@ fn gen_encode_value_vbuf(
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
+                writeln!(
+                    out,
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;"
+                )
+                .ok();
             } else {
                 writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
             }
@@ -819,7 +843,11 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
         }
         FieldKind::SyntaxText(ty) => {
             if syntax_has_as_str(ty) {
-                writeln!(out, "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;").ok();
+                writeln!(
+                    out,
+                    "{indent}shrike_cbor::Encoder::new(&mut vbuf).encode_text({access}.as_str())?;"
+                )
+                .ok();
             } else {
                 writeln!(out, "{indent}{{ let __s = {access}.to_string(); shrike_cbor::Encoder::new(&mut vbuf).encode_text(&__s)?; }}").ok();
             }
@@ -896,22 +924,14 @@ fn gen_decode_single(
 
     match kind {
         FieldKind::Text => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = value {{").ok();
             writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::SyntaxText(ty) => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = value {{").ok();
             writeln!(out, "{indent}    {assign_pre}{ty}::try_from(s).map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?{assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text\".into()));").ok();
@@ -929,33 +949,21 @@ fn gen_decode_single(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bool => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Bool(b) = value {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Bool(b) = value {{").ok();
             writeln!(out, "{indent}    {assign_pre}b{assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected bool\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = value {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = value {{").ok();
             writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text for bytes field\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::CidLink => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Cid(c) = value {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Cid(c) = value {{").ok();
             writeln!(
                 out,
                 "{indent}    {assign_pre}crate::CidLink {{ link: c.to_string() }}{assign_post}"
@@ -966,11 +974,7 @@ fn gen_decode_single(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
-            writeln!(
-                out,
-                "{indent}let raw = shrike_cbor::encode_value(&value)?;"
-            )
-            .ok();
+            writeln!(out, "{indent}let raw = shrike_cbor::encode_value(&value)?;").ok();
             writeln!(
                 out,
                 "{indent}let mut dec = shrike_cbor::Decoder::new(&raw);"
@@ -1029,22 +1033,14 @@ fn gen_decode_array_item(
 ) {
     match kind {
         FieldKind::Text => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = item {{").ok();
             writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::SyntaxText(ty) => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = item {{").ok();
             writeln!(out, "{indent}    field_{var}.push({ty}::try_from(s).map_err(|e| shrike_cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
@@ -1066,11 +1062,7 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bool => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Bool(b) = item {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Bool(b) = item {{").ok();
             writeln!(out, "{indent}    field_{var}.push(b);").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected bool in array\".into()));").ok();
@@ -1088,11 +1080,7 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
-            writeln!(
-                out,
-                "{indent}let raw = shrike_cbor::encode_value(&item)?;"
-            )
-            .ok();
+            writeln!(out, "{indent}let raw = shrike_cbor::encode_value(&item)?;").ok();
             writeln!(
                 out,
                 "{indent}let mut dec = shrike_cbor::Decoder::new(&raw);"
@@ -1105,11 +1093,7 @@ fn gen_decode_array_item(
             .ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}if let shrike_cbor::Value::Text(s) = item {{"
-            )
-            .ok();
+            writeln!(out, "{indent}if let shrike_cbor::Value::Text(s) = item {{").ok();
             writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(shrike_cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();

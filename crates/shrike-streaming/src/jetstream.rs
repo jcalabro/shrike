@@ -1,6 +1,6 @@
+use serde::Deserialize;
 use shrike_cbor::Cid;
 use shrike_syntax::{Did, Nsid, RecordKey};
-use serde::Deserialize;
 
 use crate::StreamError;
 

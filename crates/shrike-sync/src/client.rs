@@ -22,10 +22,7 @@ impl SyncClient {
     }
 
     /// Create a new `SyncClient` with an identity directory for DID verification.
-    pub fn with_identity(
-        xrpc: shrike_xrpc::Client,
-        dir: Arc<shrike_identity::Directory>,
-    ) -> Self {
+    pub fn with_identity(xrpc: shrike_xrpc::Client, dir: Arc<shrike_identity::Directory>) -> Self {
         SyncClient {
             xrpc,
             identity: Some(dir),

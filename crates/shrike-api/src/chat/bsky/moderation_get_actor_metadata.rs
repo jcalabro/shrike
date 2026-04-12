@@ -103,16 +103,12 @@ impl ModerationGetActorMetadataMetadata {
         let mut decoder = shrike_cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor(
-                "trailing data".into(),
-            ));
+            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(
-        decoder: &mut shrike_cbor::Decoder,
-    ) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
             shrike_cbor::Value::Map(entries) => entries,
@@ -191,14 +187,10 @@ impl ModerationGetActorMetadataMetadata {
                 shrike_cbor::CborError::InvalidCbor("missing required field 'convos'".into())
             })?,
             messages_sent: field_messages_sent.ok_or_else(|| {
-                shrike_cbor::CborError::InvalidCbor(
-                    "missing required field 'messagesSent'".into(),
-                )
+                shrike_cbor::CborError::InvalidCbor("missing required field 'messagesSent'".into())
             })?,
             convos_started: field_convos_started.ok_or_else(|| {
-                shrike_cbor::CborError::InvalidCbor(
-                    "missing required field 'convosStarted'".into(),
-                )
+                shrike_cbor::CborError::InvalidCbor("missing required field 'convosStarted'".into())
             })?,
             messages_received: field_messages_received.ok_or_else(|| {
                 shrike_cbor::CborError::InvalidCbor(

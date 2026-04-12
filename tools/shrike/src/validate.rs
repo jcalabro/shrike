@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use shrike_lexicon::{Catalog, validate_record};
 use serde::Serialize;
+use shrike_lexicon::{Catalog, validate_record};
 
 #[derive(clap::Args)]
 pub struct Args {

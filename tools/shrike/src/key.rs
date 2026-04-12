@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
-use shrike_crypto::{K256SigningKey, P256SigningKey, SigningKey, VerifyingKey, parse_did_key};
 use serde::Serialize;
+use shrike_crypto::{K256SigningKey, P256SigningKey, SigningKey, VerifyingKey, parse_did_key};
 
 #[derive(clap::Subcommand)]
 pub enum Command {
