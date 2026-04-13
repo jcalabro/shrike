@@ -9,14 +9,14 @@ description = "AT Protocol repository sync and commit verification"
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
-shrike-cbor = { path = "../shrike-cbor" }
-shrike-mst = { path = "../shrike-mst" }
-shrike-repo = { path = "../shrike-repo" }
-shrike-car = { path = "../shrike-car" }
-shrike-identity = { path = "../shrike-identity" }
-shrike-xrpc = { path = "../shrike-xrpc" }
-shrike-crypto = { path = "../shrike-crypto" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0" }
+shrike-mst = { path = "../shrike-mst", version = "0.1.0" }
+shrike-repo = { path = "../shrike-repo", version = "0.1.0" }
+shrike-car = { path = "../shrike-car", version = "0.1.0" }
+shrike-identity = { path = "../shrike-identity", version = "0.1.0" }
+shrike-xrpc = { path = "../shrike-xrpc", version = "0.1.0" }
+shrike-crypto = { path = "../shrike-crypto", version = "0.1.0" }
 thiserror.workspace = true
 tokio.workspace = true
 serde_json.workspace = true

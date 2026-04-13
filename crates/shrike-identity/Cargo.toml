@@ -9,8 +9,8 @@ description = "AT Protocol identity resolution — DID documents, handle verific
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
-shrike-crypto = { path = "../shrike-crypto" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
+shrike-crypto = { path = "../shrike-crypto", version = "0.1.0" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

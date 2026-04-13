@@ -32,6 +32,7 @@ documentation = "https://docs.rs/shrike"
 authors = ["Jim Calabro <jim@calabro.io>"]
 keywords = ["atproto", "bluesky", "at-protocol", "distributed"]
 categories = ["api-bindings", "network-programming"]
+rust-version = "1.92"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

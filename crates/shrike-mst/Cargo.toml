@@ -9,7 +9,7 @@ description = "AT Protocol Merkle Search Tree"
 workspace = true
 
 [dependencies]
-shrike-cbor = { path = "../shrike-cbor" }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0" }
 thiserror.workspace = true
 sha2.workspace = true
 

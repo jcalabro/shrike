@@ -9,9 +9,9 @@ description = "AT Protocol concurrent repo backfill engine"
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
-shrike-sync = { path = "../shrike-sync" }
-shrike-xrpc = { path = "../shrike-xrpc" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
+shrike-sync = { path = "../shrike-sync", version = "0.1.0" }
+shrike-xrpc = { path = "../shrike-xrpc", version = "0.1.0" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

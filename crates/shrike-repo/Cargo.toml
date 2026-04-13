@@ -9,10 +9,10 @@ description = "AT Protocol repository operations — CRUD and signed commits"
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
-shrike-cbor = { path = "../shrike-cbor" }
-shrike-crypto = { path = "../shrike-crypto" }
-shrike-mst = { path = "../shrike-mst" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0" }
+shrike-crypto = { path = "../shrike-crypto", version = "0.1.0" }
+shrike-mst = { path = "../shrike-mst", version = "0.1.0" }
 thiserror.workspace = true
 
 [dev-dependencies]

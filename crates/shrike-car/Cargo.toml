@@ -9,7 +9,7 @@ description = "AT Protocol CAR v1 file reader and writer"
 workspace = true
 
 [dependencies]
-shrike-cbor = { path = "../shrike-cbor" }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0" }
 thiserror.workspace = true
 
 [dev-dependencies]

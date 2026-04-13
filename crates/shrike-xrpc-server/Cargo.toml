@@ -9,7 +9,7 @@ description = "AT Protocol XRPC HTTP server framework"
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

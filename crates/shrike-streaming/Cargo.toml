@@ -9,9 +9,9 @@ description = "AT Protocol event streaming — firehose, labels, Jetstream"
 workspace = true
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax" }
-shrike-cbor = { path = "../shrike-cbor" }
-shrike-car = { path = "../shrike-car" }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0" }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0" }
+shrike-car = { path = "../shrike-car", version = "0.1.0" }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
