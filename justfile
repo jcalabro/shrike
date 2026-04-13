@@ -94,6 +94,7 @@ publish *ARGS:
         "shrike-crypto"
         "shrike-mst"
         "shrike-car"
+        "shrike-repo"
         "shrike-lexicon"
         "shrike-xrpc"
         "shrike-xrpc-server"
