@@ -79,12 +79,13 @@ update-api: update-lexicons lexgen
 
 # Publish all crates to crates.io (must be logged in with `cargo login`)
 # Crates are published in dependency order to ensure all dependencies are available.
+# Skips crates that are already published or fail (e.g. version exists).
 # Usage:
 #   just publish           # publish all crates
 #   just publish --dry-run # preview what will be published
 publish *ARGS:
     #!/usr/bin/env bash
-    set -euo pipefail
+    set -u
 
     # Publish in dependency order
     declare -a crates=(
@@ -106,19 +107,35 @@ publish *ARGS:
         "shrike"
     )
 
+    declare -a failed=()
+    declare -a succeeded=()
+
     echo "Publishing shrike crates in dependency order..."
     for crate in "${crates[@]}"; do
         echo ""
         echo "📦 Publishing $crate..."
-        if cargo publish -p "$crate" {{ARGS}}; then
+        if cargo publish -p "$crate" {{ARGS}} 2>&1; then
             echo "✅ $crate published successfully"
+            succeeded+=("$crate")
             # Small delay between publishes to let crates.io index
             sleep 2
         else
-            echo "❌ Failed to publish $crate"
-            exit 1
+            echo "⏭️  Skipping $crate (already published or error)"
+            failed+=("$crate")
         fi
     done
 
     echo ""
-    echo "🎉 All crates published successfully!"
+    echo "📊 Summary:"
+    echo "  ✅ Published: ${#succeeded[@]} crates"
+    echo "  ⏭️  Skipped: ${#failed[@]} crates"
+    if [[ ${#succeeded[@]} -gt 0 ]]; then
+        echo ""
+        echo "✅ Successfully published:"
+        printf '   - %s\n' "${succeeded[@]}"
+    fi
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        echo ""
+        echo "⏭️  Skipped:"
+        printf '   - %s\n' "${failed[@]}"
+    fi
