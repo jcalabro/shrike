@@ -76,3 +76,49 @@ lexgen:
 
 # Update lexicons and regenerate
 update-api: update-lexicons lexgen
+
+# Publish all crates to crates.io (must be logged in with `cargo login`)
+# Crates are published in dependency order to ensure all dependencies are available.
+# Usage:
+#   just publish           # publish all crates
+#   just publish --dry-run # preview what will be published
+publish *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Publish in dependency order
+    declare -a crates=(
+        "shrike-syntax"
+        "shrike-cbor"
+        "shrike-crypto"
+        "shrike-mst"
+        "shrike-car"
+        "shrike-lexicon"
+        "shrike-xrpc"
+        "shrike-xrpc-server"
+        "shrike-labeling"
+        "shrike-identity"
+        "shrike-streaming"
+        "shrike-sync"
+        "shrike-backfill"
+        "shrike-oauth"
+        "shrike-api"
+        "shrike"
+    )
+
+    echo "Publishing shrike crates in dependency order..."
+    for crate in "${crates[@]}"; do
+        echo ""
+        echo "📦 Publishing $crate..."
+        if cargo publish -p "$crate" {{ARGS}}; then
+            echo "✅ $crate published successfully"
+            # Small delay between publishes to let crates.io index
+            sleep 2
+        else
+            echo "❌ Failed to publish $crate"
+            exit 1
+        fi
+    done
+
+    echo ""
+    echo "🎉 All crates published successfully!"

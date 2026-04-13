@@ -27,6 +27,11 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jcalabro/shrike"
+homepage = "https://github.com/jcalabro/shrike"
+documentation = "https://docs.rs/shrike"
+authors = ["Jim Calabro <jim@calabro.io>"]
+keywords = ["atproto", "bluesky", "at-protocol", "distributed"]
+categories = ["api-bindings", "network-programming"]
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
