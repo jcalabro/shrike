@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use serde::Serialize;
 
-use shrike_streaming::{Client, Config, Event, JetstreamCommit, JetstreamEvent, Operation};
+use shrike::streaming::{Client, Config, Event, JetstreamCommit, JetstreamEvent, Operation};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -125,7 +125,7 @@ async fn run_firehose(client: &Client, args: &Args) -> Result<()> {
                             }
                         }
                     }
-                    Err(shrike_streaming::StreamError::UnknownType(_)) => {
+                    Err(shrike::streaming::StreamError::UnknownType(_)) => {
                         // Skip #info, #sync, and other unknown event types
                         continue;
                     }

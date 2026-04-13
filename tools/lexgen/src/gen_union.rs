@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use shrike_lexicon::split_ref;
+use shrike::lexicon::split_ref;
 
 use crate::gen_cbor;
 use crate::gen_struct::GenContext;
@@ -56,7 +56,7 @@ pub fn gen_union(
         writeln!(out, "    {}(Box<{}>),", v.variant_name, v.rust_type).ok();
     }
     if !is_closed {
-        writeln!(out, "    Unknown(crate::UnknownUnionVariant),").ok();
+        writeln!(out, "    Unknown(crate::api::UnknownUnionVariant),").ok();
     }
     writeln!(out, "}}").ok();
     out.push('\n');
@@ -175,7 +175,7 @@ fn gen_deserialize(out: &mut String, type_name: &str, variants: &[UnionVariant],
         writeln!(out, "            _ => {{").ok();
         writeln!(
             out,
-            "                Ok({type_name}::Unknown(crate::UnknownUnionVariant {{"
+            "                Ok({type_name}::Unknown(crate::api::UnknownUnionVariant {{"
         )
         .ok();
         writeln!(out, "                    r#type: type_str.to_string(),").ok();
@@ -207,7 +207,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
+    fn test_ctx() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
         (cfg, schemas)
@@ -221,7 +221,7 @@ mod tests {
             schema,
             cfg: &cfg,
             schemas: &schemas,
-            caller_module: "crate::app::bsky",
+            caller_module: "crate::api::app::bsky",
         };
         let refs = vec![
             "app.bsky.embed.images".to_string(),
@@ -247,7 +247,7 @@ mod tests {
             schema,
             cfg: &cfg,
             schemas: &schemas,
-            caller_module: "crate::app::bsky",
+            caller_module: "crate::api::app::bsky",
         };
         let refs = vec!["app.bsky.embed.images".to_string()];
         let code = gen_union(&ctx, "TestClosed", &refs, Some(true)).unwrap();

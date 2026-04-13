@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use shrike_syntax::{AtUri, Datetime, Did, Handle, Language, Nsid, RecordKey, Tid};
+use shrike::syntax::{AtUri, Datetime, Did, Handle, Language, Nsid, RecordKey, Tid};
 
 #[derive(clap::Args)]
 pub struct Args {

@@ -18,33 +18,33 @@ pub struct CidLink {
 }
 
 impl CidLink {
-    pub fn to_cbor(&self) -> Result<Vec<u8>, shrike_cbor::CborError> {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
         self.encode_cbor(&mut buf)?;
         Ok(buf)
     }
 
-    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {
-        let cid = self.link.parse::<shrike_cbor::Cid>().map_err(|e| shrike_cbor::CborError::InvalidCbor(format!("invalid CID: {e}")))?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        let cid = self.link.parse::<crate::cbor::Cid>().map_err(|e| crate::cbor::CborError::InvalidCbor(format!("invalid CID: {e}")))?;
+        crate::cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;
         Ok(())
     }
 
-    pub fn from_cbor(data: &[u8]) -> Result<Self, shrike_cbor::CborError> {
-        let mut decoder = shrike_cbor::Decoder::new(data);
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
         let val = decoder.decode()?;
-        if let shrike_cbor::Value::Cid(c) = val {
+        if let crate::cbor::Value::Cid(c) = val {
             Ok(CidLink { link: c.to_string() })
         } else {
-            Err(shrike_cbor::CborError::InvalidCbor("expected CID for CidLink".into()))
+            Err(crate::cbor::CborError::InvalidCbor("expected CID for CidLink".into()))
         }
     }
 }
@@ -65,70 +65,70 @@ pub struct Blob {
 }
 
 impl Blob {
-    pub fn to_cbor(&self) -> Result<Vec<u8>, shrike_cbor::CborError> {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
         self.encode_cbor(&mut buf)?;
         Ok(buf)
     }
 
-    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), shrike_cbor::CborError> {
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         // CBOR key order (by encoded length then lex):
         // "ref" (3) < "size" (4) < "$type" (5) < "mimeType" (8)
         let mut count = 3u64; // $type, mimeType, size are always present
         if self.r#ref.is_some() { count += 1; }
-        shrike_cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+        crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
         if let Some(ref cid_link) = self.r#ref {
-            shrike_cbor::Encoder::new(&mut *buf).encode_text("ref")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("ref")?;
             cid_link.encode_cbor(buf)?;
         }
-        shrike_cbor::Encoder::new(&mut *buf).encode_text("size")?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_i64(self.size)?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_text("$type")?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_text("mimeType")?;
-        shrike_cbor::Encoder::new(&mut *buf).encode_text(&self.mime_type)?;
+        crate::cbor::Encoder::new(&mut *buf).encode_text("size")?;
+        crate::cbor::Encoder::new(&mut *buf).encode_i64(self.size)?;
+        crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+        crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
+        crate::cbor::Encoder::new(&mut *buf).encode_text("mimeType")?;
+        crate::cbor::Encoder::new(&mut *buf).encode_text(&self.mime_type)?;
         Ok(())
     }
 
-    pub fn from_cbor(data: &[u8]) -> Result<Self, shrike_cbor::CborError> {
-        let mut decoder = shrike_cbor::Decoder::new(data);
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
         let result = Self::decode_cbor(&mut decoder)?;
         if !decoder.is_empty() {
-            return Err(shrike_cbor::CborError::InvalidCbor("trailing data".into()));
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
         }
         Ok(result)
     }
 
-    pub fn decode_cbor(decoder: &mut shrike_cbor::Decoder) -> Result<Self, shrike_cbor::CborError> {
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
         let val = decoder.decode()?;
         let entries = match val {
-            shrike_cbor::Value::Map(entries) => entries,
-            _ => return Err(shrike_cbor::CborError::InvalidCbor("expected map for Blob".into())),
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map for Blob".into())),
         };
         let mut blob = Blob::default();
         for (key, value) in entries {
             match key {
                 "$type" => {
-                    if let shrike_cbor::Value::Text(s) = value {
+                    if let crate::cbor::Value::Text(s) = value {
                         blob.r#type = s.to_string();
                     }
                 }
                 "ref" => {
-                    if !matches!(value, shrike_cbor::Value::Null) {
-                        let raw = shrike_cbor::encode_value(&value)?;
-                        let mut dec = shrike_cbor::Decoder::new(&raw);
+                    if !matches!(value, crate::cbor::Value::Null) {
+                        let raw = crate::cbor::encode_value(&value)?;
+                        let mut dec = crate::cbor::Decoder::new(&raw);
                         blob.r#ref = Some(CidLink::decode_cbor(&mut dec)?);
                     }
                 }
                 "mimeType" => {
-                    if let shrike_cbor::Value::Text(s) = value {
+                    if let crate::cbor::Value::Text(s) = value {
                         blob.mime_type = s.to_string();
                     }
                 }
                 "size" => {
                     match value {
-                        shrike_cbor::Value::Unsigned(n) => blob.size = n as i64,
-                        shrike_cbor::Value::Signed(n) => blob.size = n,
+                        crate::cbor::Value::Unsigned(n) => blob.size = n as i64,
+                        crate::cbor::Value::Signed(n) => blob.size = n,
                         _ => {}
                     }
                 }

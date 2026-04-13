@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 
-use shrike_api::com::atproto::{
+use shrike::api::com::atproto::{
     RepoDescribeRepoParams, RepoGetRecordParams, RepoListRecordsParams, repo_describe_repo,
     repo_get_record, repo_list_records,
 };
-use shrike_syntax::{AtUri, Did, Handle};
-use shrike_xrpc::{AuthInfo, Client};
+use shrike::syntax::{AtUri, Did, Handle};
+use shrike::xrpc::{AuthInfo, Client};
 
 use crate::resolve;
 use crate::session;

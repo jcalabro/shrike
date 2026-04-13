@@ -1,23 +1,21 @@
+[package]
+name = "shrike"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "AT Protocol library for Rust"
+repository = "https://github.com/jcalabro/shrike"
+homepage = "https://github.com/jcalabro/shrike"
+documentation = "https://docs.rs/shrike"
+authors = ["Jim Calabro <jim@calabro.io>"]
+keywords = ["atproto", "bluesky", "at-protocol", "distributed"]
+categories = ["api-bindings", "network-programming"]
+rust-version = "1.92"
+
 [workspace]
 resolver = "2"
 members = [
-    "crates/shrike-syntax",
-    "crates/shrike-cbor",
-    "crates/shrike-crypto",
-    "crates/shrike-mst",
-    "crates/shrike-repo",
-    "crates/shrike-car",
-    "crates/shrike-lexicon",
-    "crates/shrike-xrpc",
-    "crates/shrike-xrpc-server",
-    "crates/shrike-identity",
-    "crates/shrike-streaming",
-    "crates/shrike-sync",
-    "crates/shrike-backfill",
-    "crates/shrike-labeling",
-    "crates/shrike-oauth",
-    "crates/shrike-api",
-    "crates/shrike",
+    ".",
     "tools/lexgen",
     "tools/shrike",  # CLI tool (binary name: shrike)
 ]
@@ -63,3 +61,116 @@ tokio-util = { version = "0.7", features = ["rt"] }
 rand = "0.9"
 url = "2"
 async-trait = "0.1"
+
+[lints]
+workspace = true
+
+[features]
+default = ["syntax", "cbor", "crypto", "mst", "repo", "car"]
+
+# Foundation (no inter-module deps)
+syntax = []
+cbor = ["dep:simdutf8", "dep:bumpalo"]
+crypto = ["dep:p256", "dep:k256", "dep:bs58", "dep:rand_core", "dep:zeroize"]
+
+# Layer 1 (depend on foundation)
+car = ["cbor"]
+mst = ["cbor"]
+lexicon = ["syntax"]
+xrpc = ["syntax", "dep:reqwest", "dep:tokio"]
+xrpc-server = ["syntax", "dep:tokio", "dep:axum", "dep:http"]
+
+# Layer 2 (depend on lower layers)
+repo = ["syntax", "cbor", "crypto", "mst"]
+identity = ["syntax", "crypto", "dep:reqwest", "dep:tokio"]
+labeling = ["syntax", "cbor", "crypto"]
+streaming = ["syntax", "cbor", "car", "dep:tokio", "dep:tokio-tungstenite", "dep:futures", "dep:url", "dep:rand"]
+api = ["syntax", "cbor", "xrpc"]
+
+# Layer 3 (depend on multiple lower layers)
+oauth = ["syntax", "crypto", "identity", "dep:reqwest", "dep:tokio", "dep:url", "dep:rand", "dep:async-trait"]
+sync = ["syntax", "cbor", "crypto", "mst", "repo", "car", "identity", "xrpc", "dep:tokio"]
+backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand", "dep:futures"]
+
+# Everything
+full = [
+    "syntax", "cbor", "crypto", "mst", "repo", "car",
+    "lexicon", "xrpc", "xrpc-server", "identity", "streaming",
+    "sync", "backfill", "labeling", "oauth", "api",
+]
+
+# === Always-on dependencies (used by many modules) ===
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+data-encoding.workspace = true
+
+# === Feature-gated dependencies ===
+
+# cbor
+simdutf8 = { version = "0.1", optional = true }
+bumpalo = { version = "3", optional = true }
+
+# crypto
+p256 = { workspace = true, optional = true }
+k256 = { workspace = true, optional = true }
+bs58 = { workspace = true, optional = true }
+rand_core = { workspace = true, optional = true }
+zeroize = { version = "1", optional = true }
+
+# xrpc, identity, oauth
+reqwest = { workspace = true, optional = true }
+
+# xrpc, xrpc-server, identity, streaming, sync, backfill, oauth
+tokio = { workspace = true, optional = true }
+
+# xrpc-server
+axum = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+
+# streaming
+tokio-tungstenite = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+
+# backfill
+tokio-util = { workspace = true, optional = true }
+
+# oauth
+async-trait = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+axum = { workspace = true }
+reqwest = { workspace = true }
+tower = "0.5"
+http-body-util = "0.1"
+serde_json.workspace = true
+url.workspace = true
+sha2.workspace = true
+data-encoding.workspace = true
+
+[[bench]]
+name = "cbor_benchmarks"
+harness = false
+required-features = ["cbor"]
+
+[[bench]]
+name = "mst_benchmarks"
+harness = false
+required-features = ["mst"]
+
+[[bench]]
+name = "car_benchmarks"
+harness = false
+required-features = ["car"]
+
+[[bench]]
+name = "repo_benchmarks"
+harness = false
+required-features = ["repo"]

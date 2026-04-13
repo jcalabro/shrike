@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write;
 
-use shrike_lexicon::{ArrayTypeDef, Def, FieldSchema, Schema};
+use shrike::lexicon::{ArrayTypeDef, Def, FieldSchema, Schema};
 
 use crate::config::Config;
 use crate::gen_endpoint;

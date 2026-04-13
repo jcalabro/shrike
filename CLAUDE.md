@@ -5,14 +5,14 @@ AT Protocol library for Rust. See design spec at `docs/superpowers/specs/2026-04
 ## Build & Test
 
 ```bash
-cargo build
-cargo test
-cargo clippy -- -D warnings
+cargo build --features full
+cargo test --features full
+cargo clippy --features full -- -D warnings
 ```
 
 ## Architecture
 
-Cargo workspace of focused crates. See design spec for full dependency graph.
+Single `shrike` library crate with feature-gated modules (`syntax`, `cbor`, `crypto`, `mst`, `repo`, `car`, `lexicon`, `xrpc`, `xrpc_server`, `identity`, `streaming`, `sync`, `backfill`, `labeling`, `oauth`, `api`). Tools (`lexgen`, `shrike-cli`) are separate workspace members.
 
 ## Conventions
 

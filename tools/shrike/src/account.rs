@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use shrike_syntax::{Did, Handle};
-use shrike_xrpc::{AuthInfo, Client};
+use shrike::syntax::{Did, Handle};
+use shrike::xrpc::{AuthInfo, Client};
 
 use crate::session::{self, Session};
 
@@ -77,7 +77,7 @@ async fn login(args: LoginArgs) -> Result<()> {
 }
 
 async fn oauth_login(args: OauthLoginArgs) -> Result<()> {
-    use shrike_oauth::{
+    use shrike::oauth::{
         AuthorizeOptions, CallbackParams, ClientMetadata, MemorySessionStore, MemoryStateStore,
         OAuthClient, OAuthClientConfig,
     };

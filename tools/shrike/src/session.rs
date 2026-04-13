@@ -19,7 +19,7 @@ pub struct Session {
 /// What type of session is active.
 pub enum ActiveSession {
     AppPassword(Session),
-    OAuth(shrike_oauth::Session),
+    OAuth(shrike::oauth::Session),
 }
 
 fn config_dir() -> Result<PathBuf> {
@@ -60,16 +60,16 @@ pub fn oauth_session_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("rat").join("oauth_session.json"))
 }
 
-pub fn load_oauth() -> Result<shrike_oauth::Session> {
+pub fn load_oauth() -> Result<shrike::oauth::Session> {
     let path = oauth_session_path()?;
     let data = fs::read_to_string(&path)
         .with_context(|| format!("failed to read OAuth session: {}", path.display()))?;
-    let session: shrike_oauth::Session =
+    let session: shrike::oauth::Session =
         serde_json::from_str(&data).context("failed to parse OAuth session")?;
     Ok(session)
 }
 
-pub fn save_oauth(session: &shrike_oauth::Session) -> Result<()> {
+pub fn save_oauth(session: &shrike::oauth::Session) -> Result<()> {
     let path = oauth_session_path()?;
     write_json_file(&path, session)
 }

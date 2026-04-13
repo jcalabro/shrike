@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::util;
-use shrike_lexicon::split_ref;
+use shrike::lexicon::split_ref;
 use std::collections::HashMap;
 
 /// Resolved reference target.
@@ -18,7 +18,7 @@ pub fn resolve_ref(
     cfg: &Config,
     context_nsid: &str,
     reference: &str,
-    schemas: &HashMap<String, shrike_lexicon::Schema>,
+    schemas: &HashMap<String, shrike::lexicon::Schema>,
 ) -> Result<ResolvedRef, String> {
     let (target_nsid, def_name) = split_ref(context_nsid, reference);
 
@@ -35,7 +35,7 @@ pub fn resolve_ref(
     let pkg = cfg
         .find_package(&target_nsid)
         .ok_or_else(|| format!("no package config for: {target_nsid}"))?;
-    let module_path = format!("crate::{}", pkg.module);
+    let module_path = format!("crate::api::{}", pkg.module);
 
     Ok(ResolvedRef {
         type_name,
@@ -61,7 +61,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    fn load_test_data() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
+    fn load_test_data() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
         let cfg = Config::load(std::path::Path::new("../../lexgen.json")).unwrap();
         let schemas = crate::loader::load_schemas(std::path::Path::new("../../lexicons")).unwrap();
         (cfg, schemas)
@@ -72,7 +72,7 @@ mod tests {
         let (cfg, schemas) = load_test_data();
         let resolved = resolve_ref(&cfg, "app.bsky.feed.post", "#replyRef", &schemas).unwrap();
         assert_eq!(resolved.type_name, "FeedPostReplyRef");
-        assert_eq!(resolved.module_path, "crate::app::bsky");
+        assert_eq!(resolved.module_path, "crate::api::app::bsky");
         assert_eq!(resolved.nsid, "app.bsky.feed.post");
         assert_eq!(resolved.def_name, "replyRef");
     }
@@ -88,7 +88,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(resolved.type_name, "RepoStrongRef");
-        assert_eq!(resolved.module_path, "crate::com::atproto");
+        assert_eq!(resolved.module_path, "crate::api::com::atproto");
     }
 
     #[test]
@@ -102,7 +102,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(resolved.type_name, "LabelDefsSelfLabels");
-        assert_eq!(resolved.module_path, "crate::com::atproto");
+        assert_eq!(resolved.module_path, "crate::api::com::atproto");
     }
 
     #[test]
@@ -121,12 +121,12 @@ mod tests {
     fn qualified_type_same_module() {
         let resolved = ResolvedRef {
             type_name: "FeedPostReplyRef".into(),
-            module_path: "crate::app::bsky".into(),
+            module_path: "crate::api::app::bsky".into(),
             nsid: "app.bsky.feed.post".into(),
             def_name: "replyRef".into(),
         };
         assert_eq!(
-            qualified_type(&resolved, "crate::app::bsky"),
+            qualified_type(&resolved, "crate::api::app::bsky"),
             "FeedPostReplyRef"
         );
     }
@@ -135,13 +135,13 @@ mod tests {
     fn qualified_type_cross_module() {
         let resolved = ResolvedRef {
             type_name: "RepoStrongRef".into(),
-            module_path: "crate::com::atproto".into(),
+            module_path: "crate::api::com::atproto".into(),
             nsid: "com.atproto.repo.strongRef".into(),
             def_name: "main".into(),
         };
         assert_eq!(
-            qualified_type(&resolved, "crate::app::bsky"),
-            "crate::com::atproto::RepoStrongRef"
+            qualified_type(&resolved, "crate::api::app::bsky"),
+            "crate::api::com::atproto::RepoStrongRef"
         );
     }
 

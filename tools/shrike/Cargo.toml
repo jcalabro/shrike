@@ -18,16 +18,9 @@ dirs = "5"
 hickory-resolver = "0.25"
 reqwest = { workspace = true }
 futures = { workspace = true }
-
-shrike-syntax = { path = "../../crates/shrike-syntax" }
-shrike-crypto = { path = "../../crates/shrike-crypto" }
-shrike-cbor = { path = "../../crates/shrike-cbor" }
-shrike-car = { path = "../../crates/shrike-car" }
-shrike-repo = { path = "../../crates/shrike-repo" }
-shrike-lexicon = { path = "../../crates/shrike-lexicon" }
-shrike-identity = { path = "../../crates/shrike-identity" }
-shrike-xrpc = { path = "../../crates/shrike-xrpc" }
-shrike-streaming = { path = "../../crates/shrike-streaming" }
-shrike-api = { path = "../../crates/shrike-api" }
-shrike-oauth = { path = "../../crates/shrike-oauth" }
 axum.workspace = true
+
+shrike = { path = "../..", features = [
+    "syntax", "crypto", "cbor", "car", "repo", "lexicon",
+    "identity", "xrpc", "streaming", "api", "oauth",
+] }

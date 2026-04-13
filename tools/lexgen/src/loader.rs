@@ -1,4 +1,4 @@
-use shrike_lexicon::Schema;
+use shrike::lexicon::Schema;
 use std::collections::HashMap;
 use std::path::Path;
 

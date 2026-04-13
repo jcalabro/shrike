@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use shrike_lexicon::{BodyDef, FieldSchema, ParamsDef, ProcedureDef, QueryDef};
+use shrike::lexicon::{BodyDef, FieldSchema, ParamsDef, ProcedureDef, QueryDef};
 
 use crate::gen_struct::{self, GenContext};
 use crate::gen_union;
@@ -45,16 +45,16 @@ pub fn gen_query(ctx: &GenContext<'_>, def_name: &str, query: &QueryDef) -> Resu
     };
 
     let return_type = if has_output {
-        format!("Result<{type_name}Output, shrike_xrpc::Error>")
+        format!("Result<{type_name}Output, crate::xrpc::Error>")
     } else if has_binary_output {
-        "Result<Vec<u8>, shrike_xrpc::Error>".to_string()
+        "Result<Vec<u8>, crate::xrpc::Error>".to_string()
     } else {
-        "Result<(), shrike_xrpc::Error>".to_string()
+        "Result<(), crate::xrpc::Error>".to_string()
     };
 
     writeln!(
         out,
-        "pub async fn {fn_name}(client: &shrike_xrpc::Client{params_arg}) -> {return_type} {{",
+        "pub async fn {fn_name}(client: &crate::xrpc::Client{params_arg}) -> {return_type} {{",
         fn_name = util::to_snake_case(&type_name),
     )
     .ok();
@@ -132,7 +132,7 @@ pub fn gen_procedure(
         writeln!(out, "/// {} XRPC procedure.", type_name).ok();
     }
 
-    let mut args = String::from("client: &shrike_xrpc::Client");
+    let mut args = String::from("client: &crate::xrpc::Client");
     if has_input {
         write!(args, ", input: &{type_name}Input").ok();
     } else if is_blob_input {
@@ -140,9 +140,9 @@ pub fn gen_procedure(
     }
 
     let return_type = if has_output {
-        format!("Result<{type_name}Output, shrike_xrpc::Error>")
+        format!("Result<{type_name}Output, crate::xrpc::Error>")
     } else {
-        "Result<(), shrike_xrpc::Error>".to_string()
+        "Result<(), crate::xrpc::Error>".to_string()
     };
 
     writeln!(
@@ -162,7 +162,7 @@ pub fn gen_procedure(
             .ok();
             writeln!(
                 out,
-                "    serde_json::from_value(v).map_err(|e| shrike_xrpc::Error::Xrpc {{ status: 0, error: \"DeserializationError\".to_string(), message: e.to_string() }})"
+                "    serde_json::from_value(v).map_err(|e| crate::xrpc::Error::Xrpc {{ status: 0, error: \"DeserializationError\".to_string(), message: e.to_string() }})"
             )
             .ok();
         } else {
@@ -318,7 +318,7 @@ fn gen_body_type(
 fn gen_endpoint_object(
     ctx: &GenContext<'_>,
     type_name: &str,
-    obj: &shrike_lexicon::ObjectDef,
+    obj: &shrike::lexicon::ObjectDef,
 ) -> Result<(String, Vec<String>), String> {
     let required: std::collections::HashSet<&str> =
         obj.required.iter().map(|s| s.as_str()).collect();
@@ -442,7 +442,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, shrike_lexicon::Schema>) {
+    fn test_ctx() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
         (cfg, schemas)
@@ -456,9 +456,9 @@ mod tests {
             schema,
             cfg: &cfg,
             schemas: &schemas,
-            caller_module: "crate::app::bsky",
+            caller_module: "crate::api::app::bsky",
         };
-        if let shrike_lexicon::Def::Query(q) = &schema.defs["main"] {
+        if let shrike::lexicon::Def::Query(q) = &schema.defs["main"] {
             let code = gen_query(&ctx, "main", q).unwrap();
             assert!(code.contains("pub async fn"), "code:\n{code}");
             assert!(code.contains("ActorGetProfileParams"), "code:\n{code}");
@@ -475,9 +475,9 @@ mod tests {
             schema,
             cfg: &cfg,
             schemas: &schemas,
-            caller_module: "crate::com::atproto",
+            caller_module: "crate::api::com::atproto",
         };
-        if let shrike_lexicon::Def::Procedure(p) = &schema.defs["main"] {
+        if let shrike::lexicon::Def::Procedure(p) = &schema.defs["main"] {
             let code = gen_procedure(&ctx, "main", p).unwrap();
             assert!(code.contains("RepoCreateRecordInput"), "code:\n{code}");
             assert!(code.contains("RepoCreateRecordOutput"), "code:\n{code}");

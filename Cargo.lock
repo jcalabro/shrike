@@ -1255,8 +1255,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "shrike-lexicon",
- "shrike-syntax",
+ "shrike",
 ]
 
 [[package]]
@@ -2067,70 +2066,32 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 name = "shrike"
 version = "0.1.0"
 dependencies = [
- "shrike-api",
- "shrike-backfill",
- "shrike-car",
- "shrike-cbor",
- "shrike-crypto",
- "shrike-identity",
- "shrike-labeling",
- "shrike-lexicon",
- "shrike-mst",
- "shrike-repo",
- "shrike-streaming",
- "shrike-sync",
- "shrike-syntax",
- "shrike-xrpc",
- "shrike-xrpc-server",
-]
-
-[[package]]
-name = "shrike-api"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "shrike-cbor",
- "shrike-syntax",
- "shrike-xrpc",
-]
-
-[[package]]
-name = "shrike-backfill"
-version = "0.1.0"
-dependencies = [
- "futures",
- "rand",
- "shrike-sync",
- "shrike-syntax",
- "shrike-xrpc",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
-name = "shrike-car"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "shrike-cbor",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-cbor"
-version = "0.1.0"
-dependencies = [
+ "async-trait",
+ "axum",
+ "bs58",
  "bumpalo",
  "criterion",
  "data-encoding",
+ "futures",
+ "http",
+ "http-body-util",
+ "k256",
+ "p256",
  "proptest",
+ "rand",
+ "rand_core 0.6.4",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "simdutf8",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tower",
+ "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -2146,183 +2107,8 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "shrike-api",
- "shrike-car",
- "shrike-cbor",
- "shrike-crypto",
- "shrike-identity",
- "shrike-lexicon",
- "shrike-oauth",
- "shrike-repo",
- "shrike-streaming",
- "shrike-syntax",
- "shrike-xrpc",
+ "shrike",
  "tokio",
-]
-
-[[package]]
-name = "shrike-crypto"
-version = "0.1.0"
-dependencies = [
- "bs58",
- "k256",
- "p256",
- "rand_core 0.6.4",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "zeroize",
-]
-
-[[package]]
-name = "shrike-identity"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "shrike-crypto",
- "shrike-syntax",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "shrike-labeling"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "shrike-cbor",
- "shrike-crypto",
- "shrike-syntax",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-lexicon"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "shrike-syntax",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-mst"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "proptest",
- "sha2",
- "shrike-cbor",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-oauth"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "data-encoding",
- "p256",
- "rand",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "shrike-crypto",
- "shrike-identity",
- "shrike-syntax",
- "thiserror 2.0.18",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "shrike-repo"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "serde_json",
- "shrike-cbor",
- "shrike-crypto",
- "shrike-mst",
- "shrike-syntax",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-streaming"
-version = "0.1.0"
-dependencies = [
- "futures",
- "rand",
- "serde",
- "serde_json",
- "shrike-car",
- "shrike-cbor",
- "shrike-syntax",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite",
- "url",
-]
-
-[[package]]
-name = "shrike-sync"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "shrike-car",
- "shrike-cbor",
- "shrike-crypto",
- "shrike-identity",
- "shrike-mst",
- "shrike-repo",
- "shrike-syntax",
- "shrike-xrpc",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "shrike-syntax"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "shrike-xrpc"
-version = "0.1.0"
-dependencies = [
- "axum",
- "reqwest",
- "serde",
- "serde_json",
- "shrike-syntax",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "shrike-xrpc-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "http",
- "http-body-util",
- "reqwest",
- "serde",
- "serde_json",
- "shrike-syntax",
- "thiserror 2.0.18",
- "tokio",
- "tower",
 ]
 
 [[package]]

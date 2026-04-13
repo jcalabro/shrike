@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use shrike_lexicon::{Catalog, validate_record};
+use shrike::lexicon::{Catalog, validate_record};
 
 #[derive(clap::Args)]
 pub struct Args {

@@ -4,10 +4,10 @@ use std::io::BufReader;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use shrike_api::com::atproto::{SyncGetRepoParams, sync_get_repo};
-use shrike_cbor::{Cid, Value};
-use shrike_repo::Commit;
-use shrike_xrpc::Client;
+use shrike::api::com::atproto::{SyncGetRepoParams, sync_get_repo};
+use shrike::cbor::{Cid, Value};
+use shrike::repo::Commit;
+use shrike::xrpc::Client;
 
 #[derive(clap::Subcommand)]
 pub enum Command {
@@ -80,7 +80,7 @@ fn read_car(path: &str) -> Result<CarData> {
     let reader = BufReader::new(file);
 
     let (roots, blocks) =
-        shrike_car::read_all(reader).with_context(|| "failed to read CAR file")?;
+        shrike::car::read_all(reader).with_context(|| "failed to read CAR file")?;
 
     let root_cid = roots.first().copied().context("CAR file has no root CID")?;
 
@@ -136,7 +136,7 @@ fn walk_mst_node(
         .with_context(|| format!("MST node block not found: {cid}"))?;
 
     let value =
-        shrike_cbor::decode(data).with_context(|| format!("failed to decode MST node: {cid}"))?;
+        shrike::cbor::decode(data).with_context(|| format!("failed to decode MST node: {cid}"))?;
 
     let map_entries = match value {
         Value::Map(entries) => entries,
@@ -364,7 +364,7 @@ async fn export(args: ExportArgs) -> Result<()> {
     // Resolve the target DID to find their PDS endpoint.
     // sync.getRepo must be sent to the user's actual PDS, not
     // our session host (which may be a different server).
-    let dir = shrike_identity::Directory::new();
+    let dir = shrike::identity::Directory::new();
     let identity = dir
         .lookup_did(&did)
         .await

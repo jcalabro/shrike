@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use shrike_identity::Directory;
-use shrike_syntax::{Did, Handle};
+use shrike::identity::Directory;
+use shrike::syntax::{Did, Handle};
 
 #[derive(clap::Args)]
 pub struct Args {
