@@ -28,18 +28,18 @@ api = ["dep:shrike-api"]
 full = ["syntax", "cbor", "crypto", "mst", "repo", "car", "lexicon", "xrpc", "xrpc-server", "identity", "streaming", "sync", "backfill", "labeling", "api"]
 
 [dependencies]
-shrike-syntax = { path = "../shrike-syntax", optional = true }
-shrike-cbor = { path = "../shrike-cbor", optional = true }
-shrike-crypto = { path = "../shrike-crypto", optional = true }
-shrike-mst = { path = "../shrike-mst", optional = true }
-shrike-repo = { path = "../shrike-repo", optional = true }
-shrike-car = { path = "../shrike-car", optional = true }
-shrike-lexicon = { path = "../shrike-lexicon", optional = true }
-shrike-xrpc = { path = "../shrike-xrpc", optional = true }
-shrike-xrpc-server = { path = "../shrike-xrpc-server", optional = true }
-shrike-identity = { path = "../shrike-identity", optional = true }
-shrike-streaming = { path = "../shrike-streaming", optional = true }
-shrike-sync = { path = "../shrike-sync", optional = true }
-shrike-backfill = { path = "../shrike-backfill", optional = true }
-shrike-labeling = { path = "../shrike-labeling", optional = true }
-shrike-api = { path = "../shrike-api", optional = true }
+shrike-syntax = { path = "../shrike-syntax", version = "0.1.0", optional = true }
+shrike-cbor = { path = "../shrike-cbor", version = "0.1.0", optional = true }
+shrike-crypto = { path = "../shrike-crypto", version = "0.1.0", optional = true }
+shrike-mst = { path = "../shrike-mst", version = "0.1.0", optional = true }
+shrike-repo = { path = "../shrike-repo", version = "0.1.0", optional = true }
+shrike-car = { path = "../shrike-car", version = "0.1.0", optional = true }
+shrike-lexicon = { path = "../shrike-lexicon", version = "0.1.0", optional = true }
+shrike-xrpc = { path = "../shrike-xrpc", version = "0.1.0", optional = true }
+shrike-xrpc-server = { path = "../shrike-xrpc-server", version = "0.1.0", optional = true }
+shrike-identity = { path = "../shrike-identity", version = "0.1.0", optional = true }
+shrike-streaming = { path = "../shrike-streaming", version = "0.1.0", optional = true }
+shrike-sync = { path = "../shrike-sync", version = "0.1.0", optional = true }
+shrike-backfill = { path = "../shrike-backfill", version = "0.1.0", optional = true }
+shrike-labeling = { path = "../shrike-labeling", version = "0.1.0", optional = true }
+shrike-api = { path = "../shrike-api", version = "0.1.0", optional = true }
