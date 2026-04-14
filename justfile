@@ -62,7 +62,7 @@ bench:
 
 # Run the shrike CLI (pass args after --)
 shrike *ARGS:
-    cargo run -p shrike-cli --bin shrike -- {{ARGS}}
+    cargo run -p shrike-cli --bin shrike-cli -- {{ARGS}}
 
 # Publish to crates.io (must be logged in with `cargo login`)
 # Usage:
