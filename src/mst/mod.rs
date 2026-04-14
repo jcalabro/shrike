@@ -26,14 +26,19 @@ pub use tree::Tree;
 
 use thiserror::Error;
 
+/// Errors produced by MST operations.
 #[derive(Debug, Error)]
 pub enum MstError {
+    /// A required block was not found in the block store.
     #[error("block not found: {0}")]
     BlockNotFound(String),
+    /// A node's structure or data is malformed.
     #[error("invalid node: {0}")]
     InvalidNode(String),
+    /// Failed to encode or decode CBOR data for a node.
     #[error("CBOR error: {0}")]
     Cbor(String),
+    /// An unexpected internal error.
     #[error("internal error: {0}")]
     Internal(String),
 }

@@ -26,19 +26,22 @@ pub enum CryptoError {
     SigningFailed(String),
 }
 
-/// Trait for signing keys
+/// Signing key for producing ECDSA signatures over arbitrary content.
 pub trait SigningKey: Send + Sync {
+    /// Return the corresponding public verification key.
     fn public_key(&self) -> &dyn VerifyingKey;
+    /// Sign the given content and return a compact 64-byte ECDSA signature.
     fn sign(&self, content: &[u8]) -> Result<Signature, CryptoError>;
 }
 
-/// Trait for verifying keys
+/// Verification key for checking ECDSA signatures.
 pub trait VerifyingKey: Send + Sync {
-    /// 33-byte SEC1 compressed point
+    /// Serialize as a 33-byte SEC1 compressed point.
     fn to_bytes(&self) -> [u8; 33];
+    /// Verify a signature over the given content. Returns an error if invalid.
     fn verify(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError>;
-    /// Returns did:key:z... string
+    /// Return the `did:key:z...` identifier for this public key.
     fn did_key(&self) -> String;
-    /// Returns z-prefixed base58btc multibase string
+    /// Return the z-prefixed base58btc multibase encoding of this public key.
     fn multibase(&self) -> String;
 }

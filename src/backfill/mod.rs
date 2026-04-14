@@ -2,8 +2,8 @@
 //!
 //! # Overview
 //!
-//! This crate provides a [`BackfillEngine`] that downloads all repositories
-//! from a relay or PDS concurrently.
+//! [`BackfillEngine`] downloads all repositories from a relay or PDS
+//! concurrently.
 //!
 //! Key features:
 //! - Cursor-based pagination with crash-recovery via the [`Checkpoint`] trait.

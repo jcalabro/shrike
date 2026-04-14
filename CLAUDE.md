@@ -1,6 +1,6 @@
 # shrike
 
-AT Protocol library for Rust. See design spec at `docs/superpowers/specs/2026-04-04-rat-atproto-library-design.md`.
+AT Protocol library for Rust. See documentation design spec at `docs/superpowers/specs/2026-04-14-documentation-design.md`.
 
 ## Build & Test
 

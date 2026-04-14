@@ -28,12 +28,16 @@ pub use bump::BumpValue;
 
 use thiserror::Error;
 
+/// Errors produced by CBOR encoding, decoding, and CID operations.
 #[derive(Debug, Error)]
 pub enum CborError {
+    /// The CBOR data is malformed or violates DRISL canonicalization rules.
     #[error("invalid CBOR: {0}")]
     InvalidCbor(String),
+    /// A CID has an unsupported version, codec, or hash function.
     #[error("invalid CID: {0}")]
     InvalidCid(String),
+    /// An underlying I/O error from the reader or writer.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

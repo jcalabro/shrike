@@ -5,12 +5,17 @@ use serde::Deserialize;
 /// A parsed Lexicon schema document.
 #[derive(Debug, Deserialize)]
 pub struct Schema {
+    /// Lexicon version (currently always 1).
     pub lexicon: u32,
+    /// Fully qualified NSID (e.g., "app.bsky.feed.post").
     pub id: String,
+    /// Schema revision number, if specified.
     #[serde(default)]
     pub revision: Option<u32>,
+    /// Human-readable description of this schema.
     #[serde(default)]
     pub description: Option<String>,
+    /// Named definitions. The "main" key holds the primary definition.
     pub defs: HashMap<String, Def>,
 }
 
@@ -49,9 +54,12 @@ pub enum Def {
 /// A record definition — the main type for AT Protocol records.
 #[derive(Debug, Deserialize)]
 pub struct RecordDef {
+    /// Key type for this record (e.g., "tid", "any", or a literal value).
     #[serde(default)]
     pub key: Option<String>,
+    /// The object schema that defines the record's fields.
     pub record: ObjectDef,
+    /// Human-readable description of this record type.
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -59,12 +67,16 @@ pub struct RecordDef {
 /// An object definition with named properties.
 #[derive(Debug, Deserialize)]
 pub struct ObjectDef {
+    /// Property names that must be present.
     #[serde(default)]
     pub required: Vec<String>,
+    /// Property names that may be null.
     #[serde(default)]
     pub nullable: Vec<String>,
+    /// Field schemas keyed by property name.
     #[serde(default)]
     pub properties: HashMap<String, FieldSchema>,
+    /// Human-readable description of this object type.
     #[serde(default)]
     pub description: Option<String>,
 }
@@ -193,12 +205,16 @@ impl FieldSchema {
 /// A query (XRPC GET) definition.
 #[derive(Debug, Deserialize)]
 pub struct QueryDef {
+    /// Query parameters (sent as URL query string).
     #[serde(default)]
     pub parameters: Option<ParamsDef>,
+    /// Response body schema.
     #[serde(default)]
     pub output: Option<BodyDef>,
+    /// Human-readable description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Named errors this query may return.
     #[serde(default)]
     pub errors: Vec<ErrorDef>,
 }
@@ -206,12 +222,16 @@ pub struct QueryDef {
 /// A procedure (XRPC POST) definition.
 #[derive(Debug, Deserialize)]
 pub struct ProcedureDef {
+    /// Request body schema.
     #[serde(default)]
     pub input: Option<BodyDef>,
+    /// Response body schema.
     #[serde(default)]
     pub output: Option<BodyDef>,
+    /// Human-readable description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Named errors this procedure may return.
     #[serde(default)]
     pub errors: Vec<ErrorDef>,
 }
@@ -232,9 +252,12 @@ pub struct SubscriptionDef {
 /// A request or response body.
 #[derive(Debug, Deserialize)]
 pub struct BodyDef {
+    /// MIME type (e.g., "application/json", "application/vnd.ipld.car").
     pub encoding: String,
+    /// Schema for the body content, if structured.
     #[serde(default)]
     pub schema: Option<FieldSchema>,
+    /// Human-readable description.
     #[serde(default)]
     pub description: Option<String>,
 }

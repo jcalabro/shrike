@@ -448,7 +448,9 @@ impl Client {
         Err(Self::parse_error_response(resp).await)
     }
 
-    /// Delete the current session (logout)
+    /// Delete the current session (logout).
+    ///
+    /// Calls `com.atproto.server.deleteSession` and clears the stored tokens.
     pub async fn delete_session(&self) -> Result<(), Error> {
         let url = self.xrpc_url("com.atproto.server.deleteSession");
         let refresh_jwt = self.refresh_bearer().await;

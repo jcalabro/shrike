@@ -44,7 +44,7 @@ impl Server {
         }
     }
 
-    /// Register a query (GET) handler
+    /// Register a query (GET) handler for the given NSID.
     pub fn query<P, O, F, Fut>(mut self, nsid: &str, handler: F) -> Self
     where
         P: DeserializeOwned + Send + 'static,
@@ -72,7 +72,7 @@ impl Server {
         self
     }
 
-    /// Register a procedure (POST) handler
+    /// Register a procedure (POST) handler for the given NSID.
     pub fn procedure<I, O, F, Fut>(mut self, nsid: &str, handler: F) -> Self
     where
         I: DeserializeOwned + Send + 'static,
@@ -100,12 +100,12 @@ impl Server {
         self
     }
 
-    /// Build into an axum Router for composition
+    /// Build into an axum Router for composition with other routes.
     pub fn into_router(self) -> Router {
         self.router
     }
 
-    /// Serve on a TCP listener
+    /// Serve on a TCP listener.
     pub async fn serve(self, listener: tokio::net::TcpListener) -> Result<(), std::io::Error> {
         axum::serve(listener, self.router).await
     }

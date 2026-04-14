@@ -16,22 +16,33 @@
 //! persistent storage.
 //!
 //! ```ignore
-//! use shrike::oauth::{OAuthClient, OAuthClientConfig};
+//! use shrike::oauth::{OAuthClient, OAuthClientConfig, AuthorizeOptions};
+//! use shrike::oauth::session::{MemorySessionStore, MemoryStateStore};
+//! use shrike::oauth::metadata::ClientMetadata;
 //!
-//! let config = OAuthClientConfig {
-//!     client_id: "https://myapp.example".into(),
-//!     redirect_uri: "https://myapp.example/callback".into(),
-//!     scope: "atproto transition:generic".into(),
-//! };
-//! let client = OAuthClient::new(config).await?;
+//! let client = OAuthClient::new(OAuthClientConfig {
+//!     metadata: ClientMetadata {
+//!         client_id: "https://myapp.example/client-metadata.json".into(),
+//!         ..Default::default()
+//!     },
+//!     session_store: Box::new(MemorySessionStore::new()),
+//!     state_store: Box::new(MemoryStateStore::new()),
+//!     signing_key: None,
+//!     skip_issuer_verification: false,
+//! });
 //!
 //! // Start authorization
-//! let result = client.authorize("user.bsky.social", None).await?;
-//! // Redirect user to result.authorize_url
+//! let result = client.authorize(AuthorizeOptions {
+//!     input: "alice.bsky.social".into(),
+//!     redirect_uri: "http://localhost:8080/callback".into(),
+//!     scope: None,
+//!     state: None,
+//! }).await?;
+//! // Redirect user to result.url
 //!
 //! // On callback:
-//! let session = client.callback(params, &state).await?;
-//! // Use session.access_token for API calls
+//! let session = client.callback(params).await?;
+//! // Use session to make authenticated requests
 //! ```
 
 pub mod client;

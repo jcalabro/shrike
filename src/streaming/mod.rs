@@ -2,7 +2,7 @@
 //!
 //! # Overview
 //!
-//! This crate provides types and parsing for AT Protocol event streams:
+//! Provides types and parsing for AT Protocol event streams:
 //!
 //! - **Firehose / label streams**: CBOR-framed binary WebSocket messages
 //!   (`com.atproto.sync.subscribeRepos`, `com.atproto.label.subscribeLabels`).

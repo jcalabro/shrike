@@ -1,7 +1,7 @@
 //! AT Protocol repository sync and commit verification.
 //!
-//! This crate provides a [`client::SyncClient`] for downloading full repositories
-//! via `com.atproto.sync.getRepo` and a [`verify`] module for verifying block CIDs.
+//! [`SyncClient`] downloads full repositories via `com.atproto.sync.getRepo`
+//! and [`verify_blocks`] checks that every block's CID matches its data.
 
 pub mod client;
 pub mod verify;
