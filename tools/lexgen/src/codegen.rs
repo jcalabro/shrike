@@ -94,7 +94,7 @@ pub fn generate(
 
     // Generate shared types (lib.rs).
     let lib_content = gen_shared::gen_shared_types(&top_modules);
-    files.insert("crates/shrike-api/src/lib.rs".to_string(), lib_content);
+    files.insert("src/api/mod.rs".to_string(), lib_content);
 
     Ok(files)
 }
@@ -217,10 +217,7 @@ mod tests {
         let files = generate(&cfg, &schemas).unwrap();
 
         // Check that key files exist
-        assert!(
-            files.contains_key("crates/shrike-api/src/lib.rs"),
-            "missing lib.rs"
-        );
+        assert!(files.contains_key("src/api/mod.rs"), "missing lib.rs");
         assert!(
             files.keys().any(|k| k.contains("feed_post.rs")),
             "missing feed_post.rs"
@@ -230,7 +227,7 @@ mod tests {
             "missing repo_strong_ref.rs"
         );
         assert!(
-            files.contains_key("crates/shrike-api/src/app/mod.rs"),
+            files.contains_key("src/api/app/mod.rs"),
             "missing app/mod.rs"
         );
     }
@@ -239,7 +236,7 @@ mod tests {
     fn generated_lib_has_modules() {
         let (cfg, schemas) = test_data();
         let files = generate(&cfg, &schemas).unwrap();
-        let lib = &files["crates/shrike-api/src/lib.rs"];
+        let lib = &files["src/api/mod.rs"];
         assert!(lib.contains("pub mod app;"), "lib:\n{lib}");
         assert!(lib.contains("pub mod com;"), "lib:\n{lib}");
     }

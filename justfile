@@ -43,11 +43,18 @@ fuzz DURATION="30":
         (cd "$fuzz_dir" && cargo +nightly fuzz run "$t" -- -max_total_time={{DURATION}})
     done
 
-# Copy lexicons from local atproto checkout
-update-lexicons:
-    rm -rf lexicons/*
-    mkdir -p lexicons
-    cp -r ../../../bluesky-social/atproto/lexicons/* lexicons
+# Fetch lexicons from the atproto repo and regenerate API code
+lexgen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    git clone --depth 1 --filter=blob:none --sparse \
+        https://github.com/bluesky-social/atproto.git "$tmp"
+    (cd "$tmp" && git sparse-checkout set lexicons)
+    rm -rf lexicons
+    cp -r "$tmp/lexicons" lexicons
+    cargo run -p lexgen --bin lexgen -- --lexdir lexicons --config lexgen.json
 
 # Run benchmarks
 bench:
@@ -56,13 +63,6 @@ bench:
 # Run the shrike CLI (pass args after --)
 shrike *ARGS:
     cargo run -p shrike-cli --bin shrike -- {{ARGS}}
-
-# Run the code generator
-lexgen:
-    cargo run --bin lexgen -- --lexdir lexicons --config lexgen.json
-
-# Update lexicons and regenerate
-update-api: update-lexicons lexgen
 
 # Publish to crates.io (must be logged in with `cargo login`)
 # Usage:

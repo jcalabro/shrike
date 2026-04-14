@@ -5632,6 +5632,8 @@ pub struct ActorDefsStatusView {
     pub is_active: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_disabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<crate::api::com::atproto::LabelDefsLabel>,
     pub record: serde_json::Value,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -5797,6 +5799,9 @@ impl ActorDefsStatusView {
             if self.embed.is_some() {
                 count += 1;
             }
+            if !self.labels.is_empty() {
+                count += 1;
+            }
             if self.is_active.is_some() {
                 count += 1;
             }
@@ -5823,6 +5828,14 @@ impl ActorDefsStatusView {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("embed")?;
                 if let Some(ref val) = self.embed {
                     val.encode_cbor(buf)?;
+                }
+            }
+            if !self.labels.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("labels")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.labels.len() as u64)?;
+                for item in &self.labels {
+                    item.encode_cbor(buf)?;
                 }
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("status")?;
@@ -5868,6 +5881,15 @@ impl ActorDefsStatusView {
                     val.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("embed", vbuf));
+            }
+            if !self.labels.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_array_header(self.labels.len() as u64)?;
+                for item in &self.labels {
+                    item.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("labels", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -5927,6 +5949,7 @@ impl ActorDefsStatusView {
         let mut field_cid: Option<String> = None;
         let mut field_uri: Option<crate::syntax::AtUri> = None;
         let mut field_embed: Option<ActorDefsStatusViewEmbedUnion> = None;
+        let mut field_labels: Vec<crate::api::com::atproto::LabelDefsLabel> = Vec::new();
         let mut field_status: Option<String> = None;
         let mut field_is_active: Option<bool> = None;
         let mut field_expires_at: Option<crate::syntax::Datetime> = None;
@@ -5956,6 +5979,19 @@ impl ActorDefsStatusView {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
                     field_embed = Some(ActorDefsStatusViewEmbedUnion::decode_cbor(&mut dec)?);
+                }
+                "labels" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_labels.push(
+                                crate::api::com::atproto::LabelDefsLabel::decode_cbor(&mut dec)?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
                 }
                 "status" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -5999,6 +6035,7 @@ impl ActorDefsStatusView {
             cid: field_cid,
             uri: field_uri,
             embed: field_embed,
+            labels: field_labels,
             record: Default::default(),
             status: field_status.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'status'".into())

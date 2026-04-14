@@ -7,15 +7,15 @@ use crate::util;
 /// Returns a map of file path → content for all `mod.rs` files.
 ///
 /// Given schemas with IDs like:
-/// - `app.bsky.feed.post` (out_dir = `crates/shrike-api/src/app/bsky`)
-/// - `app.bsky.actor.defs` (out_dir = `crates/shrike-api/src/app/bsky`)
-/// - `com.atproto.repo.createRecord` (out_dir = `crates/shrike-api/src/com/atproto`)
+/// - `app.bsky.feed.post` (out_dir = `src/api/app/bsky`)
+/// - `app.bsky.actor.defs` (out_dir = `src/api/app/bsky`)
+/// - `com.atproto.repo.createRecord` (out_dir = `src/api/com/atproto`)
 ///
 /// We need:
-/// - `crates/shrike-api/src/app/mod.rs` → `pub mod bsky;`
-/// - `crates/shrike-api/src/app/bsky/mod.rs` → `mod feed_post; pub use feed_post::*; ...`
-/// - `crates/shrike-api/src/com/mod.rs` → `pub mod atproto;`
-/// - `crates/shrike-api/src/com/atproto/mod.rs` → `mod repo_create_record; pub use repo_create_record::*; ...`
+/// - `src/api/app/mod.rs` → `pub mod bsky;`
+/// - `src/api/app/bsky/mod.rs` → `mod feed_post; pub use feed_post::*; ...`
+/// - `src/api/com/mod.rs` → `pub mod atproto;`
+/// - `src/api/com/atproto/mod.rs` → `mod repo_create_record; pub use repo_create_record::*; ...`
 pub fn gen_module_files(
     schema_ids: &[&str],
     packages: &[(/*prefix*/ &str, /*out_dir*/ &str)],
@@ -53,8 +53,8 @@ pub fn gen_module_files(
     }
 
     // Generate intermediate mod.rs files for the directory hierarchy
-    // e.g., if out_dir is crates/shrike-api/src/app/bsky, we need
-    // crates/shrike-api/src/app/mod.rs with `pub mod bsky;`
+    // e.g., if out_dir is src/api/app/bsky, we need
+    // src/api/app/mod.rs with `pub mod bsky;`
     let mut parent_to_children: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for out_dir in dir_to_files.keys() {
@@ -63,7 +63,7 @@ pub fn gen_module_files(
         // Find the position of "src" in the path
         if let Some(src_pos) = parts.iter().position(|&p| p == "src") {
             // Everything after src is the module hierarchy
-            // e.g., for crates/shrike-api/src/app/bsky, we have [app, bsky]
+            // e.g., for src/api/app/bsky, we have [app, bsky]
             let mod_parts = &parts[src_pos + 1..];
 
             for i in 1..mod_parts.len() {
@@ -104,17 +104,17 @@ mod tests {
             "com.atproto.repo.createRecord",
         ];
         let packages = vec![
-            ("app.bsky", "crates/shrike-api/src/app/bsky"),
-            ("com.atproto", "crates/shrike-api/src/com/atproto"),
+            ("app.bsky", "src/api/app/bsky"),
+            ("com.atproto", "src/api/com/atproto"),
         ];
         let files = gen_module_files(&schema_ids, &packages);
 
-        assert!(files.contains_key("crates/shrike-api/src/app/bsky/mod.rs"));
-        assert!(files.contains_key("crates/shrike-api/src/com/atproto/mod.rs"));
-        assert!(files.contains_key("crates/shrike-api/src/app/mod.rs"));
-        assert!(files.contains_key("crates/shrike-api/src/com/mod.rs"));
+        assert!(files.contains_key("src/api/app/bsky/mod.rs"));
+        assert!(files.contains_key("src/api/com/atproto/mod.rs"));
+        assert!(files.contains_key("src/api/app/mod.rs"));
+        assert!(files.contains_key("src/api/com/mod.rs"));
 
-        let bsky_mod = &files["crates/shrike-api/src/app/bsky/mod.rs"];
+        let bsky_mod = &files["src/api/app/bsky/mod.rs"];
         assert!(bsky_mod.contains("mod feed_post;"), "bsky_mod:\n{bsky_mod}");
         assert!(
             bsky_mod.contains("pub use feed_post::*;"),
@@ -125,10 +125,10 @@ mod tests {
             "bsky_mod:\n{bsky_mod}"
         );
 
-        let app_mod = &files["crates/shrike-api/src/app/mod.rs"];
+        let app_mod = &files["src/api/app/mod.rs"];
         assert!(app_mod.contains("pub mod bsky;"), "app_mod:\n{app_mod}");
 
-        let com_mod = &files["crates/shrike-api/src/com/mod.rs"];
+        let com_mod = &files["src/api/com/mod.rs"];
         assert!(com_mod.contains("pub mod atproto;"), "com_mod:\n{com_mod}");
     }
 }

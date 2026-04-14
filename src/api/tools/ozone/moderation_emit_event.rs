@@ -997,10 +997,7 @@ impl ModerationEmitEventInputEventUnion {
             }
             "tools.ozone.moderation.defs#revokeAccountCredentialsEvent" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
-                let inner =
-                    crate::api::tools::ozone::ModerationDefsRevokeAccountCredentialsEvent::decode_cbor(
-                        &mut dec,
-                    )?;
+                let inner = crate::api::tools::ozone::ModerationDefsRevokeAccountCredentialsEvent::decode_cbor(&mut dec)?;
                 Ok(
                     ModerationEmitEventInputEventUnion::ModerationDefsRevokeAccountCredentialsEvent(
                         Box::new(inner),
@@ -1021,10 +1018,7 @@ impl ModerationEmitEventInputEventUnion {
             }
             "tools.ozone.moderation.defs#cancelScheduledTakedownEvent" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
-                let inner =
-                    crate::api::tools::ozone::ModerationDefsCancelScheduledTakedownEvent::decode_cbor(
-                        &mut dec,
-                    )?;
+                let inner = crate::api::tools::ozone::ModerationDefsCancelScheduledTakedownEvent::decode_cbor(&mut dec)?;
                 Ok(
                     ModerationEmitEventInputEventUnion::ModerationDefsCancelScheduledTakedownEvent(
                         Box::new(inner),

@@ -5,9 +5,12 @@ AT Protocol library for Rust. See design spec at `docs/superpowers/specs/2026-04
 ## Build & Test
 
 ```bash
-cargo build --features full
-cargo test --features full
-cargo clippy --features full -- -D warnings
+just --list # find all commands
+just # runs the linter and all tests (run this often!)
+just lint
+just test
+just fuzz
+just bench
 ```
 
 ## Architecture

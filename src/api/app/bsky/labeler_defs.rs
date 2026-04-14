@@ -123,11 +123,7 @@ impl LabelerDefsLabelerPolicies {
                         for item in items {
                             let raw = crate::cbor::encode_value(&item)?;
                             let mut dec = crate::cbor::Decoder::new(&raw);
-                            field_label_value_definitions.push(
-                                crate::api::com::atproto::LabelDefsLabelValueDefinition::decode_cbor(
-                                    &mut dec,
-                                )?,
-                            );
+                            field_label_value_definitions.push(crate::api::com::atproto::LabelDefsLabelValueDefinition::decode_cbor(&mut dec)?);
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));

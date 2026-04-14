@@ -39,7 +39,12 @@ fn main() {
                 std::process::exit(1);
             });
         }
-        std::fs::write(path, content).unwrap_or_else(|e| {
+        let formatted = if path.ends_with(".rs") {
+            rustfmt(content)
+        } else {
+            content.clone()
+        };
+        std::fs::write(path, formatted).unwrap_or_else(|e| {
             eprintln!("Failed to write {path}: {e}");
             std::process::exit(1);
         });
@@ -50,6 +55,33 @@ fn main() {
         files.len(),
         schemas.len()
     );
+}
+
+fn rustfmt(code: &str) -> String {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let Ok(mut child) = Command::new("rustfmt")
+        .arg("--edition=2024")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    else {
+        eprintln!("Failed to spawn rustfmt");
+        std::process::exit(1);
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(code.as_bytes());
+    }
+
+    match child.wait_with_output() {
+        Ok(output) if output.status.success() => {
+            String::from_utf8(output.stdout).unwrap_or_else(|_| code.to_string())
+        }
+        _ => code.to_string(),
+    }
 }
 
 fn parse_args(args: &[String]) -> (PathBuf, PathBuf) {
