@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactDismissMatchInput {
+    /// The subject's DID to dismiss the match with.
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
@@ -17,7 +18,7 @@ pub struct ContactDismissMatchOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactDismissMatch — Removes a match that was found via contact import. It shouldn't appear again if the same contact ...
+/// ContactDismissMatch — Removes a match that was found via contact import. It shouldn't appear again if the same contact is re-imported. Requires authentication.
 pub async fn contact_dismiss_match(
     client: &crate::xrpc::Client,
     input: &ContactDismissMatchInput,

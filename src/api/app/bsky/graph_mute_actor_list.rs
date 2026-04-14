@@ -9,7 +9,7 @@ pub struct GraphMuteActorListInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphMuteActorList — Creates a mute relationship for the specified list of accounts. Mutes are private in Bluesky. Req...
+/// GraphMuteActorList — Creates a mute relationship for the specified list of accounts. Mutes are private in Bluesky. Requires auth.
 pub async fn graph_mute_actor_list(
     client: &crate::xrpc::Client,
     input: &GraphMuteActorListInput,

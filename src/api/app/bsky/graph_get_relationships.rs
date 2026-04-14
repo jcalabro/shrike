@@ -3,7 +3,9 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetRelationshipsParams {
+    /// Primary account requesting relationships for.
     pub actor: String,
+    /// List of 'other' accounts to be related back to the primary.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub others: Vec<String>,
 }
@@ -192,7 +194,7 @@ impl GraphGetRelationshipsOutputRelationshipsUnion {
     }
 }
 
-/// GraphGetRelationships — Enumerates public relationships between one account, and a list of other accounts. Does not requi...
+/// GraphGetRelationships — Enumerates public relationships between one account, and a list of other accounts. Does not require auth.
 pub async fn graph_get_relationships(
     client: &crate::xrpc::Client,
     params: &GraphGetRelationshipsParams,

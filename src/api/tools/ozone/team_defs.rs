@@ -256,14 +256,14 @@ impl TeamDefsMember {
     }
 }
 
-/// Token constant.
+/// Admin role. Highest level of access, can perform all actions.
 pub const TEAM_DEFS_ROLE_ADMIN: &str = "tools.ozone.team.defs#roleAdmin";
 
-/// Token constant.
+/// Moderator role. Can perform most actions.
 pub const TEAM_DEFS_ROLE_MODERATOR: &str = "tools.ozone.team.defs#roleModerator";
 
-/// Token constant.
+/// Triage role. Mostly intended for monitoring and escalating issues.
 pub const TEAM_DEFS_ROLE_TRIAGE: &str = "tools.ozone.team.defs#roleTriage";
 
-/// Token constant.
+/// Verifier role. Only allowed to issue verifications.
 pub const TEAM_DEFS_ROLE_VERIFIER: &str = "tools.ozone.team.defs#roleVerifier";

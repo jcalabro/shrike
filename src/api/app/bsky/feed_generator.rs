@@ -3,10 +3,11 @@
 /// NSID for the FeedGenerator record.
 pub const NSID_FEED_GENERATOR: &str = "app.bsky.feed.generator";
 
-/// FeedGenerator record from app.bsky.feed.generator.
+/// FeedGenerator — Record declaring of the existence of a feed generator, and containing metadata about it. The record can exist in any repository.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGenerator {
+    /// Declaration that a feed accepts feedback interactions from a client through app.bsky.feed.sendInteractions
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepts_interactions: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -20,6 +21,7 @@ pub struct FeedGenerator {
     pub description_facets: Vec<crate::api::app::bsky::RichtextFacet>,
     pub did: crate::syntax::Did,
     pub display_name: String,
+    /// Self-label values
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<FeedGeneratorLabelsUnion>,
     /// Extra fields not defined in the schema (JSON).
@@ -30,7 +32,7 @@ pub struct FeedGenerator {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
-/// FeedGeneratorLabelsUnion is a union type.
+/// Self-label values
 #[derive(Debug, Clone)]
 pub enum FeedGeneratorLabelsUnion {
     LabelDefsSelfLabels(Box<crate::api::com::atproto::LabelDefsSelfLabels>),

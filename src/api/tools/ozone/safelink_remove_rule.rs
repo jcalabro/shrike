@@ -3,11 +3,14 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkRemoveRuleInput {
+    /// Optional comment about why the rule is being removed
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Optional DID of the user. Only respected when using admin auth.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<crate::syntax::Did>,
     pub pattern: crate::api::tools::ozone::SafelinkDefsPatternType,
+    /// The URL or domain to remove the rule for
     pub url: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

@@ -12,6 +12,8 @@ const MAX_HEADER_SIZE: u64 = 1 << 20;
 /// data. Legitimate AT Protocol records are far smaller than this.
 const MAX_BLOCK_SIZE: u64 = 128 << 20;
 
+/// Streaming CAR v1 reader. Parses the header on construction, then yields
+/// blocks one at a time via `next_block` or `next_block_into`.
 pub struct Reader<R: Read> {
     reader: R,
     roots: Vec<Cid>,
@@ -102,6 +104,7 @@ impl<R: Read> Reader<R> {
         Ok(Reader { reader, roots })
     }
 
+    /// Return the root CIDs declared in the CAR header.
     pub fn roots(&self) -> &[Cid] {
         &self.roots
     }

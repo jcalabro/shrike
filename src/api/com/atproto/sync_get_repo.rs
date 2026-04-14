@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetRepoParams {
+    /// The DID of the repo.
     pub did: String,
+    /// The revision ('rev') of the repo to create a diff from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
 }
 
-/// SyncGetRepo — Download a repository export as CAR file. Optionally only a 'diff' since a previous revision. Doe...
+/// SyncGetRepo — Download a repository export as CAR file. Optionally only a 'diff' since a previous revision. Does not require auth; implemented by PDS.
 pub async fn sync_get_repo(
     client: &crate::xrpc::Client,
     params: &SyncGetRepoParams,

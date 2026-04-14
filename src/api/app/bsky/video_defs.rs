@@ -12,8 +12,10 @@ pub struct VideoDefsJobStatus {
     pub job_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Progress within the current processing state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<i64>,
+    /// The state of the video processing job. All values not listed as a known value indicate that the job is in process.
     pub state: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

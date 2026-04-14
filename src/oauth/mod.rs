@@ -1,3 +1,39 @@
+//! OAuth 2.0 client with DPoP and PKCE for AT Protocol authentication.
+//!
+//! Implements the OAuth 2.0 authorization code flow with Proof of Possession
+//! (DPoP) tokens and PKCE for secure authentication. The OAuthClient type
+//! manages the full flow from authorization to token refresh.
+//!
+//! Basic flow:
+//! 1. Create an OAuthClient with your client credentials and redirect URI
+//! 2. Call authorize to get an authorization URL and state
+//! 3. Redirect the user to the authorization URL
+//! 4. On callback, call callback with the authorization code and state
+//! 5. Use the returned Session to make authenticated requests
+//!
+//! Sessions can be refreshed with refresh_session when tokens expire.
+//! Use MemorySessionStore for development or implement SessionStore for
+//! persistent storage.
+//!
+//! ```ignore
+//! use shrike::oauth::{OAuthClient, OAuthClientConfig};
+//!
+//! let config = OAuthClientConfig {
+//!     client_id: "https://myapp.example".into(),
+//!     redirect_uri: "https://myapp.example/callback".into(),
+//!     scope: "atproto transition:generic".into(),
+//! };
+//! let client = OAuthClient::new(config).await?;
+//!
+//! // Start authorization
+//! let result = client.authorize("user.bsky.social", None).await?;
+//! // Redirect user to result.authorize_url
+//!
+//! // On callback:
+//! let session = client.callback(params, &state).await?;
+//! // Use session.access_token for API calls
+//! ```
+
 pub mod client;
 pub mod client_auth;
 pub mod dpop;

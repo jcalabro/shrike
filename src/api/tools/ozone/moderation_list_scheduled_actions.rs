@@ -3,16 +3,22 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationListScheduledActionsInput {
+    /// Cursor for pagination
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Filter actions scheduled to execute before this time
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ends_before: Option<crate::syntax::Datetime>,
+    /// Maximum number of results to return
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter actions scheduled to execute after this time
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub starts_after: Option<crate::syntax::Datetime>,
+    /// Filter actions by status
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub statuses: Vec<String>,
+    /// Filter actions for specific DID subjects
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subjects: Vec<crate::syntax::Did>,
     /// Extra fields not defined in the schema.
@@ -25,6 +31,7 @@ pub struct ModerationListScheduledActionsInput {
 pub struct ModerationListScheduledActionsOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::api::tools::ozone::ModerationDefsScheduledActionView>,
+    /// Cursor for next page of results
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Extra fields not defined in the schema.

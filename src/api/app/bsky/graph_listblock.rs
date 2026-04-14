@@ -3,11 +3,12 @@
 /// NSID for the GraphListblock record.
 pub const NSID_GRAPH_LISTBLOCK: &str = "app.bsky.graph.listblock";
 
-/// GraphListblock record from app.bsky.graph.listblock.
+/// GraphListblock — Record representing a block relationship against an entire an entire list of accounts (actors).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphListblock {
     pub created_at: crate::syntax::Datetime,
+    /// Reference (AT-URI) to the mod list record.
     pub subject: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

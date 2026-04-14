@@ -3,7 +3,7 @@
 /// NSID for the GraphList record.
 pub const NSID_GRAPH_LIST: &str = "app.bsky.graph.list";
 
-/// GraphList record from app.bsky.graph.list.
+/// GraphList — Record representing a list of accounts (actors). Scope includes both moderation-oriented lists and curration-oriented lists.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphList {
@@ -16,7 +16,9 @@ pub struct GraphList {
     pub description_facets: Vec<crate::api::app::bsky::RichtextFacet>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<GraphListLabelsUnion>,
+    /// Display name for list; can not be empty.
     pub name: String,
+    /// Defines the purpose of the list (aka, moderation-oriented or curration-oriented)
     pub purpose: crate::api::app::bsky::GraphDefsListPurpose,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

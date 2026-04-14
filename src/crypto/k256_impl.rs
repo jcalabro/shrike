@@ -19,6 +19,7 @@ const _: () = {
 // K-256 (secp256k1) multicodec prefix: varint encoding of 0xe7 → [0xe7, 0x01]
 const K256_MULTICODEC_PREFIX: [u8; 2] = [0xe7, 0x01];
 
+/// K-256 (secp256k1) signing key. Zeroizes private key material on drop.
 pub struct K256SigningKey {
     inner: InnerSigningKey,
     verifying: K256VerifyingKey,
@@ -32,6 +33,7 @@ impl std::fmt::Debug for K256SigningKey {
     }
 }
 
+/// K-256 (secp256k1) public key for signature verification.
 #[derive(Debug)]
 pub struct K256VerifyingKey {
     inner: InnerVerifyingKey,

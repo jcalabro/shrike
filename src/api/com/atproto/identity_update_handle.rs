@@ -3,13 +3,14 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityUpdateHandleInput {
+    /// The new handle.
     pub handle: crate::syntax::Handle,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// IdentityUpdateHandle — Updates the current account's handle. Verifies handle validity, and updates did:plc document if n...
+/// IdentityUpdateHandle — Updates the current account's handle. Verifies handle validity, and updates did:plc document if necessary. Implemented by PDS, and requires auth.
 pub async fn identity_update_handle(
     client: &crate::xrpc::Client,
     input: &IdentityUpdateHandleInput,

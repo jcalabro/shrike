@@ -3,17 +3,23 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommunicationUpdateTemplateInput {
+    /// Content of the template, markdown supported, can contain variable placeholders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_markdown: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
+    /// ID of the template to be updated.
     pub id: String,
+    /// Message language.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<crate::syntax::Language>,
+    /// Name of the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Subject of the message, used in emails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// DID of the user who is updating the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_by: Option<crate::syntax::Did>,
     /// Extra fields not defined in the schema.
@@ -25,7 +31,7 @@ pub struct CommunicationUpdateTemplateInput {
 pub type CommunicationUpdateTemplateOutput =
     crate::api::tools::ozone::CommunicationDefsTemplateView;
 
-/// CommunicationUpdateTemplate — Administrative action to update an existing communication template. Allows passing partial fields...
+/// CommunicationUpdateTemplate — Administrative action to update an existing communication template. Allows passing partial fields to patch specific fields only.
 pub async fn communication_update_template(
     client: &crate::xrpc::Client,
     input: &CommunicationUpdateTemplateInput,

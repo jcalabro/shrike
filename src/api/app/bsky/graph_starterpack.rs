@@ -99,7 +99,7 @@ impl GraphStarterpackFeedItem {
 /// NSID for the GraphStarterpack record.
 pub const NSID_GRAPH_STARTERPACK: &str = "app.bsky.graph.starterpack";
 
-/// GraphStarterpack record from app.bsky.graph.starterpack.
+/// GraphStarterpack — Record defining a starter pack of actors and feeds for new users.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphStarterpack {
@@ -110,7 +110,9 @@ pub struct GraphStarterpack {
     pub description_facets: Vec<crate::api::app::bsky::RichtextFacet>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feeds: Vec<GraphStarterpackFeedItem>,
+    /// Reference (AT-URI) to the list record.
     pub list: crate::syntax::AtUri,
+    /// Display name for starter pack; can not be empty.
     pub name: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

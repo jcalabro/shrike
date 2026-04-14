@@ -132,12 +132,22 @@ fn gen_schema_file(ctx: &GenContext<'_>) -> Result<String, String> {
 /// Generate code for a single def.
 fn gen_def(ctx: &GenContext<'_>, def_name: &str, def: &Def) -> Result<String, String> {
     match def {
-        Def::Record(rec) => gen_struct::gen_record(ctx, def_name, &rec.record),
+        Def::Record(rec) => {
+            gen_struct::gen_record(ctx, def_name, &rec.record, rec.description.as_deref())
+        }
         Def::Object(obj) => gen_struct::gen_object(ctx, def_name, obj),
         Def::Query(q) => gen_endpoint::gen_query(ctx, def_name, q),
         Def::Procedure(p) => gen_endpoint::gen_procedure(ctx, def_name, p),
-        Def::Token(_) => Ok(gen_struct::gen_token(&ctx.schema.id, def_name)),
-        Def::StringDef(_) => Ok(gen_struct::gen_string_def(&ctx.schema.id, def_name)),
+        Def::Token(t) => Ok(gen_struct::gen_token(
+            &ctx.schema.id,
+            def_name,
+            t.description.as_deref(),
+        )),
+        Def::StringDef(s) => Ok(gen_struct::gen_string_def(
+            &ctx.schema.id,
+            def_name,
+            s.description.as_deref(),
+        )),
         Def::ArrayDef(arr) => gen_array_def(ctx, def_name, arr),
         Def::Subscription(_) => {
             // Skip subscription client generation for now (Task 9+).
@@ -162,28 +172,42 @@ fn gen_array_def(
 
     // If items is a union, generate the union type.
     match &arr.items {
-        FieldSchema::Union { refs, closed, .. } => {
+        FieldSchema::Union {
+            refs,
+            closed,
+            description,
+            ..
+        } => {
             let elem_name = format!("{type_name}Item");
-            let union_code = gen_union::gen_union(ctx, &elem_name, refs, *closed)?;
+            let union_code =
+                gen_union::gen_union(ctx, &elem_name, refs, *closed, description.as_deref())?;
             extras.push(union_code);
-            writeln!(
-                out,
-                "/// {type_name} is an array type from {}.",
-                ctx.schema.id
-            )
-            .ok();
+            if let Some(desc) = &arr.description {
+                writeln!(out, "/// {}", single_line(desc)).ok();
+            } else {
+                writeln!(
+                    out,
+                    "/// {type_name} is an array type from {}.",
+                    ctx.schema.id
+                )
+                .ok();
+            }
             writeln!(out, "pub type {type_name} = Vec<{elem_name}>;").ok();
         }
         other => {
             let (elem_type, field_extras) =
                 gen_struct::resolve_field_type(ctx, &type_name, "item", other, true)?;
             extras.extend(field_extras);
-            writeln!(
-                out,
-                "/// {type_name} is an array type from {}.",
-                ctx.schema.id
-            )
-            .ok();
+            if let Some(desc) = &arr.description {
+                writeln!(out, "/// {}", single_line(desc)).ok();
+            } else {
+                writeln!(
+                    out,
+                    "/// {type_name} is an array type from {}.",
+                    ctx.schema.id
+                )
+                .ok();
+            }
             writeln!(out, "pub type {type_name} = Vec<{elem_type}>;").ok();
         }
     }
@@ -195,6 +219,29 @@ fn gen_array_def(
     }
     result.push_str(&out);
     Ok(result)
+}
+
+fn single_line(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for word in s.replace('\n', " ").split_whitespace() {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        if word.starts_with("http://") || word.starts_with("https://") {
+            result.push('<');
+            result.push_str(word);
+            result.push('>');
+        } else {
+            for ch in word.chars() {
+                match ch {
+                    '<' => result.push_str("&lt;"),
+                    '>' => result.push_str("&gt;"),
+                    _ => result.push(ch),
+                }
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ pub struct ActorGetPreferencesOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ActorGetPreferences — Get private preferences attached to the current account. Expected use is synchronization between ...
+/// ActorGetPreferences — Get private preferences attached to the current account. Expected use is synchronization between multiple devices, and import/export during account migration. Requires auth.
 pub async fn actor_get_preferences(
     client: &crate::xrpc::Client,
     params: &ActorGetPreferencesParams,

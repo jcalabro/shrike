@@ -3,9 +3,14 @@ use std::time::Duration;
 use rand::Rng;
 
 /// Configures exponential backoff with full jitter for reconnection attempts.
+///
+/// Defaults to 1s initial delay, 30s max, 2x multiplier.
 pub struct BackoffPolicy {
+    /// Delay before the first reconnection attempt (default 1s).
     pub initial_delay: Duration,
+    /// Upper bound on backoff delay (default 30s).
     pub max_delay: Duration,
+    /// Factor by which the delay grows each attempt (default 2.0).
     pub multiplier: f64,
 }
 

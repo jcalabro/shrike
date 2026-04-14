@@ -1,3 +1,4 @@
+/// Errors returned by the XRPC client.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("XRPC error {status}: {error} — {message}")]

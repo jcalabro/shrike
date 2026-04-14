@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetHeadParams {
+    /// The DID of the repo.
     pub did: String,
 }
 

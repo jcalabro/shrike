@@ -4,6 +4,7 @@
 #[serde(rename_all = "camelCase")]
 pub struct AdminEnableAccountInvitesInput {
     pub account: crate::syntax::Did,
+    /// Optional reason for enabled invites.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     /// Extra fields not defined in the schema.

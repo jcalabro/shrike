@@ -6,6 +6,7 @@ pub struct FeedGetAuthorFeedParams {
     pub actor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Combinations of post/repost types to include in response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -3,12 +3,17 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommunicationCreateTemplateInput {
+    /// Content of the template, markdown supported, can contain variable placeholders.
     pub content_markdown: String,
+    /// DID of the user who is creating the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<crate::syntax::Did>,
+    /// Message language.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<crate::syntax::Language>,
+    /// Name of the template.
     pub name: String,
+    /// Subject of the message, used in emails.
     pub subject: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

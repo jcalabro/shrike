@@ -156,7 +156,7 @@ impl EmbedExternalExternal {
     }
 }
 
-/// EmbedExternal — A representation of some externally linked content (eg, a URL and 'card'), embedded in a Bluesky ...
+/// EmbedExternal — A representation of some externally linked content (eg, a URL and 'card'), embedded in a Bluesky record (eg, a post).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbedExternal {

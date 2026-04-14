@@ -4,18 +4,27 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelDefsLabel {
+    /// Optionally, CID specifying the specific version of 'uri' resource this label applies to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
+    /// Timestamp when this label was created.
     pub cts: crate::syntax::Datetime,
+    /// Timestamp at which this label expires (no longer applies).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exp: Option<crate::syntax::Datetime>,
+    /// If true, this is a negation label, overwriting a previous label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub neg: Option<bool>,
+    /// Signature of dag-cbor encoded label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sig: Option<String>,
+    /// DID of the actor who created this label.
     pub src: crate::syntax::Did,
+    /// AT URI of the record, repository (account), or other resource that this label applies to.
     pub uri: String,
+    /// The short string name of the value or type of this label.
     pub val: String,
+    /// The AT Protocol version of the label object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ver: Option<i64>,
     /// Extra fields not defined in the schema (JSON).
@@ -309,14 +318,19 @@ pub type LabelDefsLabelValue = String;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelDefsLabelValueDefinition {
+    /// Does the user need to have adult content enabled in order to configure this label?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adult_only: Option<bool>,
+    /// What should this label hide in the UI, if applied? 'content' hides all of the target; 'media' hides the images/video/audio; 'none' hides nothing.
     pub blurs: String,
+    /// The default setting for this label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_setting: Option<String>,
+    /// The value of the label being defined. Must only include lowercase ascii and the '-' character ([a-z-]+).
     pub identifier: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locales: Vec<LabelDefsLabelValueDefinitionStrings>,
+    /// How should a client visually convey this label? 'inform' means neutral and informational; 'alert' means negative and warning; 'none' means show nothing.
     pub severity: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -524,8 +538,11 @@ impl LabelDefsLabelValueDefinition {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelDefsLabelValueDefinitionStrings {
+    /// A longer description of what the label means and why it might be applied.
     pub description: String,
+    /// The code of the language these strings are written in.
     pub lang: crate::syntax::Language,
+    /// A short human-readable name for the label.
     pub name: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -654,10 +671,11 @@ impl LabelDefsLabelValueDefinitionStrings {
     }
 }
 
-/// LabelDefsSelfLabel — Metadata tag on an atproto record, published by the author within the record. Note that schemas s...
+/// LabelDefsSelfLabel — Metadata tag on an atproto record, published by the author within the record. Note that schemas should use #selfLabels, not #selfLabel.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelDefsSelfLabel {
+    /// The short string name of the value or type of this label.
     pub val: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

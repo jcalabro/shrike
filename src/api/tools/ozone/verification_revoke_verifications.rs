@@ -3,8 +3,10 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationRevokeVerificationsInput {
+    /// Reason for revoking the verification. This is optional and can be omitted if not needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoke_reason: Option<String>,
+    /// Array of verification record uris to revoke
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<crate::syntax::AtUri>,
     /// Extra fields not defined in the schema.
@@ -15,8 +17,10 @@ pub struct VerificationRevokeVerificationsInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationRevokeVerificationsOutput {
+    /// List of verification uris that couldn't be revoked, including failure reasons
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed_revocations: Vec<VerificationRevokeVerificationsRevokeError>,
+    /// List of verification uris successfully revoked
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub revoked_verifications: Vec<crate::syntax::AtUri>,
     /// Extra fields not defined in the schema.
@@ -38,7 +42,9 @@ pub async fn verification_revoke_verifications(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationRevokeVerificationsRevokeError {
+    /// Description of the error that occurred during revocation.
     pub error: String,
+    /// The AT-URI of the verification record that failed to revoke.
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

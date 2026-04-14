@@ -3,7 +3,9 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetDeleteValuesInput {
+    /// Name of the set to delete values from
     pub name: String,
+    /// Array of string values to delete from the set
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
     /// Extra fields not defined in the schema.
@@ -11,7 +13,7 @@ pub struct SetDeleteValuesInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SetDeleteValues — Delete values from a specific set. Attempting to delete values that are not in the set will not r...
+/// SetDeleteValues — Delete values from a specific set. Attempting to delete values that are not in the set will not result in an error
 pub async fn set_delete_values(
     client: &crate::xrpc::Client,
     input: &SetDeleteValuesInput,

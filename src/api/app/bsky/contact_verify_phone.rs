@@ -3,7 +3,9 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactVerifyPhoneInput {
+    /// The code received via SMS as a result of the call to `app.bsky.contact.startPhoneVerification`.
     pub code: String,
+    /// The phone number to verify. Should be the same as the one passed to `app.bsky.contact.startPhoneVerification`.
     pub phone: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
@@ -13,13 +15,14 @@ pub struct ContactVerifyPhoneInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactVerifyPhoneOutput {
+    /// JWT to be used in a call to `app.bsky.contact.importContacts`. It is only valid for a single call.
     pub token: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactVerifyPhone — Verifies control over a phone number with a code received via SMS and starts a contact import ses...
+/// ContactVerifyPhone — Verifies control over a phone number with a code received via SMS and starts a contact import session. Requires authentication.
 pub async fn contact_verify_phone(
     client: &crate::xrpc::Client,
     input: &ContactVerifyPhoneInput,

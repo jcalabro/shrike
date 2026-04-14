@@ -3,12 +3,16 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoListRecordsParams {
+    /// The NSID of the record type.
     pub collection: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// The number of records to return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// The handle or DID of the repo.
     pub repo: String,
+    /// Flag to reverse the order of the returned records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reverse: Option<bool>,
 }

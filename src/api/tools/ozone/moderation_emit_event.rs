@@ -5,6 +5,7 @@
 pub struct ModerationEmitEventInput {
     pub created_by: crate::syntax::Did,
     pub event: ModerationEmitEventInputEventUnion,
+    /// An optional external ID for the event, used to deduplicate events from external systems. Fails when an event of same type with the same external ID exists for the same subject.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

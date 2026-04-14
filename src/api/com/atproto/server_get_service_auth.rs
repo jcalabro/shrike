@@ -3,9 +3,12 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerGetServiceAuthParams {
+    /// The DID of the service that the token will be used to authenticate with
     pub aud: String,
+    /// The time in Unix Epoch seconds that the JWT expires. Defaults to 60 seconds in the future. The service may enforce certain time bounds on tokens depending on the requested scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exp: Option<i64>,
+    /// Lexicon (XRPC) method to bind the requested token to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lxm: Option<String>,
 }

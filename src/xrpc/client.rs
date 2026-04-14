@@ -17,6 +17,22 @@ struct XrpcErrorBody {
 }
 
 /// XRPC HTTP client for AT Protocol PDS/relay communication.
+///
+/// Handles authentication, retries with exponential backoff, rate limiting,
+/// and response size limits. Use `Client::new` for unauthenticated requests,
+/// `Client::with_auth` for authenticated requests, or `Client::create_session`
+/// to log in.
+///
+/// ```no_run
+/// use shrike::xrpc::Client;
+///
+/// # async fn example() -> Result<(), shrike::xrpc::Error> {
+/// let client = Client::new("https://bsky.social");
+/// let auth = client.create_session("alice.bsky.social", "app-password").await?;
+/// // client is now authenticated; subsequent calls include the bearer token
+/// # Ok(())
+/// # }
+/// ```
 pub struct Client {
     http: reqwest::Client,
     host: String,
@@ -25,6 +41,8 @@ pub struct Client {
 }
 
 impl Client {
+    /// Create an unauthenticated client targeting the given host
+    /// (e.g., `"https://bsky.social"`).
     pub fn new(host: &str) -> Self {
         Client {
             http: reqwest::Client::new(),
@@ -34,6 +52,8 @@ impl Client {
         }
     }
 
+    /// Create a client with pre-existing authentication tokens. Use this when
+    /// you already have an `AuthInfo` from a previous session.
     pub fn with_auth(host: &str, auth: AuthInfo) -> Self {
         Client {
             http: reqwest::Client::new(),
@@ -43,6 +63,7 @@ impl Client {
         }
     }
 
+    /// Create an unauthenticated client with a custom retry policy.
     pub fn with_retry(host: &str, retry: RetryPolicy) -> Self {
         Client {
             http: reqwest::Client::new(),
@@ -127,7 +148,11 @@ impl Client {
         status >= 500 || status == 429
     }
 
-    /// GET /xrpc/{nsid}?{params}
+    /// Execute an XRPC query (GET /xrpc/{nsid}?{params}).
+    ///
+    /// Serializes `params` as query parameters and deserializes the JSON response
+    /// into `O`. Retries on 5xx and 429 responses according to the retry policy.
+    /// Response bodies are limited to 5 MB.
     pub async fn query<P: Serialize, O: DeserializeOwned>(
         &self,
         nsid: &str,
@@ -179,7 +204,10 @@ impl Client {
         }))
     }
 
-    /// POST /xrpc/{nsid} with JSON body
+    /// Execute an XRPC procedure (POST /xrpc/{nsid} with JSON body).
+    ///
+    /// Serializes `input` as the JSON request body and deserializes the JSON
+    /// response into `O`. Retries on 5xx and 429 responses.
     pub async fn procedure<I: Serialize, O: DeserializeOwned>(
         &self,
         nsid: &str,
@@ -236,7 +264,11 @@ impl Client {
         }))
     }
 
-    /// GET with raw binary response
+    /// Execute an XRPC query returning raw binary bytes (GET).
+    ///
+    /// Same as `query` but returns the response body as `Vec<u8>` instead of
+    /// deserializing JSON. Response bodies are limited to 512 MB. Useful for
+    /// endpoints like `com.atproto.sync.getRepo` that return CAR files.
     pub async fn query_raw(&self, nsid: &str, params: &impl Serialize) -> Result<Vec<u8>, Error> {
         let url = self.xrpc_url(nsid);
         let bearer = self.bearer().await;
@@ -295,7 +327,10 @@ impl Client {
         }))
     }
 
-    /// POST with raw binary body
+    /// Execute an XRPC procedure with a raw binary body (POST).
+    ///
+    /// Sends `body` with the given `content_type` and returns the JSON response
+    /// as `serde_json::Value`. Useful for uploading blobs.
     pub async fn procedure_raw(
         &self,
         nsid: &str,
@@ -355,7 +390,10 @@ impl Client {
         }))
     }
 
-    /// Create a session (login)
+    /// Create a session by logging in with a handle/DID and password.
+    ///
+    /// Calls `com.atproto.server.createSession` and stores the returned tokens
+    /// so that subsequent requests on this client are authenticated.
     pub async fn create_session(
         &self,
         identifier: &str,
@@ -387,7 +425,9 @@ impl Client {
         Err(Self::parse_error_response(resp).await)
     }
 
-    /// Refresh the current session
+    /// Refresh the current session using the stored refresh token.
+    ///
+    /// Calls `com.atproto.server.refreshSession` and updates the stored tokens.
     pub async fn refresh_session(&self) -> Result<AuthInfo, Error> {
         let url = self.xrpc_url("com.atproto.server.refreshSession");
         let refresh_jwt = self.refresh_bearer().await;

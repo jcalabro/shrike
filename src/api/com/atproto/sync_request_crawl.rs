@@ -3,13 +3,14 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncRequestCrawlInput {
+    /// Hostname of the current service (eg, PDS) that is requesting to be crawled.
     pub hostname: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SyncRequestCrawl — Request a service to persistently crawl hosted repos. Expected use is new PDS instances declaring...
+/// SyncRequestCrawl — Request a service to persistently crawl hosted repos. Expected use is new PDS instances declaring their existence to Relays. Does not require auth.
 pub async fn sync_request_crawl(
     client: &crate::xrpc::Client,
     input: &SyncRequestCrawlInput,

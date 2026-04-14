@@ -7,8 +7,10 @@ pub struct UnspeccedGetSuggestionsSkeletonParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account to get suggestions relative to. If not provided, suggestions will be based on the viewer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relative_to_did: Option<String>,
+    /// DID of the account making the request (not included for public/unauthenticated queries). Used to boost followed accounts in ranking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -20,10 +22,13 @@ pub struct UnspeccedGetSuggestionsSkeletonOutput {
     pub actors: Vec<crate::api::app::bsky::UnspeccedDefsSkeletonSearchActor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// DEPRECATED: use recIdStr instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id: Option<i64>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
+    /// DID of the account these suggestions are relative to. If this is returned undefined, suggestions are based on the viewer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relative_to_did: Option<crate::syntax::Did>,
     /// Extra fields not defined in the schema.
@@ -31,7 +36,7 @@ pub struct UnspeccedGetSuggestionsSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetSuggestionsSkeleton — Get a skeleton of suggested actors. Intended to be called and then hydrated through app.bsky.acto...
+/// UnspeccedGetSuggestionsSkeleton — Get a skeleton of suggested actors. Intended to be called and then hydrated through app.bsky.actor.getSuggestions
 pub async fn unspecced_get_suggestions_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetSuggestionsSkeletonParams,

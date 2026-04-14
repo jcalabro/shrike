@@ -3,14 +3,19 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkQueryEventsInput {
+    /// Cursor for pagination
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Maximum number of results to return
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter by pattern type
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern_type: Option<String>,
+    /// Sort direction
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_direction: Option<String>,
+    /// Filter by specific URLs or domains
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<String>,
     /// Extra fields not defined in the schema.
@@ -21,6 +26,7 @@ pub struct SafelinkQueryEventsInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkQueryEventsOutput {
+    /// Next cursor for pagination. Only present if there are more results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

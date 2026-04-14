@@ -3,6 +3,10 @@ use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use serde_json::json;
 
+/// XRPC server errors that map to standard HTTP status codes.
+///
+/// Implements `IntoResponse` to produce JSON error bodies matching the
+/// AT Protocol XRPC error format: `{"error": "...", "message": "..."}`.
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
     #[error("auth required")]

@@ -11,6 +11,7 @@ pub struct ServerGetConfigOutput {
     pub chat: Option<ServerGetConfigServiceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pds: Option<ServerGetConfigServiceConfig>,
+    /// The did of the verifier used for verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verifier_did: Option<crate::syntax::Did>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -12,6 +12,7 @@ pub struct Encoder<W: Write> {
 }
 
 impl<W: Write> Encoder<W> {
+    /// Create an encoder that writes to the given writer.
     pub fn new(writer: W) -> Self {
         Encoder { writer }
     }

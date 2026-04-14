@@ -4,14 +4,19 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommunicationDefsTemplateView {
+    /// Subject of the message, used in emails.
     pub content_markdown: String,
     pub created_at: crate::syntax::Datetime,
     pub disabled: bool,
     pub id: String,
+    /// Message language.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<crate::syntax::Language>,
+    /// DID of the user who last updated the template.
     pub last_updated_by: crate::syntax::Did,
+    /// Name of the template.
     pub name: String,
+    /// Content of the template, can contain markdown and variable placeholders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
     pub updated_at: crate::syntax::Datetime,

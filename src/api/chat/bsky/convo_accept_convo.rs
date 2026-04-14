@@ -12,6 +12,7 @@ pub struct ConvoAcceptConvoInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoAcceptConvoOutput {
+    /// Rev when the convo was accepted. If not present, the convo was already accepted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
     /// Extra fields not defined in the schema.

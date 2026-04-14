@@ -3,24 +3,28 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoDescribeRepoParams {
+    /// The handle or DID of the repo.
     pub repo: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoDescribeRepoOutput {
+    /// List of all the collections (NSIDs) for which this repo contains at least one record.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collections: Vec<crate::syntax::Nsid>,
     pub did: crate::syntax::Did,
+    /// The complete DID document for this account.
     pub did_doc: serde_json::Value,
     pub handle: crate::syntax::Handle,
+    /// Indicates if handle is currently valid (resolves bi-directionally)
     pub handle_is_correct: bool,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// RepoDescribeRepo — Get information about an account and repository, including the list of collections. Does not requ...
+/// RepoDescribeRepo — Get information about an account and repository, including the list of collections. Does not require auth.
 pub async fn repo_describe_repo(
     client: &crate::xrpc::Client,
     params: &RepoDescribeRepoParams,

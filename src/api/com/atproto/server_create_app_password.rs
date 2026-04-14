@@ -164,7 +164,9 @@ impl ServerCreateAppPasswordAppPassword {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCreateAppPasswordInput {
+    /// A short name for the App Password, to help distinguish them.
     pub name: String,
+    /// If an app password has 'privileged' access to possibly sensitive account state. Meant for use with trusted clients.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privileged: Option<bool>,
     /// Extra fields not defined in the schema.

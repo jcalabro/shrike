@@ -4,6 +4,7 @@
 #[serde(rename_all = "camelCase")]
 pub struct AdminUpdateAccountSigningKeyInput {
     pub did: crate::syntax::Did,
+    /// Did-key formatted public key
     pub signing_key: crate::syntax::Did,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

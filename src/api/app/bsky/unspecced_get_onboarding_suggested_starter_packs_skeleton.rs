@@ -5,6 +5,7 @@
 pub struct UnspeccedGetOnboardingSuggestedStarterPacksSkeletonParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -19,7 +20,7 @@ pub struct UnspeccedGetOnboardingSuggestedStarterPacksSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetOnboardingSuggestedStarterPacksSkeleton — Get a skeleton of suggested starterpacks for onboarding. Intended to be called and hydrated by ap...
+/// UnspeccedGetOnboardingSuggestedStarterPacksSkeleton — Get a skeleton of suggested starterpacks for onboarding. Intended to be called and hydrated by app.bsky.unspecced.getOnboardingSuggestedStarterPacks
 pub async fn unspecced_get_onboarding_suggested_starter_packs_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetOnboardingSuggestedStarterPacksSkeletonParams,

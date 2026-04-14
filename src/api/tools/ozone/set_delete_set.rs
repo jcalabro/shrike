@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetDeleteSetInput {
+    /// Name of the set to delete
     pub name: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

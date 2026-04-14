@@ -1,7 +1,19 @@
+//! Label signing and verification for AT Protocol moderation.
+//!
+//! Labels are signed assertions about content (posts, accounts, media).
+//! Each label has a source DID, target URI, label value, and optional
+//! expiration. Labels can be positive (apply a label) or negative (remove
+//! a label).
+//!
+//! All label fields except sig are encoded in deterministic CBOR order for
+//! signing. Use sign_label to create a signature and verify_label to check
+//! it. The encoding ensures that signatures are stable across serialization.
+
 use crate::cbor::{CborError, Cid, Encoder};
 use crate::crypto::{CryptoError, Signature, SigningKey, VerifyingKey};
 use crate::syntax::{Datetime, Did};
 
+/// Errors from label signing, verification, and serialization.
 #[derive(Debug, thiserror::Error)]
 pub enum LabelError {
     #[error("CBOR error: {0}")]
@@ -12,15 +24,24 @@ pub enum LabelError {
     Invalid(String),
 }
 
+/// A moderation label asserting something about a piece of content.
 #[derive(Debug, Clone)]
 pub struct Label {
+    /// DID of the labeler that issued this label.
     pub src: Did,
+    /// AT URI or DID of the labeled content.
     pub uri: String,
+    /// Optional CID targeting a specific version of the content.
     pub cid: Option<Cid>,
+    /// Label value (e.g., "spam", "nudity", "graphic-media").
     pub val: String,
+    /// If true, this negates (removes) a previously applied label.
     pub neg: bool,
+    /// Timestamp when the label was created.
     pub cts: Datetime,
+    /// Optional expiration timestamp.
     pub exp: Option<Datetime>,
+    /// 64-byte ECDSA signature over the unsigned label bytes.
     pub sig: Option<Vec<u8>>,
 }
 

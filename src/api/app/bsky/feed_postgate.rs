@@ -77,15 +77,18 @@ impl FeedPostgateDisableRule {
 /// NSID for the FeedPostgate record.
 pub const NSID_FEED_POSTGATE: &str = "app.bsky.feed.postgate";
 
-/// FeedPostgate record from app.bsky.feed.postgate.
+/// FeedPostgate — Record defining interaction rules for a post. The record key (rkey) of the postgate record must match the record key of the post, and that record must be in the same repository.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPostgate {
     pub created_at: crate::syntax::Datetime,
+    /// List of AT-URIs embedding this post that the author has detached from.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub detached_embedding_uris: Vec<crate::syntax::AtUri>,
+    /// List of rules defining who can embed this post. If value is an empty array or is undefined, no particular rules apply and anyone can embed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embedding_rules: Vec<FeedPostgateEmbeddingRulesUnion>,
+    /// Reference (AT-URI) to the post record.
     pub post: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

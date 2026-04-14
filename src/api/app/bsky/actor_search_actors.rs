@@ -7,8 +7,10 @@ pub struct ActorSearchActorsParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Search query string. Syntax, phrase, boolean, and faceting is unspecified, but Lucene query syntax is recommended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
+    /// DEPRECATED: use 'q' instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
 }

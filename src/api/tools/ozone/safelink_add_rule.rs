@@ -4,12 +4,15 @@
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkAddRuleInput {
     pub action: crate::api::tools::ozone::SafelinkDefsActionType,
+    /// Optional comment about the decision
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Author DID. Only respected when using admin auth
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<crate::syntax::Did>,
     pub pattern: crate::api::tools::ozone::SafelinkDefsPatternType,
     pub reason: crate::api::tools::ozone::SafelinkDefsReasonType,
+    /// The URL or domain to apply the rule to
     pub url: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

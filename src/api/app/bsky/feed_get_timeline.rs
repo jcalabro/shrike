@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetTimelineParams {
+    /// Variant 'algorithm' for timeline. Implementation-specific. NOTE: most feed flexibility has been moved to feed generator mechanism.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,7 +24,7 @@ pub struct FeedGetTimelineOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedGetTimeline — Get a view of the requesting account's home timeline. This is expected to be some form of reverse...
+/// FeedGetTimeline — Get a view of the requesting account's home timeline. This is expected to be some form of reverse-chronological feed.
 pub async fn feed_get_timeline(
     client: &crate::xrpc::Client,
     params: &FeedGetTimelineParams,

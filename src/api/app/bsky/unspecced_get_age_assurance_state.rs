@@ -4,7 +4,7 @@
 pub type UnspeccedGetAgeAssuranceStateOutput =
     crate::api::app::bsky::UnspeccedDefsAgeAssuranceState;
 
-/// UnspeccedGetAgeAssuranceState — Returns the current state of the age assurance process for an account. This is used to check if t...
+/// UnspeccedGetAgeAssuranceState — Returns the current state of the age assurance process for an account. This is used to check if the user has completed age assurance or if further action is required.
 pub async fn unspecced_get_age_assurance_state(
     client: &crate::xrpc::Client,
 ) -> Result<UnspeccedGetAgeAssuranceStateOutput, crate::xrpc::Error> {

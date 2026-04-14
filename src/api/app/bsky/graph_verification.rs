@@ -3,13 +3,17 @@
 /// NSID for the GraphVerification record.
 pub const NSID_GRAPH_VERIFICATION: &str = "app.bsky.graph.verification";
 
-/// GraphVerification record from app.bsky.graph.verification.
+/// GraphVerification — Record declaring a verification relationship between two accounts. Verifications are only considered valid by an app if issued by an account the app considers trusted.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphVerification {
+    /// Date of when the verification was created.
     pub created_at: crate::syntax::Datetime,
+    /// Display name of the subject the verification applies to at the moment of verifying, which might not be the same at the time of viewing. The verification is only valid if the current displayName matches the one at the time of verifying.
     pub display_name: String,
+    /// Handle of the subject the verification applies to at the moment of verifying, which might not be the same at the time of viewing. The verification is only valid if the current handle matches the one at the time of verifying.
     pub handle: crate::syntax::Handle,
+    /// DID of the subject the verification applies to.
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

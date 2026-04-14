@@ -237,7 +237,7 @@ pub struct FeedDescribeFeedGeneratorOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedDescribeFeedGenerator — Get information about a feed generator, including policies and offered feed URIs. Does not requir...
+/// FeedDescribeFeedGenerator — Get information about a feed generator, including policies and offered feed URIs. Does not require auth; implemented by Feed Generator services (not App View).
 pub async fn feed_describe_feed_generator(
     client: &crate::xrpc::Client,
 ) -> Result<FeedDescribeFeedGeneratorOutput, crate::xrpc::Error> {

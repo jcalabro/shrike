@@ -16,7 +16,7 @@ pub struct ContactRemoveDataOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactRemoveData — Removes all stored hashes used for contact matching, existing matches, and sync status. Requires ...
+/// ContactRemoveData — Removes all stored hashes used for contact matching, existing matches, and sync status. Requires authentication.
 pub async fn contact_remove_data(
     client: &crate::xrpc::Client,
     input: &ContactRemoveDataInput,

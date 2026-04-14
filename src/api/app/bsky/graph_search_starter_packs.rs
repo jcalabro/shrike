@@ -7,6 +7,7 @@ pub struct GraphSearchStarterPacksParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Search query string. Syntax, phrase, boolean, and faceting is unspecified, but Lucene query syntax is recommended.
     pub q: String,
 }
 

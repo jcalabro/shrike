@@ -5,6 +5,7 @@
 pub struct UnspeccedGetSuggestedUsersForDiscoverSkeletonParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -14,6 +15,7 @@ pub struct UnspeccedGetSuggestedUsersForDiscoverSkeletonParams {
 pub struct UnspeccedGetSuggestedUsersForDiscoverSkeletonOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dids: Vec<crate::syntax::Did>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.
@@ -21,7 +23,7 @@ pub struct UnspeccedGetSuggestedUsersForDiscoverSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetSuggestedUsersForDiscoverSkeleton — Get a skeleton of suggested users for the Discover page. Intended to be called and hydrated by ap...
+/// UnspeccedGetSuggestedUsersForDiscoverSkeleton — Get a skeleton of suggested users for the Discover page. Intended to be called and hydrated by app.bsky.unspecced.getSuggestedUsersForDiscover
 pub async fn unspecced_get_suggested_users_for_discover_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetSuggestedUsersForDiscoverSkeletonParams,

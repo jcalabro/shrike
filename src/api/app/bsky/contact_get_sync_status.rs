@@ -7,6 +7,7 @@ pub struct ContactGetSyncStatusParams {}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactGetSyncStatusOutput {
+    /// If present, indicates the user has imported their contacts. If not present, indicates the user never used the feature or called `app.bsky.contact.removeData` and didn't import again since.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync_status: Option<crate::api::app::bsky::ContactDefsSyncStatus>,
     /// Extra fields not defined in the schema.

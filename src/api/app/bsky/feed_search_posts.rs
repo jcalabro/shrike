@@ -3,27 +3,38 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedSearchPostsParams {
+    /// Filter to posts by the given account. Handles are resolved to DID before query-time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Optional pagination mechanism; may not necessarily allow scrolling through entire result set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Filter to posts with URLs (facet links or embeds) linking to the given domain (hostname). Server may apply hostname normalization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// Filter to posts in the given language. Expected to be based on post language field, though server may override language detection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lang: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter to posts which mention the given account. Handles are resolved to DID before query-time. Only matches rich-text facet mentions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mentions: Option<String>,
+    /// Search query string; syntax, phrase, boolean, and faceting is unspecified, but Lucene query syntax is recommended.
     pub q: String,
+    /// Filter results for posts after the indicated datetime (inclusive). Expected to use 'sortAt' timestamp, which may not match 'createdAt'. Can be a datetime, or just an ISO date (YYYY-MM-DD).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
+    /// Specifies the ranking order of results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
+    /// Filter to posts with the given tag (hashtag), based on rich-text facet or tag field. Do not include the hash (#) prefix. Multiple tags can be specified, with 'AND' matching.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tag: Vec<String>,
+    /// Filter results for posts before the indicated datetime (not inclusive). Expected to use 'sortAt' timestamp, which may not match 'createdAt'. Can be a datetime, or just an ISO date (YYY-MM-DD).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// Filter to posts with links (facet links or embeds) pointing to this URL. Server may apply URL normalization or fuzzy matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 }
@@ -33,6 +44,7 @@ pub struct FeedSearchPostsParams {
 pub struct FeedSearchPostsOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Count of search hits. Optional, may be rounded/truncated, and may not be possible to paginate through all hits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hits_total: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -42,7 +54,7 @@ pub struct FeedSearchPostsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedSearchPosts — Find posts matching search criteria, returning views of those posts. Note that this API endpoint ...
+/// FeedSearchPosts — Find posts matching search criteria, returning views of those posts. Note that this API endpoint may require authentication (eg, not public) for some service providers and implementations.
 pub async fn feed_search_posts(
     client: &crate::xrpc::Client,
     params: &FeedSearchPostsParams,

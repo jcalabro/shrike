@@ -9,7 +9,7 @@ pub struct BookmarkDeleteBookmarkInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// BookmarkDeleteBookmark — Deletes a private bookmark for the specified record. Currently, only `app.bsky.feed.post` records...
+/// BookmarkDeleteBookmark — Deletes a private bookmark for the specified record. Currently, only `app.bsky.feed.post` records are supported. Requires authentication.
 pub async fn bookmark_delete_bookmark(
     client: &crate::xrpc::Client,
     input: &BookmarkDeleteBookmarkInput,

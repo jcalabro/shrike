@@ -10,11 +10,34 @@ use crate::xrpc_server::context::RequestContext;
 use crate::xrpc_server::error::ServerError;
 
 /// XRPC HTTP server framework built on axum.
+///
+/// Register query and procedure handlers using the builder pattern, then call
+/// `into_router` to compose with other axum routes or `serve` to start listening.
+///
+/// ```no_run
+/// use shrike::xrpc_server::{Server, RequestContext, ServerError};
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Deserialize)]
+/// struct PingParams {}
+///
+/// #[derive(Serialize)]
+/// struct PingResponse { message: String }
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let server = Server::new()
+///     .query("com.example.ping", |_params: PingParams, _ctx: RequestContext| async {
+///         Ok::<_, ServerError>(PingResponse { message: "pong".into() })
+///     });
+/// # Ok(())
+/// # }
+/// ```
 pub struct Server {
     router: Router,
 }
 
 impl Server {
+    /// Create an empty server with no registered handlers.
     pub fn new() -> Self {
         Server {
             router: Router::new(),

@@ -4,18 +4,26 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedDefsAgeAssuranceEvent {
+    /// The unique identifier for this instance of the age assurance flow, in UUID format.
     pub attempt_id: String,
+    /// The IP address used when completing the AA flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complete_ip: Option<String>,
+    /// The user agent used when completing the AA flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub complete_ua: Option<String>,
+    /// The date and time of this write operation.
     pub created_at: crate::syntax::Datetime,
+    /// The email used for AA.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// The IP address used when initiating the AA flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub init_ip: Option<String>,
+    /// The user agent used when initiating the AA flow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub init_ua: Option<String>,
+    /// The status of the age assurance process.
     pub status: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -269,12 +277,14 @@ impl UnspeccedDefsAgeAssuranceEvent {
     }
 }
 
-/// UnspeccedDefsAgeAssuranceState — The computed state of the age assurance process, returned to the user in question on certain auth...
+/// UnspeccedDefsAgeAssuranceState — The computed state of the age assurance process, returned to the user in question on certain authenticated requests.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedDefsAgeAssuranceState {
+    /// The timestamp when this state was last updated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_initiated_at: Option<crate::syntax::Datetime>,
+    /// The status of the age assurance process.
     pub status: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1191,10 +1201,15 @@ impl UnspeccedDefsThreadItemNotFound {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedDefsThreadItemPost {
+    /// The threadgate created by the author indicates this post as a reply to be hidden for everyone consuming the thread.
     pub hidden_by_threadgate: bool,
+    /// This post has more parents that were not present in the response. This is just a boolean, without the number of parents.
     pub more_parents: bool,
+    /// This post has more replies that were not present in the response. This is a numeric value, which is best-effort and might not be accurate.
     pub more_replies: i64,
+    /// This is by an account muted by the viewer requesting it.
     pub muted_by_viewer: bool,
+    /// This post is part of a contiguous thread by the OP from the thread root. Many different OP threads can happen in the same thread.
     pub op_thread: bool,
     pub post: crate::api::app::bsky::FeedDefsPostView,
     /// Extra fields not defined in the schema (JSON).

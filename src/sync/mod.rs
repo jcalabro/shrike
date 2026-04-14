@@ -34,21 +34,30 @@ pub enum SyncError {
 
 /// A fully downloaded repository, including its commit and all CAR blocks.
 pub struct DownloadedRepo {
+    /// DID of the repository owner.
     pub did: crate::syntax::Did,
+    /// The signed commit at the head of the repository.
     pub commit: Commit,
+    /// All blocks from the CAR file (MST nodes, records, commit).
     pub blocks: Vec<crate::car::Block>,
 }
 
 /// A single record extracted from a downloaded repository.
 pub struct Record {
+    /// Collection NSID (e.g., "app.bsky.feed.post").
     pub collection: Nsid,
+    /// Record key within the collection.
     pub rkey: RecordKey,
+    /// Content hash of the record data.
     pub cid: Cid,
+    /// Raw DRISL-encoded record bytes.
     pub data: Vec<u8>,
 }
 
 /// An entry returned from `listRepos`.
 pub struct RepoEntry {
+    /// DID of the repository owner.
     pub did: crate::syntax::Did,
+    /// CID of the current head commit.
     pub head: Cid,
 }

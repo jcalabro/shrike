@@ -1,3 +1,16 @@
+//! DAG-CBOR (DRISL) encoding and decoding for AT Protocol.
+//!
+//! Provides Cid, Decoder, Encoder, and Value types for working with
+//! deterministic CBOR. Maps are automatically sorted by key.
+//!
+//! ```ignore
+//! use shrike::cbor::{decode, encode_value, Value};
+//!
+//! let val = Value::Map(vec![("key", Value::Text("value"))]);
+//! let bytes = encode_value(&val)?;
+//! let decoded = decode(&bytes)?;
+//! ```
+
 pub mod cid;
 pub mod decode;
 pub mod encode;

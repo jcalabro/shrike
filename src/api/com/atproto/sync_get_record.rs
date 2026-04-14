@@ -4,11 +4,13 @@
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetRecordParams {
     pub collection: String,
+    /// The DID of the repo.
     pub did: String,
+    /// Record Key
     pub rkey: String,
 }
 
-/// SyncGetRecord — Get data blocks needed to prove the existence or non-existence of record in the current version o...
+/// SyncGetRecord — Get data blocks needed to prove the existence or non-existence of record in the current version of repo. Does not require auth.
 pub async fn sync_get_record(
     client: &crate::xrpc::Client,
     params: &SyncGetRecordParams,

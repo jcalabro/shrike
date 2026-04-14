@@ -11,7 +11,7 @@ pub struct ServerDeleteAccountInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ServerDeleteAccount — Delete an actor's account with a token and password. Can only be called after requesting a deleti...
+/// ServerDeleteAccount — Delete an actor's account with a token and password. Can only be called after requesting a deletion token. Requires auth.
 pub async fn server_delete_account(
     client: &crate::xrpc::Client,
     input: &ServerDeleteAccountInput,

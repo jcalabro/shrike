@@ -21,7 +21,7 @@ pub struct RepoListMissingBlobsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// RepoListMissingBlobs — Returns a list of missing blobs for the requesting account. Intended to be used in the account mi...
+/// RepoListMissingBlobs — Returns a list of missing blobs for the requesting account. Intended to be used in the account migration flow.
 pub async fn repo_list_missing_blobs(
     client: &crate::xrpc::Client,
     params: &RepoListMissingBlobsParams,

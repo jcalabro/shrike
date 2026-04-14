@@ -1,3 +1,30 @@
+//! Axum-based XRPC server for implementing AT Protocol services.
+//!
+//! The Server type provides a builder API for registering query and procedure
+//! handlers. Each handler receives typed input parameters and a RequestContext,
+//! and returns either a typed output or a ServerError.
+//!
+//! Query handlers are called for GET requests with query string parameters.
+//! Procedure handlers are called for POST requests with JSON bodies. Both
+//! return JSON responses or XRPC error envelopes.
+//!
+//! ```ignore
+//! use shrike::xrpc_server::{Server, ServerError};
+//!
+//! let server = Server::new()
+//!     .query("com.example.ping",
+//!         |params: PingParams, _ctx| async move {
+//!             Ok(PingOutput { message: "pong".into() })
+//!         })
+//!     .procedure("com.example.echo",
+//!         |input: EchoInput, _ctx| async move {
+//!             Ok(EchoOutput { text: input.text })
+//!         });
+//!
+//! let app = server.into_router();
+//! // Serve with axum
+//! ```
+
 mod context;
 mod error;
 mod server;

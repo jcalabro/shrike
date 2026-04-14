@@ -1,3 +1,13 @@
+//! Lexicon schema loading and validation for AT Protocol.
+//!
+//! Lexicons define the structure of XRPC methods and record types. The
+//! Catalog type loads JSON schema definitions and validates records against
+//! them. Use validate_record to check that a record conforms to its schema.
+//!
+//! Schemas define object shapes, string formats, integer ranges, array
+//! constraints, and type references. The validator checks required fields,
+//! types, and constraints but allows extra fields not in the schema.
+
 mod catalog;
 mod error;
 mod schema;

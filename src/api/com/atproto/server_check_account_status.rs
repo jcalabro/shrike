@@ -17,7 +17,7 @@ pub struct ServerCheckAccountStatusOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ServerCheckAccountStatus — Returns the status of an account, especially as pertaining to import or recovery. Can be called m...
+/// ServerCheckAccountStatus — Returns the status of an account, especially as pertaining to import or recovery. Can be called many times over the course of an account migration. Requires auth and can only be called pertaining to oneself.
 pub async fn server_check_account_status(
     client: &crate::xrpc::Client,
 ) -> Result<ServerCheckAccountStatusOutput, crate::xrpc::Error> {

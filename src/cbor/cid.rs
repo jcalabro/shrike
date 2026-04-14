@@ -4,9 +4,12 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 use std::str::FromStr;
 
+/// Multicodec identifier for CID content encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Codec {
+    /// DRISL (deterministic CBOR / DAG-CBOR) — used for structured AT Protocol data.
     Drisl = 0x71,
+    /// Raw bytes — used for unstructured binary data (blobs, images).
     Raw = 0x55,
 }
 
@@ -34,10 +37,12 @@ impl Cid {
         Cid { codec, hash }
     }
 
+    /// Return the multicodec identifier (Drisl or Raw).
     pub fn codec(&self) -> Codec {
         self.codec
     }
 
+    /// Return the raw 32-byte SHA-256 hash.
     pub fn hash(&self) -> &[u8; 32] {
         &self.hash
     }

@@ -6,7 +6,9 @@
 pub struct SyncListHostsHost {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_count: Option<i64>,
+    /// hostname of server; not a URL (no scheme)
     pub hostname: String,
+    /// Recent repo stream event sequence number. May be delayed from actual stream processing (eg, persisted cursor not in-memory cursor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,6 +202,7 @@ pub struct SyncListHostsParams {
 pub struct SyncListHostsOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Sort order is not formally specified. Recommended order is by time host was first seen by the server, with oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosts: Vec<SyncListHostsHost>,
     /// Extra fields not defined in the schema.
@@ -207,7 +210,7 @@ pub struct SyncListHostsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SyncListHosts — Enumerates upstream hosts (eg, PDS or relay instances) that this service consumes from. Implement...
+/// SyncListHosts — Enumerates upstream hosts (eg, PDS or relay instances) that this service consumes from. Implemented by relays.
 pub async fn sync_list_hosts(
     client: &crate::xrpc::Client,
     params: &SyncListHostsParams,

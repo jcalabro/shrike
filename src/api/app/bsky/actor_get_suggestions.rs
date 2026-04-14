@@ -16,8 +16,10 @@ pub struct ActorGetSuggestionsOutput {
     pub actors: Vec<crate::api::app::bsky::ActorDefsProfileView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// DEPRECATED: use recIdStr instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id: Option<i64>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.
@@ -25,7 +27,7 @@ pub struct ActorGetSuggestionsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ActorGetSuggestions — Get a list of suggested actors. Expected use is discovery of accounts to follow during new accoun...
+/// ActorGetSuggestions — Get a list of suggested actors. Expected use is discovery of accounts to follow during new account onboarding.
 pub async fn actor_get_suggestions(
     client: &crate::xrpc::Client,
     params: &ActorGetSuggestionsParams,

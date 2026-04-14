@@ -3,7 +3,9 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactSendNotificationInput {
+    /// The DID of who this notification comes from.
     pub from: crate::syntax::Did,
+    /// The DID of who this notification should go to.
     pub to: crate::syntax::Did,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

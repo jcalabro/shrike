@@ -3,20 +3,28 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkQueryRulesInput {
+    /// Filter by action types
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
+    /// Filter by rule creator
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<crate::syntax::Did>,
+    /// Cursor for pagination
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Maximum number of results to return
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter by pattern type
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern_type: Option<String>,
+    /// Filter by reason type
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Sort direction
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_direction: Option<String>,
+    /// Filter by specific URLs or domains
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub urls: Vec<String>,
     /// Extra fields not defined in the schema.
@@ -27,6 +35,7 @@ pub struct SafelinkQueryRulesInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkQueryRulesOutput {
+    /// Next cursor for pagination. Only present if there are more results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

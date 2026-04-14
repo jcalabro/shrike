@@ -1,3 +1,12 @@
+//! DID and handle resolution for AT Protocol identities.
+//!
+//! The Directory type resolves DIDs and handles to DID documents. Supports
+//! both did:plc (via PlcClient) and did:web. DID documents contain public
+//! keys and service endpoints used for authentication and communication.
+//!
+//! Use Directory::resolve_did to fetch a DID document or
+//! Directory::resolve_handle to look up a DID from a handle.
+
 pub mod did_web;
 pub mod directory;
 #[allow(clippy::module_inception)]

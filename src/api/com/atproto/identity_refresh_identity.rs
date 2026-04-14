@@ -12,7 +12,7 @@ pub struct IdentityRefreshIdentityInput {
 /// IdentityRefreshIdentityOutput is an alias.
 pub type IdentityRefreshIdentityOutput = crate::api::com::atproto::IdentityDefsIdentityInfo;
 
-/// IdentityRefreshIdentity — Request that the server re-resolve an identity (DID and handle). The server may ignore this reque...
+/// IdentityRefreshIdentity — Request that the server re-resolve an identity (DID and handle). The server may ignore this request, or require authentication, depending on the role, implementation, and policy of the server.
 pub async fn identity_refresh_identity(
     client: &crate::xrpc::Client,
     input: &IdentityRefreshIdentityInput,

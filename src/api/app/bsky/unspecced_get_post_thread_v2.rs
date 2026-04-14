@@ -3,13 +3,18 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadV2Params {
+    /// Whether to include parents above the anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub above: Option<bool>,
+    /// Reference (AT-URI) to post record. This is the anchor post, and the thread will be built around it. It can be any post in the tree, not necessarily a root post.
     pub anchor: String,
+    /// How many levels of replies to include below the anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub below: Option<i64>,
+    /// Maximum of replies to include at each level of the thread, except for the direct replies to the anchor, which are (NOTE: currently, during unspecced phase) all returned (NOTE: later they might be paginated).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branching_factor: Option<i64>,
+    /// Sorting for the thread replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
 }
@@ -17,7 +22,9 @@ pub struct UnspeccedGetPostThreadV2Params {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadV2Output {
+    /// Whether this thread has additional replies. If true, a call can be made to the `getPostThreadOtherV2` endpoint to retrieve them.
     pub has_other_replies: bool,
+    /// A flat list of thread items. The depth of each item is indicated by the depth property inside the item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thread: Vec<UnspeccedGetPostThreadV2ThreadItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -27,7 +34,7 @@ pub struct UnspeccedGetPostThreadV2Output {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetPostThreadV2 — (NOTE: this endpoint is under development and WILL change without notice. Don't use it until it i...
+/// UnspeccedGetPostThreadV2 — (NOTE: this endpoint is under development and WILL change without notice. Don't use it until it is moved out of `unspecced` or your application WILL break) Get posts in a thread. It is based in an anchor post at any depth of the tree, and returns posts above it (recursively resolving the parent, without further branching to their replies) and below it (recursive replies, with branching to their replies). Does not require auth, but additional metadata and filtering will be applied for authed requests.
 pub async fn unspecced_get_post_thread_v2(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetPostThreadV2Params,
@@ -41,6 +48,7 @@ pub async fn unspecced_get_post_thread_v2(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadV2ThreadItem {
+    /// The nesting level of this item in the thread. Depth 0 means the anchor item. Items above have negative depths, items below have positive depths.
     pub depth: i64,
     pub uri: crate::syntax::AtUri,
     pub value: UnspeccedGetPostThreadV2ThreadItemValueUnion,

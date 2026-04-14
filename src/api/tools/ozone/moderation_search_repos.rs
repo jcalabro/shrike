@@ -9,6 +9,7 @@ pub struct ModerationSearchReposParams {
     pub limit: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
+    /// DEPRECATED: use 'q' instead
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
 }

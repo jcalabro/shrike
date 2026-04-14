@@ -5,6 +5,7 @@
 pub struct UnspeccedGetTrendsSkeletonParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -19,7 +20,7 @@ pub struct UnspeccedGetTrendsSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetTrendsSkeleton — Get the skeleton of trends on the network. Intended to be called and then hydrated through app.bs...
+/// UnspeccedGetTrendsSkeleton — Get the skeleton of trends on the network. Intended to be called and then hydrated through app.bsky.unspecced.getTrends
 pub async fn unspecced_get_trends_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetTrendsSkeletonParams,

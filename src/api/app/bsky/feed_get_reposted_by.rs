@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetRepostedByParams {
+    /// If supplied, filters to reposts of specific version (by CID) of the post record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Reference (AT-URI) of post record
     pub uri: String,
 }
 

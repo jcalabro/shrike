@@ -3,9 +3,13 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgeassuranceBeginInput {
+    /// An ISO 3166-1 alpha-2 code of the user's location.
     pub country_code: String,
+    /// The user's email address to receive Age Assurance instructions.
     pub email: String,
+    /// The user's preferred language for communication during the Age Assurance process.
     pub language: String,
+    /// An optional ISO 3166-2 code of the user's region or state within the country.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region_code: Option<String>,
     /// Extra fields not defined in the schema.

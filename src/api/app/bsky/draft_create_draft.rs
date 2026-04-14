@@ -12,13 +12,14 @@ pub struct DraftCreateDraftInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftCreateDraftOutput {
+    /// The ID of the created draft.
     pub id: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// DraftCreateDraft — Inserts a draft using private storage (stash). An upper limit of drafts might be enforced. Requir...
+/// DraftCreateDraft — Inserts a draft using private storage (stash). An upper limit of drafts might be enforced. Requires authentication.
 pub async fn draft_create_draft(
     client: &crate::xrpc::Client,
     input: &DraftCreateDraftInput,

@@ -3,13 +3,19 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoCreateRecordInput {
+    /// The NSID of the record collection.
     pub collection: crate::syntax::Nsid,
+    /// The record itself. Must contain a $type field.
     pub record: serde_json::Value,
+    /// The handle or DID of the repo (aka, current account).
     pub repo: crate::syntax::AtIdentifier,
+    /// The Record Key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rkey: Option<crate::syntax::RecordKey>,
+    /// Compare and swap with the previous commit by CID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap_commit: Option<String>,
+    /// Can be set to 'false' to skip Lexicon schema validation of record data, 'true' to require it, or leave unset to validate only for known Lexicons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validate: Option<bool>,
     /// Extra fields not defined in the schema.

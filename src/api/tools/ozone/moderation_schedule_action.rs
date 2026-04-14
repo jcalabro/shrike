@@ -147,9 +147,11 @@ impl ModerationScheduleActionFailedScheduling {
 pub struct ModerationScheduleActionInput {
     pub action: ModerationScheduleActionInputActionUnion,
     pub created_by: crate::syntax::Did,
+    /// This will be propagated to the moderation event when it is applied
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_tool: Option<crate::api::tools::ozone::ModerationDefsModTool>,
     pub scheduling: ModerationScheduleActionSchedulingConfig,
+    /// Array of DID subjects to schedule the action for
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subjects: Vec<crate::syntax::Did>,
     /// Extra fields not defined in the schema.
@@ -455,10 +457,13 @@ impl ModerationScheduleActionScheduledActionResults {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationScheduleActionSchedulingConfig {
+    /// Earliest time to execute the action (for randomized scheduling)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execute_after: Option<crate::syntax::Datetime>,
+    /// Exact time to execute the action
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execute_at: Option<crate::syntax::Datetime>,
+    /// Latest time to execute the action (for randomized scheduling)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execute_until: Option<crate::syntax::Datetime>,
     /// Extra fields not defined in the schema (JSON).
@@ -619,22 +624,30 @@ impl ModerationScheduleActionSchedulingConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationScheduleActionTakedown {
+    /// If true, all other reports on content authored by this account will be resolved (acknowledged).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acknowledge_account_subjects: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Indicates how long the takedown should be in effect before automatically expiring.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_in_hours: Option<i64>,
+    /// Email content to be sent to the user upon takedown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_content: Option<String>,
+    /// Subject of the email to be sent to the user upon takedown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_subject: Option<String>,
+    /// Names/Keywords of the policies that drove the decision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub policies: Vec<String>,
+    /// Severity level of the violation (e.g., 'sev-0', 'sev-1', 'sev-2', etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub severity_level: Option<String>,
+    /// Number of strikes to assign to the user when takedown is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strike_count: Option<i64>,
+    /// When the strike should expire. If not provided, the strike never expires.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strike_expires_at: Option<crate::syntax::Datetime>,
     /// Extra fields not defined in the schema (JSON).

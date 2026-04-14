@@ -3,11 +3,13 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetListsParams {
+    /// The account (actor) to enumerate lists from.
     pub actor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Optional filter by list purpose. If not specified, all supported types are returned.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub purposes: Vec<String>,
 }

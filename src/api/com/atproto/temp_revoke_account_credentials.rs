@@ -9,7 +9,7 @@ pub struct TempRevokeAccountCredentialsInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// TempRevokeAccountCredentials — Revoke sessions, password, and app passwords associated with account. May be resolved by a passwo...
+/// TempRevokeAccountCredentials — Revoke sessions, password, and app passwords associated with account. May be resolved by a password reset.
 pub async fn temp_revoke_account_credentials(
     client: &crate::xrpc::Client,
     input: &TempRevokeAccountCredentialsInput,

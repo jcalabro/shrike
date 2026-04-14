@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationRegisterPushInput {
+    /// Set to true when the actor is age restricted
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub age_restricted: Option<bool>,
     pub app_id: String,
@@ -14,7 +15,7 @@ pub struct NotificationRegisterPushInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// NotificationRegisterPush — Register to receive push notifications, via a specified service, for the requesting account. Requ...
+/// NotificationRegisterPush — Register to receive push notifications, via a specified service, for the requesting account. Requires auth.
 pub async fn notification_register_push(
     client: &crate::xrpc::Client,
     input: &NotificationRegisterPushInput,

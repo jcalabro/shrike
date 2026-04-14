@@ -3,7 +3,9 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetAddValuesInput {
+    /// Name of the set to add values to
     pub name: String,
+    /// Array of string values to add to the set
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
     /// Extra fields not defined in the schema.
@@ -11,7 +13,7 @@ pub struct SetAddValuesInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SetAddValues — Add values to a specific set. Attempting to add values to a set that does not exist will result i...
+/// SetAddValues — Add values to a specific set. Attempting to add values to a set that does not exist will result in an error.
 pub async fn set_add_values(
     client: &crate::xrpc::Client,
     input: &SetAddValuesInput,

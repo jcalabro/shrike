@@ -5,7 +5,9 @@
 #[serde(rename_all = "camelCase")]
 pub struct IdentityDefsIdentityInfo {
     pub did: crate::syntax::Did,
+    /// The complete DID document for the identity.
     pub did_doc: serde_json::Value,
+    /// The validated handle of the account; or 'handle.invalid' if the handle did not bi-directionally match the DID document.
     pub handle: crate::syntax::Handle,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

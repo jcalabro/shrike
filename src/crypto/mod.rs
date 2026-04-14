@@ -1,3 +1,9 @@
+//! P-256 and secp256k1 signing and verification for AT Protocol.
+//!
+//! Supports two elliptic curve families: P-256 (NIST P-256) and secp256k1
+//! (Bitcoin curve). Both implement SigningKey and VerifyingKey traits.
+//! Use parse_did_key to extract keys from did:key identifiers.
+
 pub mod did_key;
 pub mod k256_impl;
 pub mod p256_impl;

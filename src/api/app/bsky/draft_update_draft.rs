@@ -9,7 +9,7 @@ pub struct DraftUpdateDraftInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// DraftUpdateDraft — Updates a draft using private storage (stash). If the draft ID points to a non-existing ID, the u...
+/// DraftUpdateDraft — Updates a draft using private storage (stash). If the draft ID points to a non-existing ID, the update will be silently ignored. This is done because updates don't enforce draft limit, so it accepts all writes, but will ignore invalid ones. Requires authentication.
 pub async fn draft_update_draft(
     client: &crate::xrpc::Client,
     input: &DraftUpdateDraftInput,

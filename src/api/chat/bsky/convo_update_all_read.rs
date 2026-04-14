@@ -13,6 +13,7 @@ pub struct ConvoUpdateAllReadInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoUpdateAllReadOutput {
+    /// The count of updated convos.
     pub updated_count: i64,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

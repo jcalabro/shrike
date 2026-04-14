@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetSuggestedUsersForSeeMoreParams {
+    /// Category of users to get suggestions for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -14,6 +15,7 @@ pub struct UnspeccedGetSuggestedUsersForSeeMoreParams {
 pub struct UnspeccedGetSuggestedUsersForSeeMoreOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actors: Vec<crate::api::app::bsky::ActorDefsProfileView>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.

@@ -3,7 +3,7 @@
 /// NSID for the FeedRepost record.
 pub const NSID_FEED_REPOST: &str = "app.bsky.feed.repost";
 
-/// FeedRepost record from app.bsky.feed.repost.
+/// FeedRepost — Record representing a 'repost' of an existing Bluesky post.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedRepost {

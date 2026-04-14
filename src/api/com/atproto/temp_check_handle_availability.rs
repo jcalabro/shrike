@@ -3,16 +3,20 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempCheckHandleAvailabilityParams {
+    /// User-provided birth date. Might be used to build handle suggestions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub birth_date: Option<String>,
+    /// User-provided email. Might be used to build handle suggestions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// Tentative handle. Will be checked for availability or used to build handle suggestions.
     pub handle: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempCheckHandleAvailabilityOutput {
+    /// Echo of the input handle.
     pub handle: crate::syntax::Handle,
     pub result: TempCheckHandleAvailabilityOutputResultUnion,
     /// Extra fields not defined in the schema.
@@ -160,7 +164,7 @@ impl TempCheckHandleAvailabilityOutputResultUnion {
     }
 }
 
-/// TempCheckHandleAvailability — Checks whether the provided handle is available. If the handle is not available, available sugges...
+/// TempCheckHandleAvailability — Checks whether the provided handle is available. If the handle is not available, available suggestions will be returned. Optional inputs will be used to generate suggestions.
 pub async fn temp_check_handle_availability(
     client: &crate::xrpc::Client,
     params: &TempCheckHandleAvailabilityParams,
@@ -248,6 +252,7 @@ impl TempCheckHandleAvailabilityResultAvailable {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempCheckHandleAvailabilityResultUnavailable {
+    /// List of suggested handles based on the provided inputs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suggestions: Vec<TempCheckHandleAvailabilitySuggestion>,
     /// Extra fields not defined in the schema (JSON).
@@ -355,6 +360,7 @@ impl TempCheckHandleAvailabilityResultUnavailable {
 #[serde(rename_all = "camelCase")]
 pub struct TempCheckHandleAvailabilitySuggestion {
     pub handle: crate::syntax::Handle,
+    /// Method used to build this suggestion. Should be considered opaque to clients. Can be used for metrics.
     pub method: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

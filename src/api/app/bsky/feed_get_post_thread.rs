@@ -3,10 +3,13 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetPostThreadParams {
+    /// How many levels of reply depth should be included in response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<i64>,
+    /// How many levels of parent (and grandparent, etc) post to include.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_height: Option<i64>,
+    /// Reference (AT-URI) to post record.
     pub uri: String,
 }
 
@@ -214,7 +217,7 @@ impl FeedGetPostThreadOutputThreadUnion {
     }
 }
 
-/// FeedGetPostThread — Get posts in a thread. Does not require auth, but additional metadata and filtering will be appli...
+/// FeedGetPostThread — Get posts in a thread. Does not require auth, but additional metadata and filtering will be applied for authed requests.
 pub async fn feed_get_post_thread(
     client: &crate::xrpc::Client,
     params: &FeedGetPostThreadParams,

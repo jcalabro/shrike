@@ -7,6 +7,7 @@ pub struct ModerationGetMessageContextParams {
     pub after: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before: Option<i64>,
+    /// Conversation that the message is from. NOTE: this field will eventually be required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub convo_id: Option<String>,
     pub message_id: String,

@@ -3,10 +3,11 @@
 /// NSID for the NotificationDeclaration record.
 pub const NSID_NOTIFICATION_DECLARATION: &str = "app.bsky.notification.declaration";
 
-/// NotificationDeclaration record from app.bsky.notification.declaration.
+/// NotificationDeclaration — A declaration of the user's choices related to notifications that can be produced by them.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationDeclaration {
+    /// A declaration of the user's preference for allowing activity subscriptions from other users. Absence of a record implies 'followers'.
     pub allow_subscriptions: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

@@ -5,6 +5,7 @@
 #[serde(rename_all = "camelCase")]
 pub struct FeedPostEntity {
     pub index: FeedPostTextSlice,
+    /// Expected values are 'mention' and 'link'.
     pub r#type: String,
     pub value: String,
     /// Extra fields not defined in the schema (JSON).
@@ -132,25 +133,32 @@ impl FeedPostEntity {
 /// NSID for the FeedPost record.
 pub const NSID_FEED_POST: &str = "app.bsky.feed.post";
 
-/// FeedPost record from app.bsky.feed.post.
+/// FeedPost — Record containing a Bluesky post.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPost {
+    /// Client-declared timestamp when this post was originally created.
     pub created_at: crate::syntax::Datetime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<FeedPostEmbedUnion>,
+    /// DEPRECATED: replaced by app.bsky.richtext.facet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entities: Vec<FeedPostEntity>,
+    /// Annotations of text (mentions, URLs, hashtags, etc)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
+    /// Self-label values for this post. Effectively content warnings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<FeedPostLabelsUnion>,
+    /// Indicates human language of post primary text content.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub langs: Vec<crate::syntax::Language>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply: Option<FeedPostReplyRef>,
+    /// Additional hashtags, in addition to any included in post text and facets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// The primary post content. May be an empty string, if there are embeds.
     pub text: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -381,7 +389,7 @@ impl FeedPostEmbedUnion {
     }
 }
 
-/// FeedPostLabelsUnion is a union type.
+/// Self-label values for this post. Effectively content warnings.
 #[derive(Debug, Clone)]
 pub enum FeedPostLabelsUnion {
     LabelDefsSelfLabels(Box<crate::api::com::atproto::LabelDefsSelfLabels>),
@@ -931,7 +939,7 @@ impl FeedPostReplyRef {
     }
 }
 
-/// FeedPostTextSlice — Deprecated. Use app.bsky.richtext instead -- A text segment. Start is inclusive, end is exclusive...
+/// FeedPostTextSlice — Deprecated. Use app.bsky.richtext instead -- A text segment. Start is inclusive, end is exclusive. Indices are for utf16-encoded strings.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPostTextSlice {

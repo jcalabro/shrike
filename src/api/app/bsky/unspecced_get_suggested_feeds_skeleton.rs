@@ -5,6 +5,7 @@
 pub struct UnspeccedGetSuggestedFeedsSkeletonParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -19,7 +20,7 @@ pub struct UnspeccedGetSuggestedFeedsSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetSuggestedFeedsSkeleton — Get a skeleton of suggested feeds. Intended to be called and hydrated by app.bsky.unspecced.getSu...
+/// UnspeccedGetSuggestedFeedsSkeleton — Get a skeleton of suggested feeds. Intended to be called and hydrated by app.bsky.unspecced.getSuggestedFeeds
 pub async fn unspecced_get_suggested_feeds_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetSuggestedFeedsSkeletonParams,

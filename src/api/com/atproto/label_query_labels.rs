@@ -7,8 +7,10 @@ pub struct LabelQueryLabelsParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Optional list of label sources (DIDs) to filter on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
+    /// List of AT URI patterns to match (boolean 'OR'). Each may be a prefix (ending with '*'; will match inclusive of the string leading to '*'), or a full URI.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uri_patterns: Vec<String>,
 }
@@ -25,7 +27,7 @@ pub struct LabelQueryLabelsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// LabelQueryLabels — Find labels relevant to the provided AT-URI patterns. Public endpoint for moderation services, th...
+/// LabelQueryLabels — Find labels relevant to the provided AT-URI patterns. Public endpoint for moderation services, though may return different or additional results with auth.
 pub async fn label_query_labels(
     client: &crate::xrpc::Client,
     params: &LabelQueryLabelsParams,

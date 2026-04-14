@@ -21,7 +21,7 @@ pub struct ContactGetMatchesOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactGetMatches — Returns the matched contacts (contacts that were mutually imported). Excludes dismissed matches. ...
+/// ContactGetMatches — Returns the matched contacts (contacts that were mutually imported). Excludes dismissed matches. Requires authentication.
 pub async fn contact_get_matches(
     client: &crate::xrpc::Client,
     params: &ContactGetMatchesParams,

@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityResolveHandleParams {
+    /// The handle to resolve.
     pub handle: String,
 }
 
@@ -15,7 +16,7 @@ pub struct IdentityResolveHandleOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// IdentityResolveHandle — Resolves an atproto handle (hostname) to a DID. Does not necessarily bi-directionally verify agai...
+/// IdentityResolveHandle — Resolves an atproto handle (hostname) to a DID. Does not necessarily bi-directionally verify against the the DID document.
 pub async fn identity_resolve_handle(
     client: &crate::xrpc::Client,
     params: &IdentityResolveHandleParams,

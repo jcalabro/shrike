@@ -3,10 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoGetRecordParams {
+    /// The CID of the version of the record. If not specified, then return the most recent version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
+    /// The NSID of the record collection.
     pub collection: String,
+    /// The handle or DID of the repo.
     pub repo: String,
+    /// The Record Key.
     pub rkey: String,
 }
 

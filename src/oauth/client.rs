@@ -14,8 +14,11 @@ use crate::oauth::token;
 
 /// Configuration for constructing an [`OAuthClient`].
 pub struct OAuthClientConfig {
+    /// Client metadata document describing your application.
     pub metadata: ClientMetadata,
+    /// Where to persist user sessions (implement `SessionStore` or use `MemorySessionStore`).
     pub session_store: Box<dyn SessionStore>,
+    /// Where to persist authorization state during the OAuth flow.
     pub state_store: Box<dyn StateStore>,
     /// P-256 signing key + key ID for confidential clients. `None` for public clients.
     pub signing_key: Option<(P256SigningKey, String)>,
@@ -26,6 +29,35 @@ pub struct OAuthClientConfig {
 }
 
 /// Main OAuth client that orchestrates the full AT Protocol OAuth flow.
+///
+/// Handles DID/handle resolution, authorization server discovery, PAR,
+/// PKCE, DPoP proof generation, token exchange, token refresh, and
+/// issuer verification.
+///
+/// ```no_run
+/// use shrike::oauth::{OAuthClient, OAuthClientConfig, AuthorizeOptions};
+/// use shrike::oauth::session::{MemorySessionStore, MemoryStateStore};
+/// use shrike::oauth::metadata::ClientMetadata;
+///
+/// # async fn example() -> Result<(), shrike::oauth::OAuthError> {
+/// let client = OAuthClient::new(OAuthClientConfig {
+///     metadata: ClientMetadata { client_id: "https://myapp.example/client-metadata.json".into(), ..Default::default() },
+///     session_store: Box::new(MemorySessionStore::new()),
+///     state_store: Box::new(MemoryStateStore::new()),
+///     signing_key: None,
+///     skip_issuer_verification: false,
+/// });
+///
+/// let result = client.authorize(AuthorizeOptions {
+///     input: "alice.bsky.social".into(),
+///     redirect_uri: "http://localhost:8080/callback".into(),
+///     scope: None,
+///     state: None,
+/// }).await?;
+/// // redirect user to result.url
+/// # Ok(())
+/// # }
+/// ```
 pub struct OAuthClient {
     metadata: ClientMetadata,
     sessions: Box<dyn SessionStore>,

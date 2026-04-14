@@ -12,7 +12,7 @@ pub struct NotificationUnregisterPushInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// NotificationUnregisterPush — The inverse of registerPush - inform a specified service that push notifications should no longer...
+/// NotificationUnregisterPush — The inverse of registerPush - inform a specified service that push notifications should no longer be sent to the given token for the requesting account. Requires auth.
 pub async fn notification_unregister_push(
     client: &crate::xrpc::Client,
     input: &NotificationUnregisterPushInput,

@@ -4,6 +4,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BookmarkDefsBookmark {
+    /// A strong ref to the record to be bookmarked. Currently, only `app.bsky.feed.post` records are supported.
     pub subject: crate::api::com::atproto::RepoStrongRef,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -100,6 +101,7 @@ pub struct BookmarkDefsBookmarkView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
     pub item: BookmarkDefsBookmarkViewItemUnion,
+    /// A strong ref to the bookmarked record.
     pub subject: crate::api::com::atproto::RepoStrongRef,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

@@ -3,13 +3,14 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncNotifyOfUpdateInput {
+    /// Hostname of the current service (usually a PDS) that is notifying of update.
     pub hostname: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SyncNotifyOfUpdate — Notify a crawling service of a recent update, and that crawling should resume. Intended use is af...
+/// SyncNotifyOfUpdate — Notify a crawling service of a recent update, and that crawling should resume. Intended use is after a gap between repo stream events caused the crawling service to disconnect. Does not require auth; implemented by Relay. DEPRECATED: just use com.atproto.sync.requestCrawl
 pub async fn sync_notify_of_update(
     client: &crate::xrpc::Client,
     input: &SyncNotifyOfUpdateInput,

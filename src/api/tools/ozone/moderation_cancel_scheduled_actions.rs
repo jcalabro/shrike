@@ -4,8 +4,10 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationCancelScheduledActionsCancellationResults {
+    /// DIDs for which cancellation failed with error details
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<ModerationCancelScheduledActionsFailedCancellation>,
+    /// DIDs for which all pending scheduled actions were successfully cancelled
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub succeeded: Vec<crate::syntax::Did>,
     /// Extra fields not defined in the schema (JSON).
@@ -287,8 +289,10 @@ impl ModerationCancelScheduledActionsFailedCancellation {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationCancelScheduledActionsInput {
+    /// Optional comment describing the reason for cancellation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Array of DID subjects to cancel scheduled actions for
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subjects: Vec<crate::syntax::Did>,
     /// Extra fields not defined in the schema.

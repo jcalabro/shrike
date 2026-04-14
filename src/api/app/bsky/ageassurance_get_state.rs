@@ -18,7 +18,7 @@ pub struct AgeassuranceGetStateOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// AgeassuranceGetState — Returns server-computed Age Assurance state, if available, and any additional metadata needed to ...
+/// AgeassuranceGetState — Returns server-computed Age Assurance state, if available, and any additional metadata needed to compute Age Assurance state client-side.
 pub async fn ageassurance_get_state(
     client: &crate::xrpc::Client,
     params: &AgeassuranceGetStateParams,

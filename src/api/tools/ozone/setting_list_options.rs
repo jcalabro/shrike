@@ -5,10 +5,12 @@
 pub struct SettingListOptionsParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Filter for only the specified keys. Ignored if prefix is provided
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter keys by prefix
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

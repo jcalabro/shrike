@@ -3,7 +3,7 @@
 /// NSID for the LabelerService record.
 pub const NSID_LABELER_SERVICE: &str = "app.bsky.labeler.service";
 
-/// LabelerService record from app.bsky.labeler.service.
+/// LabelerService — A declaration of the existence of labeler service.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelerService {
@@ -11,10 +11,13 @@ pub struct LabelerService {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<LabelerServiceLabelsUnion>,
     pub policies: crate::api::app::bsky::LabelerDefsLabelerPolicies,
+    /// The set of report reason 'codes' which are in-scope for this service to review and action. These usually align to policy categories. If not defined (distinct from empty array), all reason types are allowed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reason_types: Vec<crate::api::com::atproto::ModerationDefsReasonType>,
+    /// Set of record types (collection NSIDs) which can be reported to this service. If not defined (distinct from empty array), default is any record type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_collections: Vec<crate::syntax::Nsid>,
+    /// The set of subject types (account, record, etc) this service accepts reports on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_types: Vec<crate::api::com::atproto::ModerationDefsSubjectType>,
     /// Extra fields not defined in the schema (JSON).

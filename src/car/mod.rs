@@ -1,3 +1,13 @@
+//! CAR v1 archives for AT Protocol repositories.
+//!
+//! CAR (Content Addressable aRchive) files are the wire format for
+//! transmitting AT Protocol repositories. Each CAR contains a header with
+//! root CIDs followed by a sequence of content-addressed blocks.
+//!
+//! Reader and Writer provide streaming access. Use read_all and write_all
+//! for one-shot operations. The verify function checks that all block CIDs
+//! match their content.
+
 use crate::cbor::Cid;
 
 pub mod reader;

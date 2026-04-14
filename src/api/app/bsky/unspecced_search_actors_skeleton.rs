@@ -3,13 +3,17 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedSearchActorsSkeletonParams {
+    /// Optional pagination mechanism; may not necessarily allow scrolling through entire result set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Search query string; syntax, phrase, boolean, and faceting is unspecified, but Lucene query syntax is recommended. For typeahead search, only simple term match is supported, not full syntax.
     pub q: String,
+    /// If true, acts as fast/simple 'typeahead' query.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typeahead: Option<bool>,
+    /// DID of the account making the request (not included for public/unauthenticated queries). Used to boost followed accounts in ranking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -21,6 +25,7 @@ pub struct UnspeccedSearchActorsSkeletonOutput {
     pub actors: Vec<crate::api::app::bsky::UnspeccedDefsSkeletonSearchActor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Count of search hits. Optional, may be rounded/truncated, and may not be possible to paginate through all hits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hits_total: Option<i64>,
     /// Extra fields not defined in the schema.

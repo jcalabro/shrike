@@ -4,8 +4,10 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelerDefsLabelerPolicies {
+    /// Label values created by this labeler and scoped exclusively to it. Labels defined here will override global label definitions for this labeler.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub label_value_definitions: Vec<crate::api::com::atproto::LabelDefsLabelValueDefinition>,
+    /// The label values which this labeler publishes. May include global or custom labels.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub label_values: Vec<crate::api::com::atproto::LabelDefsLabelValue>,
     /// Extra fields not defined in the schema (JSON).
@@ -408,10 +410,13 @@ pub struct LabelerDefsLabelerViewDetailed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub like_count: Option<i64>,
     pub policies: LabelerDefsLabelerPolicies,
+    /// The set of report reason 'codes' which are in-scope for this service to review and action. These usually align to policy categories. If not defined (distinct from empty array), all reason types are allowed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reason_types: Vec<crate::api::com::atproto::ModerationDefsReasonType>,
+    /// Set of record types (collection NSIDs) which can be reported to this service. If not defined (distinct from empty array), default is any record type.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_collections: Vec<crate::syntax::Nsid>,
+    /// The set of subject types (account, record, etc) this service accepts reports on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_types: Vec<crate::api::com::atproto::ModerationDefsSubjectType>,
     pub uri: crate::syntax::AtUri,

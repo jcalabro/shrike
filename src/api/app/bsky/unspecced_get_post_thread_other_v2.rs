@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadOtherV2Params {
+    /// Reference (AT-URI) to post record. This is the anchor post.
     pub anchor: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadOtherV2Output {
+    /// A flat list of other thread items. The depth of each item is indicated by the depth property inside the item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thread: Vec<UnspeccedGetPostThreadOtherV2ThreadItem>,
     /// Extra fields not defined in the schema.
@@ -16,7 +18,7 @@ pub struct UnspeccedGetPostThreadOtherV2Output {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetPostThreadOtherV2 — (NOTE: this endpoint is under development and WILL change without notice. Don't use it until it i...
+/// UnspeccedGetPostThreadOtherV2 — (NOTE: this endpoint is under development and WILL change without notice. Don't use it until it is moved out of `unspecced` or your application WILL break) Get additional posts under a thread e.g. replies hidden by threadgate. Based on an anchor post at any depth of the tree, returns top-level replies below that anchor. It does not include ancestors nor the anchor itself. This should be called after exhausting `app.bsky.unspecced.getPostThreadV2`. Does not require auth, but additional metadata and filtering will be applied for authed requests.
 pub async fn unspecced_get_post_thread_other_v2(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetPostThreadOtherV2Params,
@@ -30,6 +32,7 @@ pub async fn unspecced_get_post_thread_other_v2(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetPostThreadOtherV2ThreadItem {
+    /// The nesting level of this item in the thread. Depth 0 means the anchor item. Items above have negative depths, items below have positive depths.
     pub depth: i64,
     pub uri: crate::syntax::AtUri,
     pub value: UnspeccedGetPostThreadOtherV2ThreadItemValueUnion,

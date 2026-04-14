@@ -232,15 +232,20 @@ impl ServerDescribeServerLinks {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerDescribeServerOutput {
+    /// List of domain suffixes that can be used in account handles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_user_domains: Vec<String>,
+    /// Contact information
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<ServerDescribeServerContact>,
     pub did: crate::syntax::Did,
+    /// If true, an invite code must be supplied to create an account on this instance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite_code_required: Option<bool>,
+    /// URLs of service policy documents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub links: Option<ServerDescribeServerLinks>,
+    /// If true, a phone verification token must be supplied to create an account on this instance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone_verification_required: Option<bool>,
     /// Extra fields not defined in the schema.

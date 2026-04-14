@@ -9,10 +9,13 @@ pub struct GraphGetSuggestedFollowsByActorParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetSuggestedFollowsByActorOutput {
+    /// DEPRECATED, unused. Previously: if true, response has fallen-back to generic results, and is not scoped using relativeToDid
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_fallback: Option<bool>,
+    /// DEPRECATED: use recIdStr instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id: Option<i64>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -22,7 +25,7 @@ pub struct GraphGetSuggestedFollowsByActorOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphGetSuggestedFollowsByActor — Enumerates follows similar to a given account (actor). Expected use is to recommend additional ac...
+/// GraphGetSuggestedFollowsByActor — Enumerates follows similar to a given account (actor). Expected use is to recommend additional accounts immediately after following one account.
 pub async fn graph_get_suggested_follows_by_actor(
     client: &crate::xrpc::Client,
     params: &GraphGetSuggestedFollowsByActorParams,

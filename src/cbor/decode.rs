@@ -21,6 +21,7 @@ pub struct Decoder<'a> {
 }
 
 impl<'a> Decoder<'a> {
+    /// Create a decoder over the given input buffer.
     #[inline]
     pub fn new(buf: &'a [u8]) -> Self {
         Decoder {

@@ -123,11 +123,13 @@ impl GraphGetListsWithMembershipListWithMembership {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetListsWithMembershipParams {
+    /// The account (actor) to check for membership.
     pub actor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Optional filter by list purpose. If not specified, all supported types are returned.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub purposes: Vec<String>,
 }
@@ -144,7 +146,7 @@ pub struct GraphGetListsWithMembershipOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphGetListsWithMembership — Enumerates the lists created by the session user, and includes membership information about `acto...
+/// GraphGetListsWithMembership — Enumerates the lists created by the session user, and includes membership information about `actor` in those lists. Only supports curation and moderation lists (no reference lists, used in starter packs). Requires auth.
 pub async fn graph_get_lists_with_membership(
     client: &crate::xrpc::Client,
     params: &GraphGetListsWithMembershipParams,

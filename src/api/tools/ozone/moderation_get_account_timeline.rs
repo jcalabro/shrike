@@ -16,7 +16,7 @@ pub struct ModerationGetAccountTimelineOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ModerationGetAccountTimeline — Get timeline of all available events of an account. This includes moderation events, account hist...
+/// ModerationGetAccountTimeline — Get timeline of all available events of an account. This includes moderation events, account history and did history.
 pub async fn moderation_get_account_timeline(
     client: &crate::xrpc::Client,
     params: &ModerationGetAccountTimelineParams,

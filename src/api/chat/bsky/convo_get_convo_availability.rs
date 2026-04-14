@@ -18,7 +18,7 @@ pub struct ConvoGetConvoAvailabilityOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoGetConvoAvailability — Get whether the requester and the other members can chat. If an existing convo is found for these...
+/// ConvoGetConvoAvailability — Get whether the requester and the other members can chat. If an existing convo is found for these members, it is returned.
 pub async fn convo_get_convo_availability(
     client: &crate::xrpc::Client,
     params: &ConvoGetConvoAvailabilityParams,

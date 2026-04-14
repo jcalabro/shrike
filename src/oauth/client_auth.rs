@@ -5,7 +5,10 @@ use crate::crypto::{P256SigningKey, SigningKey};
 use crate::oauth::OAuthError;
 use crate::oauth::pkce::base64url_encode;
 
-/// Client authentication for OAuth token endpoint requests.
+/// Client authentication strategy for OAuth token endpoint requests.
+///
+/// Implementations add the appropriate client credentials to the form body
+/// of token endpoint POST requests.
 pub trait ClientAuth: Send + Sync {
     /// Add authentication parameters to the form body.
     fn apply(&self, params: &mut Vec<(String, String)>, issuer: &str) -> Result<(), OAuthError>;

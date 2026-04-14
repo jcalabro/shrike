@@ -5,9 +5,11 @@
 pub struct SyncListBlobsParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// The DID of the repo.
     pub did: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Optional revision of the repo to list blobs since.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
 }

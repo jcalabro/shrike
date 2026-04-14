@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetStarterPacksWithMembershipParams {
+    /// The account (actor) to check for membership.
     pub actor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
@@ -23,7 +24,7 @@ pub struct GraphGetStarterPacksWithMembershipOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphGetStarterPacksWithMembership — Enumerates the starter packs created by the session user, and includes membership information abo...
+/// GraphGetStarterPacksWithMembership — Enumerates the starter packs created by the session user, and includes membership information about `actor` in those starter packs. Requires auth.
 pub async fn graph_get_starter_packs_with_membership(
     client: &crate::xrpc::Client,
     params: &GraphGetStarterPacksWithMembershipParams,
@@ -33,7 +34,7 @@ pub async fn graph_get_starter_packs_with_membership(
         .await
 }
 
-/// GraphGetStarterPacksWithMembershipStarterPackWithMembership — A starter pack and an optional list item indicating membership of a target user to that starter p...
+/// GraphGetStarterPacksWithMembershipStarterPackWithMembership — A starter pack and an optional list item indicating membership of a target user to that starter pack.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetStarterPacksWithMembershipStarterPackWithMembership {

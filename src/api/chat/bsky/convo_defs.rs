@@ -2937,6 +2937,7 @@ impl ConvoDefsMessageAndReactionView {
 pub struct ConvoDefsMessageInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<ConvoDefsMessageInputEmbedUnion>,
+    /// Annotations of text (mentions, URLs, hashtags, etc)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
     pub text: String,
@@ -3358,9 +3359,11 @@ impl ConvoDefsMessageRef {
 pub struct ConvoDefsMessageView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<ConvoDefsMessageViewEmbedUnion>,
+    /// Annotations of text (mentions, URLs, hashtags, etc)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
     pub id: String,
+    /// Reactions to this message, in ascending order of creation time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<ConvoDefsReactionView>,
     pub rev: String,

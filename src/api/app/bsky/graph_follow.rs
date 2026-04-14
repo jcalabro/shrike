@@ -3,7 +3,7 @@
 /// NSID for the GraphFollow record.
 pub const NSID_GRAPH_FOLLOW: &str = "app.bsky.graph.follow";
 
-/// GraphFollow record from app.bsky.graph.follow.
+/// GraphFollow — Record declaring a social 'follow' relationship of another account. Duplicate follows will be ignored by the AppView.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphFollow {

@@ -8,6 +8,7 @@ pub struct ActorDefsProfileViewBasic {
     pub associated: Option<crate::api::app::bsky::ActorDefsProfileAssociated>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<String>,
+    /// Set to true when the actor cannot actively participate in conversations
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_disabled: Option<bool>,
     pub did: crate::syntax::Did,

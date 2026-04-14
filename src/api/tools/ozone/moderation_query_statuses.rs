@@ -3,76 +3,105 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationQueryStatusesParams {
+    /// If specified, only subjects with the given age assurance state will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub age_assurance_state: Option<String>,
+    /// Get subjects in unresolved appealed status
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appealed: Option<bool>,
+    /// If specified, subjects belonging to the given collections will be returned. When subjectType is set to 'account', this will be ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collections: Vec<String>,
+    /// Search subjects by keyword from comments
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_tags: Vec<String>,
+    /// Search subjects where the associated record/account was deleted after a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting_deleted_after: Option<String>,
+    /// Search subjects where the associated record/account was deleted before a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting_deleted_before: Option<String>,
+    /// Search subjects by the status of the associated record/account
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosting_statuses: Vec<String>,
+    /// Search subjects where the associated record/account was updated after a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting_updated_after: Option<String>,
+    /// Search subjects where the associated record/account was updated before a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting_updated_before: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore_subjects: Vec<String>,
+    /// All subjects, or subjects from given 'collections' param, belonging to the account specified in the 'subject' param will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_all_user_records: Option<bool>,
+    /// By default, we don't include muted subjects in the results. Set this to true to include them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_muted: Option<bool>,
+    /// Get all subject statuses that were reviewed by a specific moderator
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_reviewed_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// If specified, only subjects that belong to an account that has at least this many suspensions will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_account_suspend_count: Option<i64>,
+    /// If specified, only subjects that have priority score value above the given value will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_priority_score: Option<i64>,
+    /// If specified, only subjects that belong to an account that has at least this many reported records will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_reported_records_count: Option<i64>,
+    /// If specified, only subjects that belong to an account that has at least this many active strikes will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_strike_count: Option<i64>,
+    /// If specified, only subjects that belong to an account that has at least this many taken down records will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_takendown_records_count: Option<i64>,
+    /// When set to true, only muted subjects and reporters will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub only_muted: Option<bool>,
+    /// Number of queues being used by moderators. Subjects will be split among all queues.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_count: Option<i64>,
+    /// Index of the queue to fetch subjects from. Works only when queueCount value is specified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_index: Option<i64>,
+    /// A seeder to shuffle/balance the queue items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_seed: Option<String>,
+    /// Search subjects reported after a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reported_after: Option<String>,
+    /// Search subjects reported before a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reported_before: Option<String>,
+    /// Specify when fetching subjects in a certain state
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_state: Option<String>,
+    /// Search subjects reviewed after a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_after: Option<String>,
+    /// Search subjects reviewed before a given timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewed_before: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_direction: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_field: Option<String>,
+    /// The subject to get the status for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// If specified, subjects of the given type (account or record) will be returned. When this is set to 'account' the 'collections' parameter will be ignored. When includeAllUserRecords or subject is set, this will be ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_type: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// Get subjects that were taken down
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub takendown: Option<bool>,
 }

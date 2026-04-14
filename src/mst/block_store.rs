@@ -15,15 +15,17 @@ pub trait BlockStore {
     fn has_block(&self, cid: &Cid) -> Result<bool, MstError>;
 }
 
-/// Simple in-memory block store for testing.
+/// Simple in-memory block store backed by a `HashMap`.
 ///
 /// Uses interior mutability via `RefCell` so that `put_block` can work through
 /// a shared reference (required by the `BlockStore` trait which takes `&self`).
+/// Suitable for testing and short-lived repositories.
 pub struct MemBlockStore {
     blocks: RefCell<HashMap<Cid, Vec<u8>>>,
 }
 
 impl MemBlockStore {
+    /// Create an empty in-memory block store.
     pub fn new() -> Self {
         MemBlockStore {
             blocks: RefCell::new(HashMap::new()),

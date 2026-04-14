@@ -3,26 +3,31 @@
 /// NSID for the ActorProfile record.
 pub const NSID_ACTOR_PROFILE: &str = "app.bsky.actor.profile";
 
-/// ActorProfile record from app.bsky.actor.profile.
+/// ActorProfile — A declaration of a Bluesky account profile.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorProfile {
+    /// Small image to be displayed next to posts from account. AKA, 'profile picture'
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<crate::api::Blob>,
+    /// Larger horizontal image to display behind profile view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub banner: Option<crate::api::Blob>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
+    /// Free-form profile description text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joined_via_starter_pack: Option<crate::api::com::atproto::RepoStrongRef>,
+    /// Self-label values, specific to the Bluesky application, on the overall account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<ActorProfileLabelsUnion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_post: Option<crate::api::com::atproto::RepoStrongRef>,
+    /// Free-form pronouns text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pronouns: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -35,7 +40,7 @@ pub struct ActorProfile {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
-/// ActorProfileLabelsUnion is a union type.
+/// Self-label values, specific to the Bluesky application, on the overall account.
 #[derive(Debug, Clone)]
 pub enum ActorProfileLabelsUnion {
     LabelDefsSelfLabels(Box<crate::api::com::atproto::LabelDefsSelfLabels>),

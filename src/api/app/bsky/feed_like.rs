@@ -3,7 +3,7 @@
 /// NSID for the FeedLike record.
 pub const NSID_FEED_LIKE: &str = "app.bsky.feed.like";
 
-/// FeedLike record from app.bsky.feed.like.
+/// FeedLike — Record declaring a 'like' of a piece of subject content.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedLike {

@@ -3,8 +3,11 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedInitAgeAssuranceInput {
+    /// An ISO 3166-1 alpha-2 code of the user's location.
     pub country_code: String,
+    /// The user's email address to receive assurance instructions.
     pub email: String,
+    /// The user's preferred language for communication during the assurance process.
     pub language: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
@@ -14,7 +17,7 @@ pub struct UnspeccedInitAgeAssuranceInput {
 /// UnspeccedInitAgeAssuranceOutput is an alias.
 pub type UnspeccedInitAgeAssuranceOutput = crate::api::app::bsky::UnspeccedDefsAgeAssuranceState;
 
-/// UnspeccedInitAgeAssurance — Initiate age assurance for an account. This is a one-time action that will start the process of v...
+/// UnspeccedInitAgeAssurance — Initiate age assurance for an account. This is a one-time action that will start the process of verifying the user's age.
 pub async fn unspecced_init_age_assurance(
     client: &crate::xrpc::Client,
     input: &UnspeccedInitAgeAssuranceInput,

@@ -4,16 +4,22 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftDefsDraft {
+    /// UUIDv4 identifier of the device that created this draft.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
+    /// The device and/or platform on which the draft was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_name: Option<String>,
+    /// Indicates human language of posts primary text content.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub langs: Vec<crate::syntax::Language>,
+    /// Embedding rules for the postgates to be created when this draft is published.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub postgate_embedding_rules: Vec<DraftDefsDraftPostgateEmbeddingRulesUnion>,
+    /// Array of draft posts that compose this draft.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub posts: Vec<DraftDefsDraftPost>,
+    /// Allow-rules for the threadgate to be created when this draft is published.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threadgate_allow: Vec<DraftDefsDraftThreadgateAllowUnion>,
     /// Extra fields not defined in the schema (JSON).
@@ -965,6 +971,7 @@ impl DraftDefsDraftEmbedImage {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftDefsDraftEmbedLocalRef {
+    /// Local, on-device ref to file to be embedded. Embeds are currently device-bound for drafts.
     pub path: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1312,8 +1319,10 @@ pub struct DraftDefsDraftPost {
     pub embed_records: Vec<DraftDefsDraftEmbedRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embed_videos: Vec<DraftDefsDraftEmbedVideo>,
+    /// Self-label values for this post. Effectively content warnings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<DraftDefsDraftPostLabelsUnion>,
+    /// The primary post content. It has a higher limit than post contents to allow storing a larger text that can later be refined into smaller posts.
     pub text: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1323,7 +1332,7 @@ pub struct DraftDefsDraftPost {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
-/// DraftDefsDraftPostLabelsUnion is a union type.
+/// Self-label values for this post. Effectively content warnings.
 #[derive(Debug, Clone)]
 pub enum DraftDefsDraftPostLabelsUnion {
     LabelDefsSelfLabels(Box<crate::api::com::atproto::LabelDefsSelfLabels>),
@@ -1699,9 +1708,12 @@ impl DraftDefsDraftPost {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftDefsDraftView {
+    /// The time the draft was created.
     pub created_at: crate::syntax::Datetime,
     pub draft: DraftDefsDraft,
+    /// A TID to be used as a draft identifier.
     pub id: crate::syntax::Tid,
+    /// The time the draft was last updated.
     pub updated_at: crate::syntax::Datetime,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1863,6 +1875,7 @@ impl DraftDefsDraftView {
 #[serde(rename_all = "camelCase")]
 pub struct DraftDefsDraftWithId {
     pub draft: DraftDefsDraft,
+    /// A TID to be used as a draft identifier.
     pub id: crate::syntax::Tid,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

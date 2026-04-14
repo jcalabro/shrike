@@ -20,7 +20,7 @@ pub struct ConvoAddReactionOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoAddReaction — Adds an emoji reaction to a message. Requires authentication. It is idempotent, so multiple calls...
+/// ConvoAddReaction — Adds an emoji reaction to a message. Requires authentication. It is idempotent, so multiple calls from the same user with the same emoji result in a single reaction.
 pub async fn convo_add_reaction(
     client: &crate::xrpc::Client,
     input: &ConvoAddReactionInput,

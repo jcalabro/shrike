@@ -29,7 +29,7 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// Create a Directory using the production PLC endpoint.
+    /// Create a Directory using the production PLC endpoint (`https://plc.directory`).
     pub fn new() -> Self {
         Self::with_plc_url("https://plc.directory")
     }

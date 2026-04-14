@@ -586,7 +586,7 @@ impl Tree {
         Ok(nd)
     }
 
-    /// Traverse all key/value pairs in sorted order.
+    /// Collect all key/value pairs in sorted order into a Vec.
     pub fn entries(&mut self) -> Result<Vec<(String, Cid)>, MstError> {
         let mut result = Vec::new();
         if let Some(root) = &mut self.root {

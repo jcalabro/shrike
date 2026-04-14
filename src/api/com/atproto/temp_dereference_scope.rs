@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempDereferenceScopeParams {
+    /// The scope reference (starts with 'ref:')
     pub scope: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempDereferenceScopeOutput {
+    /// The full oauth permission scope
     pub scope: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

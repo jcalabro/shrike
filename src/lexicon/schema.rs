@@ -171,6 +171,25 @@ pub enum FieldSchema {
     },
 }
 
+impl FieldSchema {
+    /// Returns the description field if present on this schema variant.
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            FieldSchema::String { description, .. }
+            | FieldSchema::Integer { description, .. }
+            | FieldSchema::Boolean { description, .. }
+            | FieldSchema::Bytes { description, .. }
+            | FieldSchema::CidLink { description, .. }
+            | FieldSchema::Blob { description, .. }
+            | FieldSchema::Array { description, .. }
+            | FieldSchema::Ref { description, .. }
+            | FieldSchema::Union { description, .. }
+            | FieldSchema::Unknown { description, .. } => description.as_deref(),
+            FieldSchema::Object(_) => None,
+        }
+    }
+}
+
 /// A query (XRPC GET) definition.
 #[derive(Debug, Deserialize)]
 pub struct QueryDef {

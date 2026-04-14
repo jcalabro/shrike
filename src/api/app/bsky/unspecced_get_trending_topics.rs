@@ -5,6 +5,7 @@
 pub struct UnspeccedGetTrendingTopicsParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries). Used to boost followed accounts in ranking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }

@@ -47,11 +47,15 @@ pub enum Operation {
     },
 }
 
-/// A moderation label.
+/// A moderation label from a firehose labels event.
 #[derive(Debug)]
 pub struct Label {
+    /// DID of the labeler that issued this label.
     pub src: Did,
+    /// AT URI of the labeled content.
     pub uri: String,
+    /// Label value (e.g., "spam", "nudity").
     pub val: String,
+    /// If true, this negates (removes) a previously applied label.
     pub neg: bool,
 }

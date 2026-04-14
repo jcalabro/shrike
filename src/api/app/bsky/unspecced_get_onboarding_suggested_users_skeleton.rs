@@ -3,10 +3,12 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetOnboardingSuggestedUsersSkeletonParams {
+    /// Category of users to get suggestions for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -16,8 +18,10 @@ pub struct UnspeccedGetOnboardingSuggestedUsersSkeletonParams {
 pub struct UnspeccedGetOnboardingSuggestedUsersSkeletonOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dids: Vec<crate::syntax::Did>,
+    /// DEPRECATED: use recIdStr instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id: Option<String>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.
@@ -25,7 +29,7 @@ pub struct UnspeccedGetOnboardingSuggestedUsersSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetOnboardingSuggestedUsersSkeleton — Get a skeleton of suggested users for onboarding. Intended to be called and hydrated by app.bsky....
+/// UnspeccedGetOnboardingSuggestedUsersSkeleton — Get a skeleton of suggested users for onboarding. Intended to be called and hydrated by app.bsky.unspecced.getSuggestedOnboardingUsers
 pub async fn unspecced_get_onboarding_suggested_users_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetOnboardingSuggestedUsersSkeletonParams,

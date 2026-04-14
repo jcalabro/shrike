@@ -3,8 +3,10 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactImportContactsInput {
+    /// List of phone numbers in global E.164 format (e.g., '+12125550123'). Phone numbers that cannot be normalized into a valid phone number will be discarded. Should not repeat the 'phone' input used in `app.bsky.contact.verifyPhone`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contacts: Vec<String>,
+    /// JWT to authenticate the call. Use the JWT received as a response to the call to `app.bsky.contact.verifyPhone`.
     pub token: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
@@ -14,6 +16,7 @@ pub struct ContactImportContactsInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactImportContactsOutput {
+    /// The users that matched during import and their indexes on the input contacts, so the client can correlate with its local list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub matches_and_contact_indexes: Vec<crate::api::app::bsky::ContactDefsMatchAndContactIndex>,
     /// Extra fields not defined in the schema.
@@ -21,7 +24,7 @@ pub struct ContactImportContactsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactImportContacts — Import contacts for securely matching with other users. This follows the protocol explained in ht...
+/// ContactImportContacts — Import contacts for securely matching with other users. This follows the protocol explained in <https://docs.bsky.app/blog/contact-import-rfc.> Requires authentication.
 pub async fn contact_import_contacts(
     client: &crate::xrpc::Client,
     input: &ContactImportContactsInput,

@@ -1,3 +1,12 @@
+//! Core AT Protocol identifier types with validation-on-construction.
+//!
+//! All types validate their inputs when constructed and maintain the newtype
+//! pattern with a private inner field. All types implement TryFrom, FromStr,
+//! Display, Serialize, and Deserialize.
+//!
+//! Types: Did, Handle, Nsid, AtUri, Tid, TidClock, RecordKey, Datetime,
+//! Language, AtIdentifier.
+
 mod at_identifier;
 mod aturi;
 mod datetime;

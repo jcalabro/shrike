@@ -5,10 +5,11 @@
 pub struct SyncGetBlocksParams {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cids: Vec<String>,
+    /// The DID of the repo.
     pub did: String,
 }
 
-/// SyncGetBlocks — Get data blocks from a given repo, by CID. For example, intermediate MST nodes, or records. Does ...
+/// SyncGetBlocks — Get data blocks from a given repo, by CID. For example, intermediate MST nodes, or records. Does not require auth; implemented by PDS.
 pub async fn sync_get_blocks(
     client: &crate::xrpc::Client,
     params: &SyncGetBlocksParams,

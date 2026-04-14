@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerReserveSigningKeyInput {
+    /// The DID to reserve a key for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did: Option<crate::syntax::Did>,
     /// Extra fields not defined in the schema.
@@ -13,13 +14,14 @@ pub struct ServerReserveSigningKeyInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerReserveSigningKeyOutput {
+    /// The public key for the reserved signing key, in did:key serialization.
     pub signing_key: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ServerReserveSigningKey — Reserve a repo signing key, for use with account creation. Necessary so that a DID PLC update ope...
+/// ServerReserveSigningKey — Reserve a repo signing key, for use with account creation. Necessary so that a DID PLC update operation can be constructed during an account migraiton. Public and does not require auth; implemented by PDS. NOTE: this endpoint may change when full account migration is implemented.
 pub async fn server_reserve_signing_key(
     client: &crate::xrpc::Client,
     input: &ServerReserveSigningKeyInput,

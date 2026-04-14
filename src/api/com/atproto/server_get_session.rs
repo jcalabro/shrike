@@ -14,6 +14,7 @@ pub struct ServerGetSessionOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_confirmed: Option<bool>,
     pub handle: crate::syntax::Handle,
+    /// If active=false, this optional field indicates a possible reason for why the account is not active. If active=false and no status is supplied, then the host makes no claim for why the repository is no longer being hosted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Extra fields not defined in the schema.

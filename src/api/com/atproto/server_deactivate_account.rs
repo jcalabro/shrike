@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerDeactivateAccountInput {
+    /// A recommendation to server as to how long they should hold onto the deactivated account before deleting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_after: Option<crate::syntax::Datetime>,
     /// Extra fields not defined in the schema.
@@ -10,7 +11,7 @@ pub struct ServerDeactivateAccountInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ServerDeactivateAccount — Deactivates a currently active account. Stops serving of repo, and future writes to repo until re...
+/// ServerDeactivateAccount — Deactivates a currently active account. Stops serving of repo, and future writes to repo until reactivated. Used to finalize account migration with the old host after the account has been activated on the new host.
 pub async fn server_deactivate_account(
     client: &crate::xrpc::Client,
     input: &ServerDeactivateAccountInput,

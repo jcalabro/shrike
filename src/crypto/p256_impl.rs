@@ -20,6 +20,7 @@ const _: () = {
 // P-256 multicodec prefix: varint encoding of 0x1200
 const P256_MULTICODEC_PREFIX: [u8; 2] = [0x80, 0x24];
 
+/// NIST P-256 (secp256r1) signing key. Zeroizes private key material on drop.
 pub struct P256SigningKey {
     inner: InnerSigningKey,
     verifying: P256VerifyingKey,
@@ -33,6 +34,7 @@ impl std::fmt::Debug for P256SigningKey {
     }
 }
 
+/// NIST P-256 (secp256r1) public key for signature verification.
 #[derive(Debug)]
 pub struct P256VerifyingKey {
     inner: InnerVerifyingKey,

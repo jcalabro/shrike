@@ -16,6 +16,7 @@ pub struct ServerRefreshSessionOutput {
     pub email_confirmed: Option<bool>,
     pub handle: crate::syntax::Handle,
     pub refresh_jwt: String,
+    /// Hosting status of the account. If not specified, then assume 'active'.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Extra fields not defined in the schema.

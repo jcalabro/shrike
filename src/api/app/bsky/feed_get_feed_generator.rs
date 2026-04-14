@@ -3,13 +3,16 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetFeedGeneratorParams {
+    /// AT-URI of the feed generator record.
     pub feed: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetFeedGeneratorOutput {
+    /// Indicates whether the feed generator service has been online recently, or else seems to be inactive.
     pub is_online: bool,
+    /// Indicates whether the feed generator service is compatible with the record declaration.
     pub is_valid: bool,
     pub view: crate::api::app::bsky::FeedDefsGeneratorView,
     /// Extra fields not defined in the schema.

@@ -5,6 +5,7 @@
 #[serde(rename_all = "camelCase")]
 pub struct RepoApplyWritesCreate {
     pub collection: crate::syntax::Nsid,
+    /// NOTE: maxLength is redundant with record-key format. Keeping it temporarily to ensure backwards compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rkey: Option<crate::syntax::RecordKey>,
     pub value: serde_json::Value,
@@ -465,9 +466,12 @@ impl RepoApplyWritesDeleteResult {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoApplyWritesInput {
+    /// The handle or DID of the repo (aka, current account).
     pub repo: crate::syntax::AtIdentifier,
+    /// If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap_commit: Option<String>,
+    /// Can be set to 'false' to skip Lexicon schema validation of record data across all operations, 'true' to require it, or leave unset to validate only for known Lexicons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validate: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -817,7 +821,7 @@ impl RepoApplyWritesOutputResultsUnion {
     }
 }
 
-/// RepoApplyWrites — Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented...
+/// RepoApplyWrites — Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
 pub async fn repo_apply_writes(
     client: &crate::xrpc::Client,
     input: &RepoApplyWritesInput,

@@ -27,8 +27,11 @@ pub struct BackfillConfig {
 
 /// Statistics collected during a backfill run.
 pub struct BackfillStats {
+    /// Number of repositories successfully downloaded.
     pub repos_downloaded: u64,
+    /// Number of repositories that failed to download.
     pub repos_failed: u64,
+    /// Wall-clock time elapsed during the run.
     pub elapsed: Duration,
 }
 
@@ -45,6 +48,7 @@ pub struct BackfillEngine {
 }
 
 impl BackfillEngine {
+    /// Create a new backfill engine from the given configuration.
     pub fn new(config: BackfillConfig) -> Self {
         BackfillEngine {
             sync_host: config.sync_host,

@@ -23,6 +23,8 @@ fn encode_varint_buf(mut value: u64, buf: &mut [u8; 10]) -> usize {
     i
 }
 
+/// Streaming CAR v1 writer. Writes the header on construction, then
+/// accepts blocks one at a time via `write_block`.
 pub struct Writer<W: Write> {
     writer: W,
 }

@@ -5,8 +5,10 @@
 pub struct ActorSearchActorsTypeaheadParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Search query prefix; not a full query string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
+    /// DEPRECATED: use 'q' instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
 }
@@ -21,7 +23,7 @@ pub struct ActorSearchActorsTypeaheadOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ActorSearchActorsTypeahead — Find actor suggestions for a prefix search term. Expected use is for auto-completion during text ...
+/// ActorSearchActorsTypeahead — Find actor suggestions for a prefix search term. Expected use is for auto-completion during text field entry. Does not require auth.
 pub async fn actor_search_actors_typeahead(
     client: &crate::xrpc::Client,
     params: &ActorSearchActorsTypeaheadParams,

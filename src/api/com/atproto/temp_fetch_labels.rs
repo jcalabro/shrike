@@ -19,7 +19,7 @@ pub struct TempFetchLabelsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// TempFetchLabels — DEPRECATED: use queryLabels or subscribeLabels instead -- Fetch all labels from a labeler created...
+/// TempFetchLabels — DEPRECATED: use queryLabels or subscribeLabels instead -- Fetch all labels from a labeler created after a certain date.
 pub async fn temp_fetch_labels(
     client: &crate::xrpc::Client,
     params: &TempFetchLabelsParams,

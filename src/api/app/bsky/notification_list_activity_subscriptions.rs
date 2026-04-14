@@ -21,7 +21,7 @@ pub struct NotificationListActivitySubscriptionsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// NotificationListActivitySubscriptions — Enumerate all accounts to which the requesting account is subscribed to receive notifications for...
+/// NotificationListActivitySubscriptions — Enumerate all accounts to which the requesting account is subscribed to receive notifications for. Requires auth.
 pub async fn notification_list_activity_subscriptions(
     client: &crate::xrpc::Client,
     params: &NotificationListActivitySubscriptionsParams,

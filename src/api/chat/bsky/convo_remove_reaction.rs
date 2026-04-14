@@ -20,7 +20,7 @@ pub struct ConvoRemoveReactionOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoRemoveReaction — Removes an emoji reaction from a message. Requires authentication. It is idempotent, so multiple ...
+/// ConvoRemoveReaction — Removes an emoji reaction from a message. Requires authentication. It is idempotent, so multiple calls from the same user with the same emoji result in that reaction not being present, even if it already wasn't.
 pub async fn convo_remove_reaction(
     client: &crate::xrpc::Client,
     input: &ConvoRemoveReactionInput,

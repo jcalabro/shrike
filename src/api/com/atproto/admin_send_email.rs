@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminSendEmailInput {
+    /// Additional comment by the sender that won't be used in the email itself but helpful to provide more context for moderators/reviewers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     pub content: String,

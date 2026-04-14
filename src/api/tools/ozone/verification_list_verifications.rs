@@ -3,20 +3,28 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationListVerificationsParams {
+    /// Filter to verifications created after this timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_after: Option<String>,
+    /// Filter to verifications created before this timestamp
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_before: Option<String>,
+    /// Pagination cursor
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Filter to verifications that are revoked or not. By default, includes both.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_revoked: Option<bool>,
+    /// Filter to verifications from specific issuers
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issuers: Vec<String>,
+    /// Maximum number of results to return
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Sort direction for creation date
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_direction: Option<String>,
+    /// Filter to specific verified DIDs
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subjects: Vec<String>,
 }

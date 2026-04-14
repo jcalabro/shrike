@@ -3,7 +3,7 @@
 /// NSID for the ActorDeclaration record.
 pub const NSID_ACTOR_DECLARATION: &str = "chat.bsky.actor.declaration";
 
-/// ActorDeclaration record from chat.bsky.actor.declaration.
+/// ActorDeclaration — A declaration of a Bluesky chat account.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDeclaration {

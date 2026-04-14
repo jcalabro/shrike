@@ -11,6 +11,7 @@ pub struct SetQuerySetsParams {
     pub name_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_by: Option<String>,
+    /// Defaults to ascending order of name field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_direction: Option<String>,
 }

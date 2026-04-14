@@ -9,6 +9,7 @@ pub struct NotificationListNotificationsParams {
     pub limit: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<bool>,
+    /// Notification reasons to include in response.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,6 +52,7 @@ pub struct NotificationListNotificationsNotification {
     pub is_read: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<crate::api::com::atproto::LabelDefsLabel>,
+    /// The reason why this notification was delivered - e.g. your post was liked, or you received a new follower.
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason_subject: Option<crate::syntax::AtUri>,

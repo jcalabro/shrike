@@ -7,6 +7,7 @@ pub struct FeedGetListFeedParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Reference (AT-URI) to the list record.
     pub list: String,
 }
 
@@ -22,7 +23,7 @@ pub struct FeedGetListFeedOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedGetListFeed — Get a feed of recent posts from a list (posts and reposts from any actors on the list). Does not ...
+/// FeedGetListFeed — Get a feed of recent posts from a list (posts and reposts from any actors on the list). Does not require auth.
 pub async fn feed_get_list_feed(
     client: &crate::xrpc::Client,
     params: &FeedGetListFeedParams,

@@ -4,25 +4,34 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationDefsVerificationView {
+    /// Timestamp when the verification was created.
     pub created_at: crate::syntax::Datetime,
+    /// Display name of the subject the verification applies to at the moment of verifying, which might not be the same at the time of viewing. The verification is only valid if the current displayName matches the one at the time of verifying.
     pub display_name: String,
+    /// Handle of the subject the verification applies to at the moment of verifying, which might not be the same at the time of viewing. The verification is only valid if the current handle matches the one at the time of verifying.
     pub handle: crate::syntax::Handle,
+    /// The user who issued this verification.
     pub issuer: crate::syntax::Did,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuer_profile: Option<VerificationDefsVerificationViewIssuerProfileUnion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issuer_repo: Option<VerificationDefsVerificationViewIssuerRepoUnion>,
+    /// Describes the reason for revocation, also indicating that the verification is no longer valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoke_reason: Option<String>,
+    /// Timestamp when the verification was revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<crate::syntax::Datetime>,
+    /// The user who revoked this verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_by: Option<crate::syntax::Did>,
+    /// The subject of the verification.
     pub subject: crate::syntax::Did,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_profile: Option<VerificationDefsVerificationViewSubjectProfileUnion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_repo: Option<VerificationDefsVerificationViewSubjectRepoUnion>,
+    /// The AT-URI of the verification record.
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetPostsParams {
+    /// List of post AT-URIs to return hydrated views for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub uris: Vec<String>,
 }
@@ -17,7 +18,7 @@ pub struct FeedGetPostsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedGetPosts — Gets post views for a specified list of posts (by AT-URI). This is sometimes referred to as 'hydr...
+/// FeedGetPosts — Gets post views for a specified list of posts (by AT-URI). This is sometimes referred to as 'hydrating' a 'feed skeleton'.
 pub async fn feed_get_posts(
     client: &crate::xrpc::Client,
     params: &FeedGetPostsParams,

@@ -3,14 +3,18 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LexiconResolveLexiconParams {
+    /// The lexicon NSID to resolve.
     pub nsid: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LexiconResolveLexiconOutput {
+    /// The CID of the lexicon schema record.
     pub cid: String,
+    /// The resolved lexicon schema record.
     pub schema: crate::api::com::atproto::LexiconSchema,
+    /// The AT-URI of the lexicon schema record.
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

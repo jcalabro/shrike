@@ -93,7 +93,7 @@ impl ActorDefsAdultContentPref {
     }
 }
 
-/// ActorDefsBskyAppProgressGuide — If set, an active progress guide. Once completed, can be set to undefined. Should have unspecced ...
+/// ActorDefsBskyAppProgressGuide — If set, an active progress guide. Once completed, can be set to undefined. Should have unspecced fields tracking progress.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsBskyAppProgressGuide {
@@ -192,8 +192,10 @@ impl ActorDefsBskyAppProgressGuide {
 pub struct ActorDefsBskyAppStatePref {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_progress_guide: Option<ActorDefsBskyAppProgressGuide>,
+    /// Storage for NUXs the user has encountered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nuxs: Vec<ActorDefsNux>,
+    /// An array of tokens which identify nudges (modals, popups, tours, highlight dots) that should be shown to the user.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued_nudges: Vec<String>,
     /// Extra fields not defined in the schema (JSON).
@@ -363,6 +365,7 @@ impl ActorDefsBskyAppStatePref {
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsContentLabelPref {
     pub label: String,
+    /// Which labeler does this preference apply to? If undefined, applies globally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labeler_did: Option<crate::syntax::Did>,
     pub visibility: String,
@@ -500,14 +503,17 @@ impl ActorDefsContentLabelPref {
     }
 }
 
-/// ActorDefsDeclaredAgePref — Read-only preference containing value(s) inferred from the user's declared birthdate. Absence of ...
+/// ActorDefsDeclaredAgePref — Read-only preference containing value(s) inferred from the user's declared birthdate. Absence of this preference object in the response indicates that the user has not made a declaration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsDeclaredAgePref {
+    /// Indicates if the user has declared that they are over 13 years of age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_over_age13: Option<bool>,
+    /// Indicates if the user has declared that they are over 16 years of age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_over_age16: Option<bool>,
+    /// Indicates if the user has declared that they are over 18 years of age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_over_age18: Option<bool>,
     /// Extra fields not defined in the schema (JSON).
@@ -659,15 +665,21 @@ impl ActorDefsDeclaredAgePref {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsFeedViewPref {
+    /// The URI of the feed, or an identifier which describes the feed.
     pub feed: String,
+    /// Hide quote posts in the feed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_quote_posts: Option<bool>,
+    /// Hide replies in the feed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_replies: Option<bool>,
+    /// Hide replies in the feed if they do not have this number of likes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_replies_by_like_count: Option<i64>,
+    /// Hide replies in the feed if they are not by followed users.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_replies_by_unfollowed: Option<bool>,
+    /// Hide reposts in the feed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_reposts: Option<bool>,
     /// Extra fields not defined in the schema (JSON).
@@ -893,6 +905,7 @@ impl ActorDefsFeedViewPref {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsHiddenPostsPref {
+    /// A list of URIs of posts the account owner has hidden.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<crate::syntax::AtUri>,
     /// Extra fields not defined in the schema (JSON).
@@ -1001,6 +1014,7 @@ impl ActorDefsHiddenPostsPref {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsInterestsPref {
+    /// A list of tags which describe the account owner's interests gathered during onboarding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Extra fields not defined in the schema (JSON).
@@ -1434,8 +1448,10 @@ impl ActorDefsLabelersPref {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsLiveEventPreferences {
+    /// A list of feed IDs that the user has hidden from live events.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden_feed_ids: Vec<String>,
+    /// Whether to hide all feeds from live events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_all_feeds: Option<bool>,
     /// Extra fields not defined in the schema (JSON).
@@ -1574,14 +1590,18 @@ impl ActorDefsLiveEventPreferences {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsMutedWord {
+    /// Groups of users to apply the muted word to. If undefined, applies to all users.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_target: Option<String>,
+    /// The date and time at which the muted word will expire and no longer be applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<crate::syntax::Datetime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// The intended targets of the muted word.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<ActorDefsMutedWordTarget>,
+    /// The muted word itself.
     pub value: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1787,6 +1807,7 @@ pub type ActorDefsMutedWordTarget = String;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsMutedWordsPref {
+    /// A list of words the account owner has muted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ActorDefsMutedWord>,
     /// Extra fields not defined in the schema (JSON).
@@ -1890,8 +1911,10 @@ impl ActorDefsMutedWordsPref {
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsNux {
     pub completed: bool,
+    /// Arbitrary data for the NUX. The structure is defined by the NUX itself. Limited to 300 characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// The date and time at which the NUX will expire and should be considered completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<crate::syntax::Datetime>,
     pub id: String,
@@ -2058,6 +2081,7 @@ impl ActorDefsNux {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsPersonalDetailsPref {
+    /// The birth date of account owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub birth_date: Option<crate::syntax::Datetime>,
     /// Extra fields not defined in the schema (JSON).
@@ -2158,13 +2182,15 @@ impl ActorDefsPersonalDetailsPref {
     }
 }
 
-/// ActorDefsPostInteractionSettingsPref — Default post interaction settings for the account. These values should be applied as default valu...
+/// ActorDefsPostInteractionSettingsPref — Default post interaction settings for the account. These values should be applied as default values when creating new posts. These refs should mirror the threadgate and postgate records exactly.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsPostInteractionSettingsPref {
+    /// Matches postgate record. List of rules defining who can embed this users posts. If value is an empty array or is undefined, no particular rules apply and anyone can embed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub postgate_embedding_rules:
         Vec<ActorDefsPostInteractionSettingsPrefPostgateEmbeddingRulesUnion>,
+    /// Matches threadgate record. List of rules defining who can reply to this users posts. If value is an empty array, no one can reply. If value is undefined, anyone can reply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threadgate_allow_rules: Vec<ActorDefsPostInteractionSettingsPrefThreadgateAllowRulesUnion>,
     /// Extra fields not defined in the schema (JSON).
@@ -3771,6 +3797,7 @@ pub struct ActorDefsProfileView {
     pub avatar: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
+    /// Debug information for internal development
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -4196,6 +4223,7 @@ pub struct ActorDefsProfileViewBasic {
     pub avatar: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
+    /// Debug information for internal development
     pub debug: serde_json::Value,
     pub did: crate::syntax::Did,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4566,6 +4594,7 @@ pub struct ActorDefsProfileViewDetailed {
     pub banner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
+    /// Debug information for internal development
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -5624,17 +5653,22 @@ impl ActorDefsSavedFeedsPrefV2 {
 pub struct ActorDefsStatusView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
+    /// An optional embed associated with the status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<ActorDefsStatusViewEmbedUnion>,
+    /// The date when this status will expire. The application might choose to no longer return the status after expiration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<crate::syntax::Datetime>,
+    /// True if the status is not expired, false if it is expired. Only present if expiration was set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_active: Option<bool>,
+    /// True if the user's go-live access has been disabled by a moderator, false otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_disabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<crate::api::com::atproto::LabelDefsLabel>,
     pub record: serde_json::Value,
+    /// The status for the account.
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<crate::syntax::AtUri>,
@@ -5646,7 +5680,7 @@ pub struct ActorDefsStatusView {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
-/// ActorDefsStatusViewEmbedUnion is a union type.
+/// An optional embed associated with the status.
 #[derive(Debug, Clone)]
 pub enum ActorDefsStatusViewEmbedUnion {
     EmbedExternalView(Box<crate::api::app::bsky::EmbedExternalView>),
@@ -6053,6 +6087,7 @@ impl ActorDefsStatusView {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsThreadViewPref {
+    /// Sorting mode for threads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
     /// Extra fields not defined in the schema (JSON).
@@ -6154,6 +6189,7 @@ impl ActorDefsThreadViewPref {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsVerificationPrefs {
+    /// Hide the blue check badges for verified accounts and trusted verifiers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hide_badges: Option<bool>,
     /// Extra fields not defined in the schema (JSON).
@@ -6255,9 +6291,12 @@ impl ActorDefsVerificationPrefs {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsVerificationState {
+    /// The user's status as a trusted verifier.
     pub trusted_verifier_status: String,
+    /// All verifications issued by trusted verifiers on behalf of this user. Verifications by untrusted verifiers are not included.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verifications: Vec<ActorDefsVerificationView>,
+    /// The user's status as a verified account.
     pub verified_status: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -6402,9 +6441,13 @@ impl ActorDefsVerificationState {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsVerificationView {
+    /// Timestamp when the verification was created.
     pub created_at: crate::syntax::Datetime,
+    /// True if the verification passes validation, otherwise false.
     pub is_valid: bool,
+    /// The user who issued this verification.
     pub issuer: crate::syntax::Did,
+    /// The AT-URI of the verification record.
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -6557,10 +6600,11 @@ impl ActorDefsVerificationView {
     }
 }
 
-/// ActorDefsViewerState — Metadata about the requesting account's relationship with the subject account. Only has meaningfu...
+/// ActorDefsViewerState — Metadata about the requesting account's relationship with the subject account. Only has meaningful content for authed requests.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsViewerState {
+    /// This property is present only in selected cases, as an optimization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_subscription: Option<crate::api::app::bsky::NotificationDefsActivitySubscription>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -6573,6 +6617,7 @@ pub struct ActorDefsViewerState {
     pub followed_by: Option<crate::syntax::AtUri>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub following: Option<crate::syntax::AtUri>,
+    /// This property is present only in selected cases, as an optimization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub known_followers: Option<ActorDefsKnownFollowers>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

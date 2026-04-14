@@ -4,7 +4,9 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationGrantVerificationsGrantError {
+    /// Error message describing the reason for failure.
     pub error: String,
+    /// The did of the subject being verified
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -118,6 +120,7 @@ impl VerificationGrantVerificationsGrantError {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationGrantVerificationsInput {
+    /// Array of verification requests to process
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verifications: Vec<VerificationGrantVerificationsVerificationInput>,
     /// Extra fields not defined in the schema.
@@ -137,7 +140,7 @@ pub struct VerificationGrantVerificationsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// VerificationGrantVerifications — Grant verifications to multiple subjects. Allows batch processing of up to 100 verifications at o...
+/// VerificationGrantVerifications — Grant verifications to multiple subjects. Allows batch processing of up to 100 verifications at once.
 pub async fn verification_grant_verifications(
     client: &crate::xrpc::Client,
     input: &VerificationGrantVerificationsInput,
@@ -151,10 +154,14 @@ pub async fn verification_grant_verifications(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerificationGrantVerificationsVerificationInput {
+    /// Timestamp for verification record. Defaults to current time when not specified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
+    /// Display name of the subject the verification applies to at the moment of verifying.
     pub display_name: String,
+    /// Handle of the subject the verification applies to at the moment of verifying.
     pub handle: crate::syntax::Handle,
+    /// The did of the subject being verified
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

@@ -62,7 +62,10 @@ pub fn validate_record(
     finalize(errors)
 }
 
-/// Validate a single `value` against `field` schema.
+/// Validate a single JSON value against a field schema.
+///
+/// Useful for validating individual fields outside the context of a full
+/// record (e.g., testing a string against format or length constraints).
 pub fn validate_value(
     catalog: &Catalog,
     context_nsid: &str,

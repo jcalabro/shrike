@@ -10,7 +10,7 @@ pub struct BookmarkCreateBookmarkInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// BookmarkCreateBookmark — Creates a private bookmark for the specified record. Currently, only `app.bsky.feed.post` records...
+/// BookmarkCreateBookmark — Creates a private bookmark for the specified record. Currently, only `app.bsky.feed.post` records are supported. Requires authentication.
 pub async fn bookmark_create_bookmark(
     client: &crate::xrpc::Client,
     input: &BookmarkCreateBookmarkInput,

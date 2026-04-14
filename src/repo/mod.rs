@@ -1,3 +1,33 @@
+//! In-memory AT Protocol repository with signed commits.
+//!
+//! A repository stores records organized by collection (NSID) and record key.
+//! Records are stored in a Merkle Search Tree that provides deterministic
+//! ordering and content addressing. Each mutation (create, update, delete)
+//! updates the MST but does not persist changes until commit is called.
+//!
+//! Commits are signed with a private key and include the MST root CID, a
+//! timestamp-based revision ID (TID), and an optional reference to the
+//! previous commit. Commits form a linear history chain.
+//!
+//! ```ignore
+//! use shrike::repo::Repo;
+//! use shrike::syntax::{Did, Nsid, RecordKey, TidClock};
+//! use shrike::crypto::P256SigningKey;
+//!
+//! let did = Did::try_from("did:plc:example")?;
+//! let clock = TidClock::new(0)?;
+//! let mut repo = Repo::new(did, clock);
+//!
+//! let collection = Nsid::try_from("app.bsky.feed.post")?;
+//! let rkey = RecordKey::try_from("abc123")?;
+//! let record = b"{\"text\":\"hello\"}"; // DRISL bytes
+//!
+//! repo.create(&collection, &rkey, record)?;
+//!
+//! let key = P256SigningKey::generate();
+//! let commit = repo.commit(&key)?;
+//! ```
+
 pub mod commit;
 #[allow(clippy::module_inception)]
 pub mod repo;

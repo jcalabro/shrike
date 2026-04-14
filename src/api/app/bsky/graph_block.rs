@@ -3,11 +3,12 @@
 /// NSID for the GraphBlock record.
 pub const NSID_GRAPH_BLOCK: &str = "app.bsky.graph.block";
 
-/// GraphBlock record from app.bsky.graph.block.
+/// GraphBlock — Record declaring a 'block' relationship against another account. NOTE: blocks are public in Bluesky; see blog posts for details.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphBlock {
     pub created_at: crate::syntax::Datetime,
+    /// DID of the account to be blocked.
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

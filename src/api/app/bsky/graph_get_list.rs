@@ -7,6 +7,7 @@ pub struct GraphGetListParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Reference (AT-URI) of the list record to hydrate.
     pub list: String,
 }
 

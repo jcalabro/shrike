@@ -39,7 +39,7 @@ impl AuthenticatedClient {
         &self.host
     }
 
-    /// XRPC query (GET request).
+    /// Execute an XRPC query (GET) with DPoP authentication.
     pub async fn query<P: Serialize, O: DeserializeOwned>(
         &self,
         nsid: &str,
@@ -141,7 +141,7 @@ impl AuthenticatedClient {
             .map_err(|e| OAuthError::Json(e.to_string()))
     }
 
-    /// XRPC procedure (POST request with JSON body).
+    /// Execute an XRPC procedure (POST with JSON body) with DPoP authentication.
     pub async fn procedure<I: Serialize, O: DeserializeOwned>(
         &self,
         nsid: &str,

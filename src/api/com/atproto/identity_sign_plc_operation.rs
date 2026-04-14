@@ -8,6 +8,7 @@ pub struct IdentitySignPlcOperationInput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rotation_keys: Vec<String>,
     pub services: serde_json::Value,
+    /// A token received through com.atproto.identity.requestPlcOperationSignature
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     pub verification_methods: serde_json::Value,
@@ -19,6 +20,7 @@ pub struct IdentitySignPlcOperationInput {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentitySignPlcOperationOutput {
+    /// A signed DID PLC operation.
     pub operation: serde_json::Value,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

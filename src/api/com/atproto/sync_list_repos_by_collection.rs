@@ -6,6 +6,7 @@ pub struct SyncListReposByCollectionParams {
     pub collection: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Maximum size of response set. Recommend setting a large maximum (1000+) when enumerating large DID lists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }

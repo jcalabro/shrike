@@ -3,16 +3,21 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCreateAccountInput {
+    /// Pre-existing atproto DID, being imported to a new account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did: Option<crate::syntax::Did>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    /// Requested handle for the account.
     pub handle: crate::syntax::Handle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invite_code: Option<String>,
+    /// Initial account password. May need to meet instance-specific password strength requirements.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    /// A signed DID PLC operation to be submitted as part of importing an existing account to this instance. NOTE: this optional field may be updated when full account migration is implemented.
     pub plc_op: serde_json::Value,
+    /// DID PLC rotation key (aka, recovery key) to be included in PLC creation operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,7 +33,9 @@ pub struct ServerCreateAccountInput {
 #[serde(rename_all = "camelCase")]
 pub struct ServerCreateAccountOutput {
     pub access_jwt: String,
+    /// The DID of the new account.
     pub did: crate::syntax::Did,
+    /// Complete DID document.
     pub did_doc: serde_json::Value,
     pub handle: crate::syntax::Handle,
     pub refresh_jwt: String,

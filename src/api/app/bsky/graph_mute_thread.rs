@@ -9,7 +9,7 @@ pub struct GraphMuteThreadInput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphMuteThread — Mutes a thread preventing notifications from the thread and any of its children. Mutes are privat...
+/// GraphMuteThread — Mutes a thread preventing notifications from the thread and any of its children. Mutes are private in Bluesky. Requires auth.
 pub async fn graph_mute_thread(
     client: &crate::xrpc::Client,
     input: &GraphMuteThreadInput,

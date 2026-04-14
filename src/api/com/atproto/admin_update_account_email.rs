@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdminUpdateAccountEmailInput {
+    /// The handle or DID of the repo.
     pub account: crate::syntax::AtIdentifier,
     pub email: String,
     /// Extra fields not defined in the schema.

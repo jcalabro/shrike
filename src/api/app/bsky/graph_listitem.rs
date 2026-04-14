@@ -3,12 +3,14 @@
 /// NSID for the GraphListitem record.
 pub const NSID_GRAPH_LISTITEM: &str = "app.bsky.graph.listitem";
 
-/// GraphListitem record from app.bsky.graph.listitem.
+/// GraphListitem — Record representing an account's inclusion on a specific list. The AppView will ignore duplicate listitem records.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphListitem {
     pub created_at: crate::syntax::Datetime,
+    /// Reference (AT-URI) to the list record (app.bsky.graph.list).
     pub list: crate::syntax::AtUri,
+    /// The account which is included on the list.
     pub subject: crate::syntax::Did,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

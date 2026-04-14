@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContactStartPhoneVerificationInput {
+    /// The phone number to receive the code via SMS.
     pub phone: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
@@ -17,7 +18,7 @@ pub struct ContactStartPhoneVerificationOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ContactStartPhoneVerification — Starts a phone verification flow. The phone passed will receive a code via SMS that should be pas...
+/// ContactStartPhoneVerification — Starts a phone verification flow. The phone passed will receive a code via SMS that should be passed to `app.bsky.contact.verifyPhone`. Requires authentication.
 pub async fn contact_start_phone_verification(
     client: &crate::xrpc::Client,
     input: &ContactStartPhoneVerificationInput,

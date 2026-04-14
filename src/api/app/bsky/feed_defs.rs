@@ -255,28 +255,29 @@ impl FeedDefsBlockedPost {
     }
 }
 
-/// Token constant.
+/// User clicked through to the author of the feed item
 pub const FEED_DEFS_CLICKTHROUGH_AUTHOR: &str = "app.bsky.feed.defs#clickthroughAuthor";
 
-/// Token constant.
+/// User clicked through to the embedded content of the feed item
 pub const FEED_DEFS_CLICKTHROUGH_EMBED: &str = "app.bsky.feed.defs#clickthroughEmbed";
 
-/// Token constant.
+/// User clicked through to the feed item
 pub const FEED_DEFS_CLICKTHROUGH_ITEM: &str = "app.bsky.feed.defs#clickthroughItem";
 
-/// Token constant.
+/// User clicked through to the reposter of the feed item
 pub const FEED_DEFS_CLICKTHROUGH_REPOSTER: &str = "app.bsky.feed.defs#clickthroughReposter";
 
-/// Token constant.
+/// Declares the feed generator returns any types of posts.
 pub const FEED_DEFS_CONTENT_MODE_UNSPECIFIED: &str = "app.bsky.feed.defs#contentModeUnspecified";
 
-/// Token constant.
+/// Declares the feed generator returns posts containing app.bsky.embed.video embeds.
 pub const FEED_DEFS_CONTENT_MODE_VIDEO: &str = "app.bsky.feed.defs#contentModeVideo";
 
 /// FeedDefsFeedViewPost object from app.bsky.feed.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedDefsFeedViewPost {
+    /// Context provided by feed generator that may be passed back alongside interactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feed_context: Option<String>,
     pub post: FeedDefsPostView,
@@ -284,6 +285,7 @@ pub struct FeedDefsFeedViewPost {
     pub reason: Option<FeedDefsFeedViewPostReasonUnion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply: Option<FeedDefsReplyRef>,
+    /// Unique identifier per request that may be passed back alongside interactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub req_id: Option<String>,
     /// Extra fields not defined in the schema (JSON).
@@ -1174,10 +1176,12 @@ impl FeedDefsGeneratorViewerState {
 pub struct FeedDefsInteraction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<String>,
+    /// Context on a feed item that was originally supplied by the feed generator on getFeedSkeleton.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feed_context: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<crate::syntax::AtUri>,
+    /// Unique identifier per request that may be passed back alongside interactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub req_id: Option<String>,
     /// Extra fields not defined in the schema (JSON).
@@ -1353,22 +1357,22 @@ impl FeedDefsInteraction {
     }
 }
 
-/// Token constant.
+/// User liked the feed item
 pub const FEED_DEFS_INTERACTION_LIKE: &str = "app.bsky.feed.defs#interactionLike";
 
-/// Token constant.
+/// User quoted the feed item
 pub const FEED_DEFS_INTERACTION_QUOTE: &str = "app.bsky.feed.defs#interactionQuote";
 
-/// Token constant.
+/// User replied to the feed item
 pub const FEED_DEFS_INTERACTION_REPLY: &str = "app.bsky.feed.defs#interactionReply";
 
-/// Token constant.
+/// User reposted the feed item
 pub const FEED_DEFS_INTERACTION_REPOST: &str = "app.bsky.feed.defs#interactionRepost";
 
-/// Token constant.
+/// Feed item was seen by user
 pub const FEED_DEFS_INTERACTION_SEEN: &str = "app.bsky.feed.defs#interactionSeen";
 
-/// Token constant.
+/// User shared the feed item
 pub const FEED_DEFS_INTERACTION_SHARE: &str = "app.bsky.feed.defs#interactionShare";
 
 /// FeedDefsNotFoundPost object from app.bsky.feed.defs.
@@ -1494,6 +1498,7 @@ pub struct FeedDefsPostView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bookmark_count: Option<i64>,
     pub cid: String,
+    /// Debug information for internal development
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<FeedDefsPostViewEmbedUnion>,
@@ -2404,6 +2409,7 @@ impl FeedDefsReasonRepost {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedDefsReplyRef {
+    /// When parent is a reply to another post, this is the author of that post.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grandparent_author: Option<crate::api::app::bsky::ActorDefsProfileViewBasic>,
     pub parent: FeedDefsReplyRefParentUnion,
@@ -2906,16 +2912,17 @@ impl FeedDefsReplyRef {
     }
 }
 
-/// Token constant.
+/// Request that less content like the given feed item be shown in the feed
 pub const FEED_DEFS_REQUEST_LESS: &str = "app.bsky.feed.defs#requestLess";
 
-/// Token constant.
+/// Request that more content like the given feed item be shown in the feed
 pub const FEED_DEFS_REQUEST_MORE: &str = "app.bsky.feed.defs#requestMore";
 
 /// FeedDefsSkeletonFeedPost object from app.bsky.feed.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedDefsSkeletonFeedPost {
+    /// Context that will be passed through to client and may be passed to feed generator back alongside interactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feed_context: Option<String>,
     pub post: crate::syntax::AtUri,
@@ -4234,7 +4241,7 @@ impl FeedDefsThreadgateView {
     }
 }
 
-/// FeedDefsViewerState — Metadata about the requesting account's relationship with the subject content. Only has meaningfu...
+/// FeedDefsViewerState — Metadata about the requesting account's relationship with the subject content. Only has meaningful content for authed requests.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedDefsViewerState {

@@ -1,17 +1,19 @@
 /// 64-byte compact ECDSA signature [R || S], always low-S normalized.
 ///
-/// Signatures should be validated using [`VerifyingKey::verify`], not by
+/// Signatures should be validated using the `VerifyingKey::verify` method, not by
 /// comparing bytes. Byte-level comparison is deliberately not provided
 /// to prevent timing side-channel attacks.
 #[derive(Clone, Copy)]
 pub struct Signature(pub(crate) [u8; 64]);
 
 impl Signature {
+    /// Construct a signature from raw 64-byte [R || S] representation.
     #[inline]
     pub fn from_bytes(bytes: [u8; 64]) -> Self {
         Signature(bytes)
     }
 
+    /// Return the raw 64-byte [R || S] representation.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; 64] {
         &self.0

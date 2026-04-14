@@ -3,13 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorGetProfileParams {
+    /// Handle or DID of account to fetch profile of.
     pub actor: String,
 }
 
 /// ActorGetProfileOutput is an alias.
 pub type ActorGetProfileOutput = crate::api::app::bsky::ActorDefsProfileViewDetailed;
 
-/// ActorGetProfile — Get detailed profile view of an actor. Does not require auth, but contains relevant metadata with...
+/// ActorGetProfile — Get detailed profile view of an actor. Does not require auth, but contains relevant metadata with auth.
 pub async fn actor_get_profile(
     client: &crate::xrpc::Client,
     params: &ActorGetProfileParams,

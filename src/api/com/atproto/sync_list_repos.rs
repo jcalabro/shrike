@@ -21,7 +21,7 @@ pub struct SyncListReposOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SyncListRepos — Enumerates all the DID, rev, and commit CID for all repos hosted by this service. Does not requir...
+/// SyncListRepos — Enumerates all the DID, rev, and commit CID for all repos hosted by this service. Does not require auth; implemented by PDS and Relay.
 pub async fn sync_list_repos(
     client: &crate::xrpc::Client,
     params: &SyncListReposParams,
@@ -36,8 +36,10 @@ pub struct SyncListReposRepo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
     pub did: crate::syntax::Did,
+    /// Current repo commit CID
     pub head: String,
     pub rev: crate::syntax::Tid,
+    /// If active=false, this optional field indicates a possible reason for why the account is not active. If active=false and no status is supplied, then the host makes no claim for why the repository is no longer being hosted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     /// Extra fields not defined in the schema (JSON).

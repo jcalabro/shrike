@@ -3,10 +3,12 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetSuggestedUsersForExploreSkeletonParams {
+    /// Category of users to get suggestions for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -16,6 +18,7 @@ pub struct UnspeccedGetSuggestedUsersForExploreSkeletonParams {
 pub struct UnspeccedGetSuggestedUsersForExploreSkeletonOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dids: Vec<crate::syntax::Did>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.
@@ -23,7 +26,7 @@ pub struct UnspeccedGetSuggestedUsersForExploreSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// UnspeccedGetSuggestedUsersForExploreSkeleton — Get a skeleton of suggested users for the Explore page. Intended to be called and hydrated by app...
+/// UnspeccedGetSuggestedUsersForExploreSkeleton — Get a skeleton of suggested users for the Explore page. Intended to be called and hydrated by app.bsky.unspecced.getSuggestedUsersForExplore
 pub async fn unspecced_get_suggested_users_for_explore_skeleton(
     client: &crate::xrpc::Client,
     params: &UnspeccedGetSuggestedUsersForExploreSkeletonParams,

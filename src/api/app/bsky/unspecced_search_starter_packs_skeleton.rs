@@ -3,11 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedSearchStarterPacksSkeletonParams {
+    /// Optional pagination mechanism; may not necessarily allow scrolling through entire result set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Search query string; syntax, phrase, boolean, and faceting is unspecified, but Lucene query syntax is recommended.
     pub q: String,
+    /// DID of the account making the request (not included for public/unauthenticated queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewer: Option<String>,
 }
@@ -17,6 +20,7 @@ pub struct UnspeccedSearchStarterPacksSkeletonParams {
 pub struct UnspeccedSearchStarterPacksSkeletonOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Count of search hits. Optional, may be rounded/truncated, and may not be possible to paginate through all hits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hits_total: Option<i64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

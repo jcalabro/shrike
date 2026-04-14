@@ -9,7 +9,7 @@ pub struct RepoUploadBlobOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// RepoUploadBlob — Upload a new blob, to be referenced from a repository record. The blob will be deleted if it is n...
+/// RepoUploadBlob — Upload a new blob, to be referenced from a repository record. The blob will be deleted if it is not referenced within a time window (eg, minutes). Blob restrictions (mimetype, size, etc) are enforced when the reference is created. Requires auth, implemented by PDS.
 pub async fn repo_upload_blob(
     client: &crate::xrpc::Client,
     body: Vec<u8>,

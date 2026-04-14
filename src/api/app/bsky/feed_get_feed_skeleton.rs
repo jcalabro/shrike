@@ -5,6 +5,7 @@
 pub struct FeedGetFeedSkeletonParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Reference to feed generator record describing the specific feed being requested.
     pub feed: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
@@ -17,6 +18,7 @@ pub struct FeedGetFeedSkeletonOutput {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub feed: Vec<crate::api::app::bsky::FeedDefsSkeletonFeedPost>,
+    /// Unique identifier per request that may be passed back alongside interactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub req_id: Option<String>,
     /// Extra fields not defined in the schema.
@@ -24,7 +26,7 @@ pub struct FeedGetFeedSkeletonOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// FeedGetFeedSkeleton — Get a skeleton of a feed provided by a feed generator. Auth is optional, depending on provider re...
+/// FeedGetFeedSkeleton — Get a skeleton of a feed provided by a feed generator. Auth is optional, depending on provider requirements, and provides the DID of the requester. Implemented by Feed Generator Service.
 pub async fn feed_get_feed_skeleton(
     client: &crate::xrpc::Client,
     params: &FeedGetFeedSkeletonParams,

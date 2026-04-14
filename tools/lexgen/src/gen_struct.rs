@@ -25,6 +25,8 @@ pub fn gen_object(ctx: &GenContext<'_>, def_name: &str, obj: &ObjectDef) -> Resu
 
     let comment = if let Some(desc) = &obj.description {
         format!("/// {} — {}\n", type_name, single_line(desc))
+    } else if let Some(desc) = &ctx.schema.description {
+        format!("/// {} — {}\n", type_name, single_line(desc))
     } else {
         format!("/// {} object from {}.\n", type_name, ctx.schema.id)
     };
@@ -50,6 +52,7 @@ pub fn gen_record(
     ctx: &GenContext<'_>,
     def_name: &str,
     record_obj: &ObjectDef,
+    record_description: Option<&str>,
 ) -> Result<String, String> {
     let type_name = util::type_name(&ctx.schema.id, def_name);
     let nsid_const = util::nsid_const_name(&ctx.schema.id);
@@ -59,7 +62,11 @@ pub fn gen_record(
     writeln!(out, "pub const {nsid_const}: &str = {:?};", ctx.schema.id).ok();
     out.push('\n');
 
-    writeln!(out, "/// {} record from {}.", type_name, ctx.schema.id).ok();
+    if let Some(desc) = record_description {
+        writeln!(out, "/// {} — {}", type_name, single_line(desc)).ok();
+    } else {
+        writeln!(out, "/// {} record from {}.", type_name, ctx.schema.id).ok();
+    }
 
     let (struct_code, extras) = gen_struct_body(ctx, &type_name, record_obj, true)?;
     out.push_str(&struct_code);
@@ -77,13 +84,20 @@ pub fn gen_record(
 }
 
 /// Generate a type alias for a top-level `string` def.
-pub fn gen_string_def(nsid: &str, def_name: &str) -> String {
+pub fn gen_string_def(nsid: &str, def_name: &str, description: Option<&str>) -> String {
     let type_name = util::type_name(nsid, def_name);
-    format!("/// {type_name} is a string type from {nsid}.\npub type {type_name} = String;\n")
+    if let Some(desc) = description {
+        format!(
+            "/// {}\npub type {type_name} = String;\n",
+            single_line(desc)
+        )
+    } else {
+        format!("/// {type_name} is a string type from {nsid}.\npub type {type_name} = String;\n")
+    }
 }
 
 /// Generate a constant for a `token` def.
-pub fn gen_token(nsid: &str, def_name: &str) -> String {
+pub fn gen_token(nsid: &str, def_name: &str, description: Option<&str>) -> String {
     let type_name = util::type_name(nsid, def_name);
     let const_name = to_upper_snake(&type_name);
     let full_ref = if def_name == "main" {
@@ -91,7 +105,14 @@ pub fn gen_token(nsid: &str, def_name: &str) -> String {
     } else {
         format!("{nsid}#{def_name}")
     };
-    format!("/// Token constant.\npub const {const_name}: &str = {full_ref:?};\n")
+    if let Some(desc) = description {
+        format!(
+            "/// {}\npub const {const_name}: &str = {full_ref:?};\n",
+            single_line(desc)
+        )
+    } else {
+        format!("/// Token constant.\npub const {const_name}: &str = {full_ref:?};\n")
+    }
 }
 
 /// Convert a PascalCase name to UPPER_SNAKE_CASE.
@@ -152,6 +173,11 @@ fn gen_struct_body(
         // some field names like "$type" or names that don't follow camelCase
         // conventions need explicit rename.
         let needs_rename = needs_explicit_rename(json_name_str, &rust_field);
+
+        // Emit field-level doc comment from lexicon description (before serde attrs).
+        if let Some(desc) = field_schema.description() {
+            writeln!(out, "    /// {}", single_line(desc)).ok();
+        }
 
         if is_vec {
             write!(
@@ -276,9 +302,15 @@ pub fn resolve_field_type(
             extras.extend(inner_extras);
             format!("Vec<{inner}>")
         }
-        FieldSchema::Union { refs, closed, .. } => {
+        FieldSchema::Union {
+            refs,
+            closed,
+            description,
+            ..
+        } => {
             let union_name = format!("{parent_type}{}Union", util::capitalize(field_name));
-            let union_code = gen_union::gen_union(ctx, &union_name, refs, *closed)?;
+            let union_code =
+                gen_union::gen_union(ctx, &union_name, refs, *closed, description.as_deref())?;
             extras.push(union_code);
             union_name
         }
@@ -309,13 +341,31 @@ pub fn resolve_ref_type(ctx: &GenContext<'_>, reference: &str) -> Result<String,
     }
 }
 
+/// Flatten a description to a single line and escape characters that would
+/// confuse rustdoc (angle brackets that look like HTML tags, bare URLs).
 fn single_line(s: &str) -> String {
-    let s = s.replace('\n', " ");
-    if s.len() > 100 {
-        format!("{}...", &s[..97])
-    } else {
-        s
+    let mut result = String::with_capacity(s.len());
+    for word in s.replace('\n', " ").split_whitespace() {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        if word.starts_with("http://") || word.starts_with("https://") {
+            // Wrap bare URLs in angle brackets so rustdoc renders them as links.
+            result.push('<');
+            result.push_str(word);
+            result.push('>');
+        } else {
+            // Escape angle brackets that would look like HTML tags.
+            for ch in word.chars() {
+                match ch {
+                    '<' => result.push_str("&lt;"),
+                    '>' => result.push_str("&gt;"),
+                    _ => result.push(ch),
+                }
+            }
+        }
     }
+    result
 }
 
 #[cfg(test)]
@@ -363,7 +413,7 @@ mod tests {
             caller_module: "crate::api::app::bsky",
         };
         if let shrike::lexicon::Def::Record(rec) = &schema.defs["main"] {
-            let code = gen_record(&ctx, "main", &rec.record).unwrap();
+            let code = gen_record(&ctx, "main", &rec.record, rec.description.as_deref()).unwrap();
             assert!(code.contains("pub struct FeedPost"), "code:\n{code}");
             assert!(code.contains("pub text:"), "code:\n{code}");
             assert!(code.contains("NSID_FEED_POST"), "code:\n{code}");

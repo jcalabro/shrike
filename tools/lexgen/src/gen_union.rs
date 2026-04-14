@@ -15,6 +15,7 @@ pub fn gen_union(
     type_name: &str,
     refs: &[String],
     closed: Option<bool>,
+    description: Option<&str>,
 ) -> Result<String, String> {
     let is_closed = closed.unwrap_or(false);
 
@@ -49,7 +50,11 @@ pub fn gen_union(
     let mut out = String::new();
 
     // Enum definition
-    writeln!(out, "/// {type_name} is a union type.").ok();
+    if let Some(desc) = description {
+        writeln!(out, "/// {}", single_line(desc)).ok();
+    } else {
+        writeln!(out, "/// {type_name} is a union type.").ok();
+    }
     writeln!(out, "#[derive(Debug, Clone)]").ok();
     writeln!(out, "pub enum {type_name} {{").ok();
     for v in &variants {
@@ -198,6 +203,29 @@ pub fn variant_short_name(context_nsid: &str, ref_str: &str) -> String {
     util::type_name(&target_nsid, def_name)
 }
 
+fn single_line(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for word in s.replace('\n', " ").split_whitespace() {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        if word.starts_with("http://") || word.starts_with("https://") {
+            result.push('<');
+            result.push_str(word);
+            result.push('>');
+        } else {
+            for ch in word.chars() {
+                match ch {
+                    '<' => result.push_str("&lt;"),
+                    '>' => result.push_str("&gt;"),
+                    _ => result.push(ch),
+                }
+            }
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
@@ -227,7 +255,7 @@ mod tests {
             "app.bsky.embed.images".to_string(),
             "app.bsky.embed.external".to_string(),
         ];
-        let code = gen_union(&ctx, "FeedPostEmbed", &refs, None).unwrap();
+        let code = gen_union(&ctx, "FeedPostEmbed", &refs, None, None).unwrap();
         assert!(code.contains("pub enum FeedPostEmbed"), "code:\n{code}");
         assert!(code.contains("EmbedImages("), "code:\n{code}");
         assert!(code.contains("EmbedExternal("), "code:\n{code}");
@@ -250,7 +278,7 @@ mod tests {
             caller_module: "crate::api::app::bsky",
         };
         let refs = vec!["app.bsky.embed.images".to_string()];
-        let code = gen_union(&ctx, "TestClosed", &refs, Some(true)).unwrap();
+        let code = gen_union(&ctx, "TestClosed", &refs, Some(true), None).unwrap();
         assert!(
             !code.contains("Unknown("),
             "closed union should not have Unknown: {code}"

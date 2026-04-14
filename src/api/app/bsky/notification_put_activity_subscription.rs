@@ -21,7 +21,7 @@ pub struct NotificationPutActivitySubscriptionOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// NotificationPutActivitySubscription — Puts an activity subscription entry. The key should be omitted for creation and provided for upda...
+/// NotificationPutActivitySubscription — Puts an activity subscription entry. The key should be omitted for creation and provided for updates. Requires auth.
 pub async fn notification_put_activity_subscription(
     client: &crate::xrpc::Client,
     input: &NotificationPutActivitySubscriptionInput,

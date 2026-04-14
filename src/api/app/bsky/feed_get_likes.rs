@@ -140,12 +140,14 @@ impl FeedGetLikesLike {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGetLikesParams {
+    /// CID of the subject record (aka, specific version of record), to filter likes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// AT-URI of the subject (eg, a post record).
     pub uri: String,
 }
 

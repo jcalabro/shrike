@@ -3,12 +3,14 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityResolveDidParams {
+    /// DID to resolve.
     pub did: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityResolveDidOutput {
+    /// The complete DID document for the identity.
     pub did_doc: serde_json::Value,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

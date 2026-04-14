@@ -6,16 +6,25 @@ use crate::oauth::dpop::NonceStore;
 /// OAuth token set returned from the token endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenSet {
+    /// Authorization server issuer URL.
     pub issuer: String,
+    /// User DID (e.g., "did:plc:...").
     pub sub: String,
+    /// PDS URL (audience).
     pub aud: String,
+    /// Granted scope (must include "atproto").
     pub scope: String,
+    /// DPoP-bound access token.
     pub access_token: String,
+    /// Token type (always "DPoP" for AT Protocol).
     pub token_type: String,
     /// Unix timestamp when the access token expires.
     pub expires_at: Option<u64>,
+    /// Single-use refresh token for obtaining new access tokens.
     pub refresh_token: Option<String>,
+    /// Token endpoint URL (for refreshing).
     pub token_endpoint: String,
+    /// Revocation endpoint URL (for sign-out).
     pub revocation_endpoint: String,
 }
 

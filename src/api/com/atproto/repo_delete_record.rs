@@ -3,11 +3,16 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoDeleteRecordInput {
+    /// The NSID of the record collection.
     pub collection: crate::syntax::Nsid,
+    /// The handle or DID of the repo (aka, current account).
     pub repo: crate::syntax::AtIdentifier,
+    /// The Record Key.
     pub rkey: crate::syntax::RecordKey,
+    /// Compare and swap with the previous commit by CID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap_commit: Option<String>,
+    /// Compare and swap with the previous record by CID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swap_record: Option<String>,
     /// Extra fields not defined in the schema.

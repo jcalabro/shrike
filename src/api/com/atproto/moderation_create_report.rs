@@ -5,8 +5,10 @@
 pub struct ModerationCreateReportInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_tool: Option<ModerationCreateReportModTool>,
+    /// Additional context about the content and violation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Indicates the broad category of violation the report is for.
     pub reason_type: crate::api::com::atproto::ModerationDefsReasonType,
     pub subject: ModerationCreateReportInputSubjectUnion,
     /// Extra fields not defined in the schema.
@@ -355,7 +357,7 @@ impl ModerationCreateReportOutputSubjectUnion {
     }
 }
 
-/// ModerationCreateReport — Submit a moderation report regarding an atproto account or record. Implemented by moderation serv...
+/// ModerationCreateReport — Submit a moderation report regarding an atproto account or record. Implemented by moderation services (with PDS proxying), and requires auth.
 pub async fn moderation_create_report(
     client: &crate::xrpc::Client,
     input: &ModerationCreateReportInput,
@@ -369,7 +371,9 @@ pub async fn moderation_create_report(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationCreateReportModTool {
+    /// Additional arbitrary metadata about the source
     pub meta: serde_json::Value,
+    /// Name/identifier of the source (e.g., 'bsky-app/android', 'bsky-web/chrome')
     pub name: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

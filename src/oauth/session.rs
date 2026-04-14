@@ -6,12 +6,15 @@ use tokio::sync::RwLock;
 use crate::oauth::OAuthError;
 use crate::oauth::token::TokenSet;
 
-/// Persisted OAuth session, keyed by user DID.
+/// Persisted OAuth session for a single user, keyed by DID.
+///
+/// Contains the DPoP signing key and token set. Serialize this to persist
+/// sessions across process restarts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     /// P-256 DPoP private key as base64url of 32-byte scalar.
     pub dpop_key_bytes: String,
-    /// Token set.
+    /// Access and refresh tokens, plus associated metadata.
     pub token_set: TokenSet,
 }
 
@@ -37,16 +40,27 @@ impl Session {
     }
 }
 
-/// Authorization state during the OAuth flow, keyed by state parameter.
+/// Authorization state stored during the OAuth flow, keyed by the `state` parameter.
+///
+/// Created during `authorize()` and consumed during `callback()`. Contains all
+/// information needed to complete the token exchange.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthState {
+    /// Authorization server issuer URL.
     pub issuer: String,
+    /// P-256 DPoP private key as base64url of 32-byte scalar.
     pub dpop_key_bytes: String,
+    /// Token endpoint auth method (e.g., "none", "private_key_jwt").
     pub auth_method: String,
+    /// PKCE code verifier.
     pub verifier: String,
+    /// Redirect URI used in the authorization request.
     pub redirect_uri: String,
+    /// Application-level state value.
     pub app_state: String,
+    /// Token endpoint URL for code exchange.
     pub token_endpoint: String,
+    /// Revocation endpoint URL.
     pub revocation_endpoint: String,
 }
 
@@ -67,21 +81,25 @@ impl AuthState {
 /// Persistent storage for OAuth sessions, keyed by user DID.
 #[async_trait]
 pub trait SessionStore: Send + Sync {
+    /// Look up a session by DID, or None if not stored.
     async fn get(&self, did: &str) -> Result<Option<Session>, OAuthError>;
+    /// Store or update a session for the given DID.
     async fn set(&self, did: &str, session: &Session) -> Result<(), OAuthError>;
+    /// Delete a session for the given DID.
     async fn delete(&self, did: &str) -> Result<(), OAuthError>;
 }
 
-/// Persistent storage for authorization state during the OAuth flow,
-/// keyed by the `state` parameter.
-/// Stores authorization state during the OAuth flow.
+/// Stores authorization state during the OAuth flow, keyed by the `state` parameter.
 ///
 /// The `take` method atomically retrieves and deletes state to prevent
 /// replay attacks from concurrent callback requests.
 #[async_trait]
 pub trait StateStore: Send + Sync {
+    /// Look up authorization state by state parameter.
     async fn get(&self, state: &str) -> Result<Option<AuthState>, OAuthError>;
+    /// Store authorization state for the given state parameter.
     async fn set(&self, state: &str, data: &AuthState) -> Result<(), OAuthError>;
+    /// Delete authorization state.
     async fn delete(&self, state: &str) -> Result<(), OAuthError>;
     /// Atomically retrieve and delete state (one-time use).
     /// Returns `None` if the state doesn't exist. A second call with the
@@ -89,12 +107,14 @@ pub trait StateStore: Send + Sync {
     async fn take(&self, state: &str) -> Result<Option<AuthState>, OAuthError>;
 }
 
-/// In-memory session store backed by a `RwLock<HashMap>`.
+/// In-memory session store backed by a `RwLock<HashMap>`. Suitable for
+/// development and testing; sessions are lost on process restart.
 pub struct MemorySessionStore {
     sessions: RwLock<HashMap<String, Session>>,
 }
 
 impl MemorySessionStore {
+    /// Create an empty in-memory session store.
     pub fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -128,12 +148,14 @@ impl SessionStore for MemorySessionStore {
     }
 }
 
-/// In-memory state store backed by a `RwLock<HashMap>`.
+/// In-memory state store backed by a `RwLock<HashMap>`. Suitable for
+/// development and testing; state is lost on process restart.
 pub struct MemoryStateStore {
     states: RwLock<HashMap<String, AuthState>>,
 }
 
 impl MemoryStateStore {
+    /// Create an empty in-memory state store.
     pub fn new() -> Self {
         Self {
             states: RwLock::new(HashMap::new()),

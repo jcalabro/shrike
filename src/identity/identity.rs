@@ -8,17 +8,24 @@ use crate::identity::IdentityError;
 
 /// Resolved identity — the result of looking up a DID.
 pub struct Identity {
+    /// The resolved DID.
     pub did: Did,
+    /// Handle extracted from `alsoKnownAs` in the DID document, if present.
     pub handle: Option<Handle>,
+    /// Verification keys from the DID document, keyed by method ID (e.g., "#atproto").
     pub keys: HashMap<String, Box<dyn VerifyingKey>>,
+    /// Service endpoints from the DID document, keyed by service ID (e.g., "#atproto_pds").
     pub services: HashMap<String, ServiceEndpoint>,
 }
 
 /// A service endpoint extracted from a DID document.
 #[derive(Debug, Clone)]
 pub struct ServiceEndpoint {
+    /// Service ID (e.g., "#atproto_pds").
     pub id: String,
+    /// Service type (e.g., "AtprotoPersonalDataServer").
     pub r#type: String,
+    /// URL of the service endpoint.
     pub endpoint: String,
 }
 

@@ -11,10 +11,15 @@ use crate::repo::RepoError;
 /// `Tid::new(0, 0)`.
 #[derive(Debug, Clone)]
 pub struct Commit {
+    /// DID of the repository owner.
     pub did: Did,
+    /// Commit version (2 or 3).
     pub version: u32,
+    /// Monotonically increasing revision TID.
     pub rev: Tid,
+    /// CID of the previous commit, or None for the first commit.
     pub prev: Option<Cid>,
+    /// CID of the MST root node.
     pub data: Cid,
     /// Signature over the unsigned commit bytes. `None` for unsigned v2 commits.
     pub sig: Option<Signature>,

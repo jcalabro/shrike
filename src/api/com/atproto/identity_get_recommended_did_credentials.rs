@@ -5,6 +5,7 @@
 pub struct IdentityGetRecommendedDidCredentialsOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also_known_as: Vec<String>,
+    /// Recommended rotation keys for PLC dids. Should be undefined (or ignored) for did:webs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rotation_keys: Vec<String>,
     pub services: serde_json::Value,
@@ -14,7 +15,7 @@ pub struct IdentityGetRecommendedDidCredentialsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// IdentityGetRecommendedDidCredentials — Describe the credentials that should be included in the DID doc of an account that is migrating t...
+/// IdentityGetRecommendedDidCredentials — Describe the credentials that should be included in the DID doc of an account that is migrating to this service.
 pub async fn identity_get_recommended_did_credentials(
     client: &crate::xrpc::Client,
 ) -> Result<IdentityGetRecommendedDidCredentialsOutput, crate::xrpc::Error> {

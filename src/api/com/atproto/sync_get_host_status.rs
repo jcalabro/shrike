@@ -3,15 +3,18 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetHostStatusParams {
+    /// Hostname of the host (eg, PDS or relay) being queried.
     pub hostname: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetHostStatusOutput {
+    /// Number of accounts on the server which are associated with the upstream host. Note that the upstream may actually have more accounts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_count: Option<i64>,
     pub hostname: String,
+    /// Recent repo stream event sequence number. May be delayed from actual stream processing (eg, persisted cursor not in-memory cursor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,7 +24,7 @@ pub struct SyncGetHostStatusOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// SyncGetHostStatus — Returns information about a specified upstream host, as consumed by the server. Implemented by re...
+/// SyncGetHostStatus — Returns information about a specified upstream host, as consumed by the server. Implemented by relays.
 pub async fn sync_get_host_status(
     client: &crate::xrpc::Client,
     params: &SyncGetHostStatusParams,

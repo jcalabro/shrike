@@ -3,11 +3,13 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncGetBlobParams {
+    /// The CID of the blob to fetch
     pub cid: String,
+    /// The DID of the account.
     pub did: String,
 }
 
-/// SyncGetBlob — Get a blob associated with a given account. Returns the full blob as originally uploaded. Does no...
+/// SyncGetBlob — Get a blob associated with a given account. Returns the full blob as originally uploaded. Does not require auth; implemented by PDS.
 pub async fn sync_get_blob(
     client: &crate::xrpc::Client,
     params: &SyncGetBlobParams,

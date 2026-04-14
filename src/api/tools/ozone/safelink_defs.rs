@@ -8,14 +8,18 @@ pub type SafelinkDefsActionType = String;
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkDefsEvent {
     pub action: SafelinkDefsActionType,
+    /// Optional comment about the decision
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
     pub created_at: crate::syntax::Datetime,
+    /// DID of the user who created this rule
     pub created_by: crate::syntax::Did,
     pub event_type: SafelinkDefsEventType,
+    /// Auto-incrementing row ID
     pub id: i64,
     pub pattern: SafelinkDefsPatternType,
     pub reason: SafelinkDefsReasonType,
+    /// The URL that this rule applies to
     pub url: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -282,13 +286,18 @@ pub type SafelinkDefsReasonType = String;
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkDefsUrlRule {
     pub action: SafelinkDefsActionType,
+    /// Optional comment about the decision
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Timestamp when the rule was created
     pub created_at: crate::syntax::Datetime,
+    /// DID of the user added the rule.
     pub created_by: crate::syntax::Did,
     pub pattern: SafelinkDefsPatternType,
     pub reason: SafelinkDefsReasonType,
+    /// Timestamp when the rule was last updated
     pub updated_at: crate::syntax::Datetime,
+    /// The URL or domain to apply the rule to
     pub url: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

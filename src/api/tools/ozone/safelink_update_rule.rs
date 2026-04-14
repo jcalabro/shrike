@@ -4,12 +4,15 @@
 #[serde(rename_all = "camelCase")]
 pub struct SafelinkUpdateRuleInput {
     pub action: crate::api::tools::ozone::SafelinkDefsActionType,
+    /// Optional comment about the update
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Optional DID to credit as the creator. Only respected for admin_token authentication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<crate::syntax::Did>,
     pub pattern: crate::api::tools::ozone::SafelinkDefsPatternType,
     pub reason: crate::api::tools::ozone::SafelinkDefsReasonType,
+    /// The URL or domain to update the rule for
     pub url: String,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]

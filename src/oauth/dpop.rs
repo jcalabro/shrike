@@ -94,6 +94,10 @@ pub fn create_dpop_proof(
 /// since the number of unique origins in practice is small).
 const MAX_NONCE_ENTRIES: usize = 256;
 
+/// Thread-safe per-origin DPoP nonce store.
+///
+/// Stores at most 256 origin-to-nonce mappings. When full, an arbitrary
+/// entry is evicted to make room.
 pub struct NonceStore {
     nonces: RwLock<HashMap<String, String>>,
 }
@@ -106,7 +110,7 @@ impl NonceStore {
         }
     }
 
-    /// Get the stored nonce for an origin (e.g., "https://bsky.social").
+    /// Get the stored nonce for an origin (e.g., `"https://bsky.social"`).
     pub fn get(&self, origin: &str) -> Option<String> {
         let guard = self.nonces.read().ok()?;
         guard.get(origin).cloned()
@@ -125,7 +129,7 @@ impl NonceStore {
         }
     }
 
-    /// Extract the origin from a URL.
+    /// Extract the origin (scheme + host + port) from a URL.
     pub fn origin_from_url(url: &str) -> Result<String, OAuthError> {
         let parsed =
             url::Url::parse(url).map_err(|e| OAuthError::Http(format!("invalid URL: {e}")))?;

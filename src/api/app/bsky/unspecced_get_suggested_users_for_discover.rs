@@ -12,6 +12,7 @@ pub struct UnspeccedGetSuggestedUsersForDiscoverParams {
 pub struct UnspeccedGetSuggestedUsersForDiscoverOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actors: Vec<crate::api::app::bsky::ActorDefsProfileView>,
+    /// Snowflake for this recommendation, use when submitting recommendation events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rec_id_str: Option<String>,
     /// Extra fields not defined in the schema.

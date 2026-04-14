@@ -237,6 +237,12 @@ fn gen_params_struct(
 
         let is_option = rust_type.starts_with("Option<");
         let is_vec = rust_type.starts_with("Vec<");
+
+        // Emit field-level doc comment from lexicon description (before serde attrs).
+        if let Some(desc) = field_schema.description() {
+            writeln!(out, "    /// {}", single_line(desc)).ok();
+        }
+
         if is_vec {
             writeln!(
                 out,
@@ -306,8 +312,14 @@ fn gen_body_type(
             result.extend(extras);
             Ok(result)
         }
-        FieldSchema::Union { refs, closed, .. } => {
-            let union_code = gen_union::gen_union(ctx, &out_name, refs, *closed)?;
+        FieldSchema::Union {
+            refs,
+            closed,
+            description,
+            ..
+        } => {
+            let union_code =
+                gen_union::gen_union(ctx, &out_name, refs, *closed, description.as_deref())?;
             Ok(vec![union_code])
         }
         _ => Ok(Vec::new()),
@@ -359,6 +371,11 @@ fn gen_endpoint_object(
 
         let needs_rename = needs_explicit_rename_simple(json_name_str, &rust_field);
 
+        // Emit field-level doc comment from lexicon description (before serde attrs).
+        if let Some(desc) = field_schema.description() {
+            writeln!(out, "    /// {}", single_line(desc)).ok();
+        }
+
         if is_vec {
             write!(
                 out,
@@ -382,7 +399,6 @@ fn gen_endpoint_object(
         } else if needs_rename {
             writeln!(out, "    #[serde(rename = {json_name_str:?})]").ok();
         }
-
         writeln!(out, "    pub {rust_field}: {rust_type},").ok();
     }
 
@@ -424,13 +440,29 @@ fn snake_to_camel(s: &str) -> String {
     result
 }
 
+/// Flatten a description to a single line and escape characters that would
+/// confuse rustdoc (angle brackets that look like HTML tags, bare URLs).
 fn single_line(s: &str) -> String {
-    let s = s.replace('\n', " ");
-    if s.len() > 100 {
-        format!("{}...", &s[..97])
-    } else {
-        s
+    let mut result = String::with_capacity(s.len());
+    for word in s.replace('\n', " ").split_whitespace() {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        if word.starts_with("http://") || word.starts_with("https://") {
+            result.push('<');
+            result.push_str(word);
+            result.push('>');
+        } else {
+            for ch in word.chars() {
+                match ch {
+                    '<' => result.push_str("&lt;"),
+                    '>' => result.push_str("&gt;"),
+                    _ => result.push(ch),
+                }
+            }
+        }
     }
+    result
 }
 
 #[cfg(test)]
