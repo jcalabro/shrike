@@ -7,8 +7,8 @@ description = "AT Protocol library for Rust"
 repository = "https://github.com/jcalabro/shrike"
 homepage = "https://github.com/jcalabro/shrike"
 documentation = "https://docs.rs/shrike"
-authors = ["Jim Calabro <jim@calabro.io>"]
-keywords = ["atproto", "bluesky", "at-protocol", "distributed"]
+authors = ["Jim Calabro <jamesrcalabro@gmail.com>"]
+keywords = ["atproto", "bluesky", "at-protocol"]
 categories = ["api-bindings", "network-programming"]
 rust-version = "1.92"
 
