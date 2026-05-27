@@ -363,22 +363,7 @@ impl Tree {
             return Ok(None);
         };
         let (new_root, removed) = Self::remove_node(&*self.store, root, key)?;
-
-        // Trim top: collapse empty root nodes that only have a left child.
-        let mut r = new_root;
-        loop {
-            match r {
-                Some(n) if n.entries.is_empty() => {
-                    if n.left.is_some() {
-                        r = n.left;
-                    } else {
-                        r = None;
-                    }
-                }
-                _ => break,
-            }
-        }
-        self.root = r;
+        self.root = trim_top(&*self.store, new_root)?;
         Ok(removed)
     }
 
@@ -646,6 +631,33 @@ impl Tree {
     }
 }
 
+/// Collapse an empty-passthrough root chain after a remove.
+///
+/// When `remove` deletes the last entry from a multi-level root it leaves
+/// behind a non-`None`, entries-empty node whose only useful state lives
+/// on its left child. This walks down that chain until it finds a node
+/// with real entries (or runs out of nodes).
+///
+/// Each candidate must be loaded from blocks before we test its emptiness:
+/// an unloaded stub looks like `(entries: [], left: None)` at the in-memory
+/// level even when its CID points at a real subtree. Without
+/// `ensure_loaded`, the loop would see `left.is_some() == false`, replace
+/// the root with `None`, and silently drop every record below the removed
+/// key.
+fn trim_top(
+    store: &dyn BlockStore,
+    mut n: Option<Box<Node>>,
+) -> Result<Option<Box<Node>>, MstError> {
+    while let Some(mut node) = n {
+        ensure_loaded(store, &mut node)?;
+        if !node.entries.is_empty() {
+            return Ok(Some(node));
+        }
+        n = node.left;
+    }
+    Ok(None)
+}
+
 /// Ensure a node is loaded from the block store.
 #[inline]
 fn ensure_loaded(store: &dyn BlockStore, n: &mut Node) -> Result<(), MstError> {
@@ -664,6 +676,20 @@ fn ensure_loaded(store: &dyn BlockStore, n: &mut Node) -> Result<(), MstError> {
 }
 
 /// Populate a node's in-memory fields from decoded `NodeData`.
+///
+/// Height handling is subtle. In the canonical MST every parent-child edge
+/// spans exactly one level, but on-disk node blocks do not record their
+/// height — it is recomputed from a key. For nodes with at least one
+/// entry that's straightforward (`height_for_key(entries[0])`). For
+/// empty-entries intermediates — the height-fillers the canonical shape
+/// requires whenever a parent and its only descendant span >1 level —
+/// there is no key to hash, so we rely on the parent having seeded
+/// `n.height` before calling `ensure_loaded`. After we know this node's
+/// own height we propagate `height - 1` down into each newly-created
+/// child stub so the chain stays correct as subsequent `ensure_loaded`
+/// calls walk further. atproto/indigo handles the same case via a
+/// post-load `ensureHeights` walk; we propagate eagerly during the
+/// existing lazy load instead.
 fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
     if let Some(left_cid) = nd.left {
         n.left = Some(Box::new(Node {
@@ -700,9 +726,25 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
         });
     }
 
-    // Determine height from entries.
+    // Derive height from entries when we have one; otherwise preserve the
+    // parent-seeded height for empty intermediates.
     if let Some(first) = n.entries.first() {
         n.height = height_for_key(&first.key);
+    }
+
+    // Propagate height down to freshly-built child stubs. They were
+    // constructed above with a placeholder of 0 because n.height was not
+    // yet known. This is what keeps empty intermediates loadable: when a
+    // later ensure_loaded reaches such a child and finds entries empty,
+    // the height we seeded here is the only signal it has.
+    let child_height = n.height.saturating_sub(1);
+    if let Some(left) = &mut n.left {
+        left.height = child_height;
+    }
+    for entry in &mut n.entries {
+        if let Some(right) = &mut entry.right {
+            right.height = child_height;
+        }
     }
 
     Ok(())
@@ -748,8 +790,27 @@ fn trim_node_opt(n: Option<Node>) -> Option<Node> {
     clippy::unreachable
 )]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
     use crate::mst::block_store::MemBlockStore;
+
+    /// Test-only adapter so the same `MemBlockStore` can back two `Tree`
+    /// handles. The production `Tree` takes `Box<dyn BlockStore>` (owned),
+    /// which makes it awkward to "persist into store, then reload from
+    /// store" within a single test. Wrapping in `Rc` gives us cheap
+    /// shared ownership without adding a Clone bound to `BlockStore`.
+    impl BlockStore for Rc<MemBlockStore> {
+        fn get_block(&self, cid: &Cid) -> Result<Vec<u8>, MstError> {
+            (**self).get_block(cid)
+        }
+        fn put_block(&self, cid: Cid, data: Vec<u8>) -> Result<(), MstError> {
+            (**self).put_block(cid, data)
+        }
+        fn has_block(&self, cid: &Cid) -> Result<bool, MstError> {
+            (**self).has_block(cid)
+        }
+    }
 
     fn test_value_cid() -> Cid {
         "bafyreie5cvv4h45feadgeuwhbcutmh6t2ceseocckahdoe6uat64zmz454"
@@ -1163,5 +1224,131 @@ mod tests {
         })
         .unwrap();
         assert_eq!(count, 0);
+    }
+
+    /// Build a tree from `keys`, persist its blocks to `store`, return root CID.
+    /// Mirrors the atmos test pattern of "stage to disk, then reload".
+    fn stage_tree_to_store(store: Rc<MemBlockStore>, keys: &[&str]) -> Cid {
+        let mut tree = Tree::new(Box::new(store));
+        let val = test_value_cid();
+        for &k in keys {
+            tree.insert(k.to_string(), val).unwrap();
+        }
+        tree.root_cid().unwrap()
+    }
+
+    /// Compute the canonical root CID for a key set, building from scratch
+    /// in a fresh store. The MST is canonical, so this is the single
+    /// acceptable root for any tree containing exactly these keys.
+    fn canonical_root_for(keys: &[&str]) -> Cid {
+        let store = MemBlockStore::new();
+        let mut tree = Tree::new(Box::new(store));
+        let val = test_value_cid();
+        for &k in keys {
+            tree.insert(k.to_string(), val).unwrap();
+        }
+        tree.root_cid().unwrap()
+    }
+
+    /// Regression test for the empty-intermediate height bug. ported from
+    /// atmos commit 015c597 ("fix MST height bug").
+    ///
+    /// `populate_node` derives a node's height from its first entry's key.
+    /// For an empty-entries intermediate (the height-filler the canonical
+    /// MST shape requires when a parent and its only descendant span >1
+    /// level), there is no such key, and the node was left at height 0.
+    /// Subsequent inserts traversing that intermediate then misread it as
+    /// height 0 and built a non-canonical tower of synthetic intermediates.
+    ///
+    /// Trigger requires (a) a height gap >1 between a node and its
+    /// descendants and (b) a lazy reload, so the tree is reconstructed
+    /// from blocks rather than mutated in place. The height-4 root key
+    /// below sits over height-0 leaves, forcing empty intermediates at
+    /// heights 3, 2, 1; the test reloads and inserts a second leaf via a
+    /// path that necessarily traverses one of them.
+    #[test]
+    fn lazy_load_empty_intermediate_height() {
+        // Heights chosen via height_for_key on these literal strings.
+        let root_key = "com.example.record/0000057"; // height 4
+        let leaf_key1 = "com.example.record/0000000"; // height 0
+        let leaf_key2 = "com.example.record/0000001"; // height 0
+        assert_eq!(
+            height_for_key(root_key),
+            4,
+            "fixture height drifted; pick another height-4 key",
+        );
+        assert_eq!(height_for_key(leaf_key1), 0);
+        assert_eq!(height_for_key(leaf_key2), 0);
+
+        let store = Rc::new(MemBlockStore::new());
+        let root = stage_tree_to_store(Rc::clone(&store), &[root_key, leaf_key1]);
+
+        // Lazy reload: Tree::load only stubs the root; descendants are
+        // fetched on demand via ensure_loaded.
+        let mut reloaded = Tree::load(Box::new(Rc::clone(&store)), root);
+        reloaded
+            .insert(leaf_key2.to_string(), test_value_cid())
+            .unwrap();
+        let got = reloaded.root_cid().unwrap();
+
+        let want = canonical_root_for(&[root_key, leaf_key1, leaf_key2]);
+        assert_eq!(
+            got, want,
+            "lazy-load + insert produced a non-canonical root \
+             (likely an empty-entries intermediate node lost its height during ensure_loaded)",
+        );
+    }
+
+    /// Regression test for the trim-top-loop bug. Ported from atmos commit
+    /// a5d22b3 ("fix MST remove bug").
+    ///
+    /// `Tree::remove`'s top-trim loop collapses empty-passthrough roots
+    /// onto their left child. When the left child was an unloaded stub
+    /// (entries empty + left None at the in-memory level, but a real
+    /// subtree on disk under `cid`), the loop's "stop when left is None"
+    /// check fired immediately and replaced the root with `None`, dropping
+    /// every record below the removed key. Fix: ensure_loaded the
+    /// candidate before testing its emptiness.
+    ///
+    /// Trigger: a 2-record tree shaped (height-2 root entry, height-1 left
+    /// subtree), removed via the height-2 entry after a lazy reload.
+    #[test]
+    fn lazy_load_remove_trims_through_unloaded_stub() {
+        // Heights chosen via height_for_key on these literal strings.
+        let root_key = "col.lection/0000019"; // height 2 (will be removed)
+        let leaf_key = "col.lection/0000005"; // height 1 (lone survivor)
+        assert_eq!(
+            height_for_key(root_key),
+            2,
+            "fixture height drifted; pick another height-2 key",
+        );
+        assert_eq!(
+            height_for_key(leaf_key),
+            1,
+            "fixture height drifted; pick another height-1 key",
+        );
+        assert!(leaf_key < root_key, "leaf must sort before root");
+
+        let store = Rc::new(MemBlockStore::new());
+        let root = stage_tree_to_store(Rc::clone(&store), &[root_key, leaf_key]);
+
+        let mut reloaded = Tree::load(Box::new(Rc::clone(&store)), root);
+        let removed = reloaded.remove(root_key).unwrap();
+        assert!(
+            removed.is_some(),
+            "remove returned None; the root entry should have been found",
+        );
+        let got = reloaded.root_cid().unwrap();
+
+        let want = canonical_root_for(&[leaf_key]);
+        assert_eq!(
+            got, want,
+            "lazy-load + remove produced an empty-or-wrong root \
+             (likely the trim-top loop walked through an unloaded stub)",
+        );
+
+        // Sanity: leaf_key must still be retrievable.
+        let val = reloaded.get(leaf_key).unwrap();
+        assert_eq!(val, Some(test_value_cid()), "leaf was dropped by trim loop");
     }
 }
