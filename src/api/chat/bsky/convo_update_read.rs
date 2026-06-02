@@ -20,7 +20,7 @@ pub struct ConvoUpdateReadOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoUpdateRead XRPC procedure.
+/// ConvoUpdateRead — Updates the read state of a conversation from, optionally specifying the last read message.
 pub async fn convo_update_read(
     client: &crate::xrpc::Client,
     input: &ConvoUpdateReadInput,

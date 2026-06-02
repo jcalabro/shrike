@@ -13,7 +13,7 @@ pub struct ConvoSendMessageInput {
 /// ConvoSendMessageOutput is an alias.
 pub type ConvoSendMessageOutput = crate::api::chat::bsky::ConvoDefsMessageView;
 
-/// ConvoSendMessage XRPC procedure.
+/// ConvoSendMessage — Sends a message to a conversation.
 pub async fn convo_send_message(
     client: &crate::xrpc::Client,
     input: &ConvoSendMessageInput,

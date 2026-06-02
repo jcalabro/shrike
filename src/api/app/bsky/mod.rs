@@ -382,6 +382,17 @@ pub use embed_external::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod embed_get_embed_external_view;
+pub use embed_get_embed_external_view::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod embed_images;
 pub use embed_images::*;
 

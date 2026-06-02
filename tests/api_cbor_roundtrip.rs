@@ -125,6 +125,7 @@ fn feed_post_text_slice_roundtrip() {
 #[test]
 fn embed_external_roundtrip() {
     let ext = shrike::api::app::bsky::EmbedExternalExternal {
+        associated_refs: Vec::new(),
         description: "A test description".into(),
         title: "Test Title".into(),
         uri: "https://example.com".into(),
@@ -137,6 +138,7 @@ fn embed_external_roundtrip() {
     assert_eq!(decoded.description, ext.description);
     assert_eq!(decoded.title, ext.title);
     assert_eq!(decoded.uri, ext.uri);
+    assert!(decoded.associated_refs.is_empty());
     assert!(decoded.thumb.is_none());
 }
 

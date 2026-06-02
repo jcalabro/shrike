@@ -18,7 +18,7 @@ pub struct ConvoUnmuteConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoUnmuteConvo XRPC procedure.
+/// ConvoUnmuteConvo — Unmutes a conversation, allowing notifications related to it.
 pub async fn convo_unmute_convo(
     client: &crate::xrpc::Client,
     input: &ConvoUnmuteConvoInput,

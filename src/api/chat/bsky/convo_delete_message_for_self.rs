@@ -13,7 +13,7 @@ pub struct ConvoDeleteMessageForSelfInput {
 /// ConvoDeleteMessageForSelfOutput is an alias.
 pub type ConvoDeleteMessageForSelfOutput = crate::api::chat::bsky::ConvoDefsDeletedMessageView;
 
-/// ConvoDeleteMessageForSelf XRPC procedure.
+/// ConvoDeleteMessageForSelf — Marks a message as deleted for the viewer, so they won't see that message in future enumerations.
 pub async fn convo_delete_message_for_self(
     client: &crate::xrpc::Client,
     input: &ConvoDeleteMessageForSelfInput,

@@ -52,6 +52,17 @@ pub use actor_export_account_data::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod actor_get_status;
+pub use actor_get_status::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod convo_accept_convo;
 pub use convo_accept_convo::*;
 
@@ -129,6 +140,17 @@ pub use convo_get_convo_for_members::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod convo_get_convo_members;
+pub use convo_get_convo_members::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod convo_get_log;
 pub use convo_get_log::*;
 
@@ -162,8 +184,30 @@ pub use convo_leave_convo::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod convo_list_convo_requests;
+pub use convo_list_convo_requests::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod convo_list_convos;
 pub use convo_list_convos::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod convo_lock_convo;
+pub use convo_lock_convo::*;
 
 #[allow(
     clippy::unwrap_used,
@@ -217,6 +261,17 @@ pub use convo_send_message_batch::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod convo_unlock_convo;
+pub use convo_unlock_convo::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod convo_unmute_convo;
 pub use convo_unmute_convo::*;
 
@@ -250,6 +305,215 @@ pub use convo_update_read::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod embed_join_link;
+pub use embed_join_link::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_add_members;
+pub use group_add_members::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_approve_join_request;
+pub use group_approve_join_request::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_create_group;
+pub use group_create_group::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_create_join_link;
+pub use group_create_join_link::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_defs;
+pub use group_defs::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_disable_join_link;
+pub use group_disable_join_link::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_edit_group;
+pub use group_edit_group::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_edit_join_link;
+pub use group_edit_join_link::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_enable_join_link;
+pub use group_enable_join_link::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_get_join_link_previews;
+pub use group_get_join_link_previews::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_list_join_requests;
+pub use group_list_join_requests::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_list_mutual_groups;
+pub use group_list_mutual_groups::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_reject_join_request;
+pub use group_reject_join_request::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_remove_members;
+pub use group_remove_members::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_request_join;
+pub use group_request_join::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_update_join_requests_read;
+pub use group_update_join_requests_read::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod group_withdraw_join_request;
+pub use group_withdraw_join_request::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod moderation_defs;
+pub use moderation_defs::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod moderation_get_actor_metadata;
 pub use moderation_get_actor_metadata::*;
 
@@ -261,8 +525,52 @@ pub use moderation_get_actor_metadata::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod moderation_get_convo;
+pub use moderation_get_convo::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod moderation_get_convo_members;
+pub use moderation_get_convo_members::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod moderation_get_convos;
+pub use moderation_get_convos::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod moderation_get_message_context;
 pub use moderation_get_message_context::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod moderation_subscribe_mod_events;
+pub use moderation_subscribe_mod_events::*;
 
 #[allow(
     clippy::unwrap_used,

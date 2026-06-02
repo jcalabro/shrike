@@ -10,6 +10,9 @@ pub struct ModerationEmitEventInput {
     pub external_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_tool: Option<crate::api::tools::ozone::ModerationDefsModTool>,
+    /// Optional report-level targeting. If provided, this event will be linked to specific reports and reporters may be notified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_action: Option<ModerationEmitEventReportAction>,
     pub subject: ModerationEmitEventInputSubjectUnion,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_blob_cids: Vec<String>,
@@ -1208,4 +1211,212 @@ pub async fn moderation_emit_event(
     client
         .procedure("tools.ozone.moderation.emitEvent", input)
         .await
+}
+
+/// ModerationEmitEventReportAction — Target specific reports when emitting a moderation event
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModerationEmitEventReportAction {
+    /// Target ALL reports on the subject
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all: Option<bool>,
+    /// Target specific report IDs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<i64>,
+    /// Note to send to reporter(s) when actioning their report
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Target reports matching these report types on the subject (fully qualified NSIDs)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<String>,
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl ModerationEmitEventReportAction {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let mut count = 0u64;
+            if self.all.is_some() {
+                count += 1;
+            }
+            if !self.ids.is_empty() {
+                count += 1;
+            }
+            if self.note.is_some() {
+                count += 1;
+            }
+            if !self.types.is_empty() {
+                count += 1;
+            }
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            if self.all.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("all")?;
+                if let Some(ref val) = self.all {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
+                }
+            }
+            if !self.ids.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("ids")?;
+                crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.ids.len() as u64)?;
+                for item in &self.ids {
+                    crate::cbor::Encoder::new(&mut *buf).encode_i64(*item)?;
+                }
+            }
+            if self.note.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("note")?;
+                if let Some(ref val) = self.note {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
+            if !self.types.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("types")?;
+                crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.types.len() as u64)?;
+                for item in &self.types {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
+            }
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            if self.all.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.all {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("all", vbuf));
+            }
+            if !self.ids.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_array_header(self.ids.len() as u64)?;
+                for item in &self.ids {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_i64(*item)?;
+                }
+                pairs.push(("ids", vbuf));
+            }
+            if self.note.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.note {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("note", vbuf));
+            }
+            if !self.types.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_array_header(self.types.len() as u64)?;
+                for item in &self.types {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
+                }
+                pairs.push(("types", vbuf));
+            }
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut field_all: Option<bool> = None;
+        let mut field_ids: Vec<i64> = Vec::new();
+        let mut field_note: Option<String> = None;
+        let mut field_types: Vec<String> = Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                "all" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_all = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "ids" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            match item {
+                                crate::cbor::Value::Unsigned(n) => field_ids.push(n as i64),
+                                crate::cbor::Value::Signed(n) => field_ids.push(n),
+                                _ => {
+                                    return Err(crate::cbor::CborError::InvalidCbor(
+                                        "expected integer in array".into(),
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "note" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_note = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "types" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_types.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(ModerationEmitEventReportAction {
+            all: field_all,
+            ids: field_ids,
+            note: field_note,
+            types: field_types,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
 }

@@ -18,7 +18,7 @@ pub struct ConvoMuteConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoMuteConvo XRPC procedure.
+/// ConvoMuteConvo — Mutes a conversation, preventing notifications related to it.
 pub async fn convo_mute_convo(
     client: &crate::xrpc::Client,
     input: &ConvoMuteConvoInput,

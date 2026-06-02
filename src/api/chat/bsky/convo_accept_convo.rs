@@ -20,7 +20,7 @@ pub struct ConvoAcceptConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoAcceptConvo XRPC procedure.
+/// ConvoAcceptConvo — Marks a conversation as accepted, so it is shown in the list of accepted convos instead on the request convos.
 pub async fn convo_accept_convo(
     client: &crate::xrpc::Client,
     input: &ConvoAcceptConvoInput,

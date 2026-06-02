@@ -96,7 +96,7 @@ pub struct ModerationQueryStatusesParams {
     /// The subject to get the status for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    /// If specified, subjects of the given type (account or record) will be returned. When this is set to 'account' the 'collections' parameter will be ignored. When includeAllUserRecords or subject is set, this will be ignored.
+    /// If specified, subjects of the given type (account, record, or conversation) will be returned. When this is set to 'account' the 'collections' parameter will be ignored. When includeAllUserRecords or subject is set, this will be ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_type: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -57,7 +57,7 @@ pub struct ModerationQueryEventsParams {
     pub sort_direction: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    /// If specified, only events where the subject is of the given type (account or record) will be returned. When this is set to 'account' the 'collections' parameter will be ignored. When includeAllUserRecords or subject is set, this will be ignored.
+    /// If specified, only events where the subject is of the given type (account, record, or conversation) will be returned. When this is set to 'account' the 'collections' parameter will be ignored. When includeAllUserRecords or subject is set, this will be ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_type: Option<String>,
     /// The types of events (fully qualified string in the format of tools.ozone.moderation.defs#modEvent&lt;name&gt;) to filter by. If not specified, all events are returned.

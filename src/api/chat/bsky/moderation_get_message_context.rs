@@ -3,13 +3,18 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModerationGetMessageContextParams {
+    /// Number of user messages after the target to include. System messages between the target and the latest returned user message are also included, capped per gap by `maxInterleavedSystemMessages`. If there are no user messages after the target, up to `maxInterleavedSystemMessages` system messages immediately following the target are returned instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<i64>,
+    /// Number of user messages before the target to include. System messages between the earliest returned user message and the target are also included, capped per gap by `maxInterleavedSystemMessages`. If there are no user messages before the target, up to `maxInterleavedSystemMessages` system messages immediately preceding the target are returned instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before: Option<i64>,
     /// Conversation that the message is from. NOTE: this field will eventually be required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub convo_id: Option<String>,
+    /// Maximum number of system messages to include per gap between consecutive returned messages (and per side when there are no user messages on that side). Within a gap, the system messages closest to the earlier message are kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_interleaved_system_messages: Option<i64>,
     pub message_id: String,
 }
 
@@ -27,7 +32,7 @@ pub struct ModerationGetMessageContextOutput {
 #[derive(Debug, Clone)]
 pub enum ModerationGetMessageContextOutputMessagesUnion {
     ConvoDefsMessageView(Box<crate::api::chat::bsky::ConvoDefsMessageView>),
-    ConvoDefsDeletedMessageView(Box<crate::api::chat::bsky::ConvoDefsDeletedMessageView>),
+    ConvoDefsSystemMessageView(Box<crate::api::chat::bsky::ConvoDefsSystemMessageView>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -45,14 +50,14 @@ impl serde::Serialize for ModerationGetMessageContextOutputMessagesUnion {
                 }
                 map.serialize(serializer)
             }
-            ModerationGetMessageContextOutputMessagesUnion::ConvoDefsDeletedMessageView(inner) => {
+            ModerationGetMessageContextOutputMessagesUnion::ConvoDefsSystemMessageView(inner) => {
                 let mut map =
                     serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
                 if let serde_json::Value::Object(ref mut m) = map {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String(
-                            "chat.bsky.convo.defs#deletedMessageView".to_string(),
+                            "chat.bsky.convo.defs#systemMessageView".to_string(),
                         ),
                     );
                 }
@@ -88,11 +93,11 @@ impl<'de> serde::Deserialize<'de> for ModerationGetMessageContextOutputMessagesU
                     )),
                 )
             }
-            "chat.bsky.convo.defs#deletedMessageView" => {
-                let inner: crate::api::chat::bsky::ConvoDefsDeletedMessageView =
+            "chat.bsky.convo.defs#systemMessageView" => {
+                let inner: crate::api::chat::bsky::ConvoDefsSystemMessageView =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(
-                    ModerationGetMessageContextOutputMessagesUnion::ConvoDefsDeletedMessageView(
+                    ModerationGetMessageContextOutputMessagesUnion::ConvoDefsSystemMessageView(
                         Box::new(inner),
                     ),
                 )
@@ -120,7 +125,7 @@ impl ModerationGetMessageContextOutputMessagesUnion {
             ModerationGetMessageContextOutputMessagesUnion::ConvoDefsMessageView(inner) => {
                 inner.encode_cbor(buf)
             }
-            ModerationGetMessageContextOutputMessagesUnion::ConvoDefsDeletedMessageView(inner) => {
+            ModerationGetMessageContextOutputMessagesUnion::ConvoDefsSystemMessageView(inner) => {
                 inner.encode_cbor(buf)
             }
             ModerationGetMessageContextOutputMessagesUnion::Unknown(v) => {
@@ -177,12 +182,12 @@ impl ModerationGetMessageContextOutputMessagesUnion {
                     )),
                 )
             }
-            "chat.bsky.convo.defs#deletedMessageView" => {
+            "chat.bsky.convo.defs#systemMessageView" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner =
-                    crate::api::chat::bsky::ConvoDefsDeletedMessageView::decode_cbor(&mut dec)?;
+                    crate::api::chat::bsky::ConvoDefsSystemMessageView::decode_cbor(&mut dec)?;
                 Ok(
-                    ModerationGetMessageContextOutputMessagesUnion::ConvoDefsDeletedMessageView(
+                    ModerationGetMessageContextOutputMessagesUnion::ConvoDefsSystemMessageView(
                         Box::new(inner),
                     ),
                 )

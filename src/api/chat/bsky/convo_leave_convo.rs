@@ -19,7 +19,7 @@ pub struct ConvoLeaveConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoLeaveConvo XRPC procedure.
+/// ConvoLeaveConvo — Leaves a conversation (direct or group). For group, this effectively removes membership. For direct, membership is never removed, only changed to remove from enumerations by the user who left.
 pub async fn convo_leave_convo(
     client: &crate::xrpc::Client,
     input: &ConvoLeaveConvoInput,

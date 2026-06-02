@@ -3586,6 +3586,8 @@ impl ActorDefsProfileAssociatedActivitySubscription {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDefsProfileAssociatedChat {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_group_invites: Option<String>,
     pub allow_incoming: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -3605,10 +3607,19 @@ impl ActorDefsProfileAssociatedChat {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 1u64;
+            let mut count = 1u64;
+            if self.allow_group_invites.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("allowIncoming")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.allow_incoming)?;
+            if self.allow_group_invites.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("allowGroupInvites")?;
+                if let Some(ref val) = self.allow_group_invites {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -3616,6 +3627,13 @@ impl ActorDefsProfileAssociatedChat {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.allow_incoming)?;
                 pairs.push(("allowIncoming", vbuf));
+            }
+            if self.allow_group_invites.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.allow_group_invites {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("allowGroupInvites", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -3647,6 +3665,7 @@ impl ActorDefsProfileAssociatedChat {
         };
 
         let mut field_allow_incoming: Option<String> = None;
+        let mut field_allow_group_invites: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -3654,6 +3673,13 @@ impl ActorDefsProfileAssociatedChat {
                 "allowIncoming" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_allow_incoming = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "allowGroupInvites" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_allow_group_invites = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -3669,6 +3695,7 @@ impl ActorDefsProfileAssociatedChat {
             allow_incoming: field_allow_incoming.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'allowIncoming'".into())
             })?,
+            allow_group_invites: field_allow_group_invites,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -6447,6 +6474,12 @@ pub struct ActorDefsVerificationView {
     pub is_valid: bool,
     /// The user who issued this verification.
     pub issuer: crate::syntax::Did,
+    /// The display name of the issuer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_display_name: Option<String>,
+    /// The handle of the issuer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer_handle: Option<crate::syntax::Handle>,
     /// The AT-URI of the verification record.
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
@@ -6467,7 +6500,13 @@ impl ActorDefsVerificationView {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 4u64;
+            let mut count = 4u64;
+            if self.issuer_handle.is_some() {
+                count += 1;
+            }
+            if self.issuer_display_name.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("uri")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.uri.as_str())?;
@@ -6477,6 +6516,18 @@ impl ActorDefsVerificationView {
             crate::cbor::Encoder::new(&mut *buf).encode_bool(self.is_valid)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("createdAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.created_at.as_str())?;
+            if self.issuer_handle.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("issuerHandle")?;
+                if let Some(ref val) = self.issuer_handle {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val.as_str())?;
+                }
+            }
+            if self.issuer_display_name.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("issuerDisplayName")?;
+                if let Some(ref val) = self.issuer_display_name {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -6499,6 +6550,20 @@ impl ActorDefsVerificationView {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.created_at.as_str())?;
                 pairs.push(("createdAt", vbuf));
+            }
+            if self.issuer_handle.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.issuer_handle {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val.as_str())?;
+                }
+                pairs.push(("issuerHandle", vbuf));
+            }
+            if self.issuer_display_name.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.issuer_display_name {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("issuerDisplayName", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -6533,6 +6598,8 @@ impl ActorDefsVerificationView {
         let mut field_issuer: Option<crate::syntax::Did> = None;
         let mut field_is_valid: Option<bool> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_issuer_handle: Option<crate::syntax::Handle> = None;
+        let mut field_issuer_display_name: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -6574,6 +6641,23 @@ impl ActorDefsVerificationView {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "issuerHandle" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_issuer_handle = Some(
+                            crate::syntax::Handle::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "issuerDisplayName" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_issuer_display_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -6594,6 +6678,8 @@ impl ActorDefsVerificationView {
             created_at: field_created_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
             })?,
+            issuer_handle: field_issuer_handle,
+            issuer_display_name: field_issuer_display_name,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })

@@ -32,6 +32,30 @@ pub enum ConvoGetLogOutputLogsUnion {
     ConvoDefsLogReadMessage(Box<crate::api::chat::bsky::ConvoDefsLogReadMessage>),
     ConvoDefsLogAddReaction(Box<crate::api::chat::bsky::ConvoDefsLogAddReaction>),
     ConvoDefsLogRemoveReaction(Box<crate::api::chat::bsky::ConvoDefsLogRemoveReaction>),
+    ConvoDefsLogReadConvo(Box<crate::api::chat::bsky::ConvoDefsLogReadConvo>),
+    ConvoDefsLogAddMember(Box<crate::api::chat::bsky::ConvoDefsLogAddMember>),
+    ConvoDefsLogRemoveMember(Box<crate::api::chat::bsky::ConvoDefsLogRemoveMember>),
+    ConvoDefsLogMemberJoin(Box<crate::api::chat::bsky::ConvoDefsLogMemberJoin>),
+    ConvoDefsLogMemberLeave(Box<crate::api::chat::bsky::ConvoDefsLogMemberLeave>),
+    ConvoDefsLogLockConvo(Box<crate::api::chat::bsky::ConvoDefsLogLockConvo>),
+    ConvoDefsLogUnlockConvo(Box<crate::api::chat::bsky::ConvoDefsLogUnlockConvo>),
+    ConvoDefsLogLockConvoPermanently(Box<crate::api::chat::bsky::ConvoDefsLogLockConvoPermanently>),
+    ConvoDefsLogEditGroup(Box<crate::api::chat::bsky::ConvoDefsLogEditGroup>),
+    ConvoDefsLogCreateJoinLink(Box<crate::api::chat::bsky::ConvoDefsLogCreateJoinLink>),
+    ConvoDefsLogEditJoinLink(Box<crate::api::chat::bsky::ConvoDefsLogEditJoinLink>),
+    ConvoDefsLogEnableJoinLink(Box<crate::api::chat::bsky::ConvoDefsLogEnableJoinLink>),
+    ConvoDefsLogDisableJoinLink(Box<crate::api::chat::bsky::ConvoDefsLogDisableJoinLink>),
+    ConvoDefsLogIncomingJoinRequest(Box<crate::api::chat::bsky::ConvoDefsLogIncomingJoinRequest>),
+    ConvoDefsLogApproveJoinRequest(Box<crate::api::chat::bsky::ConvoDefsLogApproveJoinRequest>),
+    ConvoDefsLogRejectJoinRequest(Box<crate::api::chat::bsky::ConvoDefsLogRejectJoinRequest>),
+    ConvoDefsLogOutgoingJoinRequest(Box<crate::api::chat::bsky::ConvoDefsLogOutgoingJoinRequest>),
+    ConvoDefsLogWithdrawIncomingJoinRequest(
+        Box<crate::api::chat::bsky::ConvoDefsLogWithdrawIncomingJoinRequest>,
+    ),
+    ConvoDefsLogWithdrawOutgoingJoinRequest(
+        Box<crate::api::chat::bsky::ConvoDefsLogWithdrawOutgoingJoinRequest>,
+    ),
+    ConvoDefsLogReadJoinRequests(Box<crate::api::chat::bsky::ConvoDefsLogReadJoinRequests>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -162,6 +186,256 @@ impl serde::Serialize for ConvoGetLogOutputLogsUnion {
                 }
                 map.serialize(serializer)
             }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogReadConvo(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#logReadConvo".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogAddMember(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#logAddMember".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveMember(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logRemoveMember".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberJoin(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#logMemberJoin".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberLeave(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logMemberLeave".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvo(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#logLockConvo".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogUnlockConvo(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logUnlockConvo".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvoPermanently(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logLockConvoPermanently".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEditGroup(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#logEditGroup".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogCreateJoinLink(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logCreateJoinLink".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEditJoinLink(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logEditJoinLink".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEnableJoinLink(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logEnableJoinLink".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogDisableJoinLink(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logDisableJoinLink".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogIncomingJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logIncomingJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogApproveJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logApproveJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogRejectJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logRejectJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogOutgoingJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logOutgoingJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawIncomingJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logWithdrawIncomingJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawOutgoingJoinRequest(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logWithdrawOutgoingJoinRequest".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogReadJoinRequests(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#logReadJoinRequests".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
             ConvoGetLogOutputLogsUnion::Unknown(v) => {
                 if let Some(ref j) = v.json {
                     j.serialize(serializer)
@@ -253,6 +527,148 @@ impl<'de> serde::Deserialize<'de> for ConvoGetLogOutputLogsUnion {
                     Box::new(inner),
                 ))
             }
+            "chat.bsky.convo.defs#logReadConvo" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogReadConvo =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogReadConvo(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logAddMember" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogAddMember =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogAddMember(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logRemoveMember" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogRemoveMember =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveMember(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logMemberJoin" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogMemberJoin =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberJoin(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logMemberLeave" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogMemberLeave =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberLeave(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logLockConvo" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogLockConvo =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvo(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logUnlockConvo" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogUnlockConvo =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogUnlockConvo(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logLockConvoPermanently" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogLockConvoPermanently =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvoPermanently(Box::new(inner)))
+            }
+            "chat.bsky.convo.defs#logEditGroup" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogEditGroup =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEditGroup(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logCreateJoinLink" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogCreateJoinLink =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogCreateJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logEditJoinLink" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogEditJoinLink =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEditJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logEnableJoinLink" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogEnableJoinLink =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEnableJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logDisableJoinLink" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogDisableJoinLink =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogDisableJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logIncomingJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogIncomingJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogIncomingJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logApproveJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogApproveJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogApproveJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logRejectJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogRejectJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogRejectJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logOutgoingJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogOutgoingJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogOutgoingJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logWithdrawIncomingJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogWithdrawIncomingJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(
+                    ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawIncomingJoinRequest(Box::new(
+                        inner,
+                    )),
+                )
+            }
+            "chat.bsky.convo.defs#logWithdrawOutgoingJoinRequest" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogWithdrawOutgoingJoinRequest =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(
+                    ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawOutgoingJoinRequest(Box::new(
+                        inner,
+                    )),
+                )
+            }
+            "chat.bsky.convo.defs#logReadJoinRequests" => {
+                let inner: crate::api::chat::bsky::ConvoDefsLogReadJoinRequests =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogReadJoinRequests(
+                    Box::new(inner),
+                ))
+            }
             _ => Ok(ConvoGetLogOutputLogsUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -283,6 +699,44 @@ impl ConvoGetLogOutputLogsUnion {
             ConvoGetLogOutputLogsUnion::ConvoDefsLogReadMessage(inner) => inner.encode_cbor(buf),
             ConvoGetLogOutputLogsUnion::ConvoDefsLogAddReaction(inner) => inner.encode_cbor(buf),
             ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveReaction(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogReadConvo(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogAddMember(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveMember(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberJoin(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberLeave(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvo(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogUnlockConvo(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvoPermanently(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEditGroup(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogCreateJoinLink(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEditJoinLink(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogEnableJoinLink(inner) => inner.encode_cbor(buf),
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogDisableJoinLink(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogIncomingJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogApproveJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogRejectJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogOutgoingJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawIncomingJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawOutgoingJoinRequest(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetLogOutputLogsUnion::ConvoDefsLogReadJoinRequests(inner) => {
+                inner.encode_cbor(buf)
+            }
             ConvoGetLogOutputLogsUnion::Unknown(v) => {
                 if let Some(ref data) = v.cbor {
                     buf.extend_from_slice(data);
@@ -398,6 +852,166 @@ impl ConvoGetLogOutputLogsUnion {
                 let inner =
                     crate::api::chat::bsky::ConvoDefsLogRemoveReaction::decode_cbor(&mut dec)?;
                 Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveReaction(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logReadConvo" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogReadConvo::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogReadConvo(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logAddMember" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogAddMember::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogAddMember(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logRemoveMember" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogRemoveMember::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogRemoveMember(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logMemberJoin" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogMemberJoin::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberJoin(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logMemberLeave" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogMemberLeave::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogMemberLeave(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logLockConvo" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogLockConvo::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvo(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logUnlockConvo" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogUnlockConvo::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogUnlockConvo(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logLockConvoPermanently" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogLockConvoPermanently::decode_cbor(
+                    &mut dec,
+                )?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogLockConvoPermanently(Box::new(inner)))
+            }
+            "chat.bsky.convo.defs#logEditGroup" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsLogEditGroup::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEditGroup(Box::new(
+                    inner,
+                )))
+            }
+            "chat.bsky.convo.defs#logCreateJoinLink" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogCreateJoinLink::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogCreateJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logEditJoinLink" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogEditJoinLink::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEditJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logEnableJoinLink" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogEnableJoinLink::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogEnableJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logDisableJoinLink" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogDisableJoinLink::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogDisableJoinLink(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logIncomingJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogIncomingJoinRequest::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogIncomingJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logApproveJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogApproveJoinRequest::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogApproveJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logRejectJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogRejectJoinRequest::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogRejectJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logOutgoingJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogOutgoingJoinRequest::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogOutgoingJoinRequest(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#logWithdrawIncomingJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogWithdrawIncomingJoinRequest::decode_cbor(
+                        &mut dec,
+                    )?;
+                Ok(
+                    ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawIncomingJoinRequest(Box::new(
+                        inner,
+                    )),
+                )
+            }
+            "chat.bsky.convo.defs#logWithdrawOutgoingJoinRequest" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogWithdrawOutgoingJoinRequest::decode_cbor(
+                        &mut dec,
+                    )?;
+                Ok(
+                    ConvoGetLogOutputLogsUnion::ConvoDefsLogWithdrawOutgoingJoinRequest(Box::new(
+                        inner,
+                    )),
+                )
+            }
+            "chat.bsky.convo.defs#logReadJoinRequests" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsLogReadJoinRequests::decode_cbor(&mut dec)?;
+                Ok(ConvoGetLogOutputLogsUnion::ConvoDefsLogReadJoinRequests(
                     Box::new(inner),
                 ))
             }

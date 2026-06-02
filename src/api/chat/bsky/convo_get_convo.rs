@@ -15,7 +15,7 @@ pub struct ConvoGetConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoGetConvo XRPC query.
+/// ConvoGetConvo — Gets an existing conversation by its ID.
 pub async fn convo_get_convo(
     client: &crate::xrpc::Client,
     params: &ConvoGetConvoParams,

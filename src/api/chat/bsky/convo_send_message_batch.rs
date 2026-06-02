@@ -132,7 +132,7 @@ pub struct ConvoSendMessageBatchOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoSendMessageBatch XRPC procedure.
+/// ConvoSendMessageBatch — Sends a batch of messages to a conversation.
 pub async fn convo_send_message_batch(
     client: &crate::xrpc::Client,
     input: &ConvoSendMessageBatchInput,

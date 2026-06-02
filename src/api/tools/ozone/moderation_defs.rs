@@ -1899,6 +1899,121 @@ impl ModerationDefsCancelScheduledTakedownEvent {
     }
 }
 
+/// ModerationDefsConvoView object from tools.ozone.moderation.defs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModerationDefsConvoView {
+    pub convo_id: String,
+    pub did: crate::syntax::Did,
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl ModerationDefsConvoView {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let count = 2u64;
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("did")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(self.did.as_str())?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("convoId")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.convo_id)?;
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(self.did.as_str())?;
+                pairs.push(("did", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.convo_id)?;
+                pairs.push(("convoId", vbuf));
+            }
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                "did" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(ModerationDefsConvoView {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+}
+
 /// ModerationDefsIdentityEvent — Logs identity related events on a repo subject. Normally captured by automod from the firehose and emitted to ozone for historical tracking.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -4059,6 +4174,9 @@ pub struct ModerationDefsModEventTag {
     /// Additional comment about added/removed tags.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
+    /// Indicates how long the tags being added should remain before automatically being removed. Only applies to tags being added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_in_hours: Option<i64>,
     /// Tags to be removed to the subject. Ignores a tag If it doesn't exist, won't be duplicated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<String>,
@@ -4084,6 +4202,9 @@ impl ModerationDefsModEventTag {
             if self.comment.is_some() {
                 count += 1;
             }
+            if self.duration_in_hours.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("add")?;
             crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.add.len() as u64)?;
@@ -4099,6 +4220,12 @@ impl ModerationDefsModEventTag {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("comment")?;
                 if let Some(ref val) = self.comment {
                     crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
+            if self.duration_in_hours.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("durationInHours")?;
+                if let Some(ref val) = self.duration_in_hours {
+                    crate::cbor::Encoder::new(&mut *buf).encode_i64(*val)?;
                 }
             }
         } else {
@@ -4127,6 +4254,13 @@ impl ModerationDefsModEventTag {
                     crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
                 }
                 pairs.push(("comment", vbuf));
+            }
+            if self.duration_in_hours.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.duration_in_hours {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_i64(*val)?;
+                }
+                pairs.push(("durationInHours", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -4160,6 +4294,7 @@ impl ModerationDefsModEventTag {
         let mut field_add: Vec<String> = Vec::new();
         let mut field_remove: Vec<String> = Vec::new();
         let mut field_comment: Option<String> = None;
+        let mut field_duration_in_hours: Option<i64> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -4201,6 +4336,19 @@ impl ModerationDefsModEventTag {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "durationInHours" => match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_duration_in_hours = Some(n as i64);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_duration_in_hours = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                },
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -4212,6 +4360,7 @@ impl ModerationDefsModEventTag {
             add: field_add,
             remove: field_remove,
             comment: field_comment,
+            duration_in_hours: field_duration_in_hours,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -5760,6 +5909,7 @@ pub enum ModerationDefsModEventViewSubjectUnion {
     AdminDefsRepoRef(Box<crate::api::com::atproto::AdminDefsRepoRef>),
     RepoStrongRef(Box<crate::api::com::atproto::RepoStrongRef>),
     ConvoDefsMessageRef(Box<crate::api::chat::bsky::ConvoDefsMessageRef>),
+    ConvoDefsConvoRef(Box<crate::api::chat::bsky::ConvoDefsConvoRef>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -5795,6 +5945,17 @@ impl serde::Serialize for ModerationDefsModEventViewSubjectUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("chat.bsky.convo.defs#messageRef".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ModerationDefsModEventViewSubjectUnion::ConvoDefsConvoRef(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#convoRef".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -5841,6 +6002,13 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsModEventViewSubjectUnion {
                     Box::new(inner),
                 ))
             }
+            "chat.bsky.convo.defs#convoRef" => {
+                let inner: crate::api::chat::bsky::ConvoDefsConvoRef =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ModerationDefsModEventViewSubjectUnion::ConvoDefsConvoRef(
+                    Box::new(inner),
+                ))
+            }
             _ => Ok(ModerationDefsModEventViewSubjectUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -5866,6 +6034,9 @@ impl ModerationDefsModEventViewSubjectUnion {
             }
             ModerationDefsModEventViewSubjectUnion::RepoStrongRef(inner) => inner.encode_cbor(buf),
             ModerationDefsModEventViewSubjectUnion::ConvoDefsMessageRef(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ModerationDefsModEventViewSubjectUnion::ConvoDefsConvoRef(inner) => {
                 inner.encode_cbor(buf)
             }
             ModerationDefsModEventViewSubjectUnion::Unknown(v) => {
@@ -5931,6 +6102,13 @@ impl ModerationDefsModEventViewSubjectUnion {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::chat::bsky::ConvoDefsMessageRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsModEventViewSubjectUnion::ConvoDefsMessageRef(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#convoRef" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsConvoRef::decode_cbor(&mut dec)?;
+                Ok(ModerationDefsModEventViewSubjectUnion::ConvoDefsConvoRef(
                     Box::new(inner),
                 ))
             }
@@ -6970,6 +7148,7 @@ pub enum ModerationDefsModEventViewDetailSubjectUnion {
     ModerationDefsRepoViewNotFound(Box<ModerationDefsRepoViewNotFound>),
     ModerationDefsRecordView(Box<ModerationDefsRecordView>),
     ModerationDefsRecordViewNotFound(Box<ModerationDefsRecordViewNotFound>),
+    ModerationDefsConvoView(Box<ModerationDefsConvoView>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -7025,6 +7204,19 @@ impl serde::Serialize for ModerationDefsModEventViewDetailSubjectUnion {
                         "$type".to_string(),
                         serde_json::Value::String(
                             "tools.ozone.moderation.defs#recordViewNotFound".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsConvoView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "tools.ozone.moderation.defs#convoView".to_string(),
                         ),
                     );
                 }
@@ -7087,6 +7279,15 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsModEventViewDetailSubjectUni
                     ),
                 )
             }
+            "tools.ozone.moderation.defs#convoView" => {
+                let inner: ModerationDefsConvoView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(
+                    ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsConvoView(
+                        Box::new(inner),
+                    ),
+                )
+            }
             _ => Ok(ModerationDefsModEventViewDetailSubjectUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -7119,6 +7320,9 @@ impl ModerationDefsModEventViewDetailSubjectUnion {
             ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsRecordViewNotFound(
                 inner,
             ) => inner.encode_cbor(buf),
+            ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsConvoView(inner) => {
+                inner.encode_cbor(buf)
+            }
             ModerationDefsModEventViewDetailSubjectUnion::Unknown(v) => {
                 if let Some(ref data) = v.cbor {
                     buf.extend_from_slice(data);
@@ -7196,6 +7400,15 @@ impl ModerationDefsModEventViewDetailSubjectUnion {
                 let inner = ModerationDefsRecordViewNotFound::decode_cbor(&mut dec)?;
                 Ok(
                     ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsRecordViewNotFound(
+                        Box::new(inner),
+                    ),
+                )
+            }
+            "tools.ozone.moderation.defs#convoView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = ModerationDefsConvoView::decode_cbor(&mut dec)?;
+                Ok(
+                    ModerationDefsModEventViewDetailSubjectUnion::ModerationDefsConvoView(
                         Box::new(inner),
                     ),
                 )
@@ -11167,6 +11380,7 @@ pub enum ModerationDefsSubjectStatusViewSubjectUnion {
     AdminDefsRepoRef(Box<crate::api::com::atproto::AdminDefsRepoRef>),
     RepoStrongRef(Box<crate::api::com::atproto::RepoStrongRef>),
     ConvoDefsMessageRef(Box<crate::api::chat::bsky::ConvoDefsMessageRef>),
+    ConvoDefsConvoRef(Box<crate::api::chat::bsky::ConvoDefsConvoRef>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -11202,6 +11416,17 @@ impl serde::Serialize for ModerationDefsSubjectStatusViewSubjectUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("chat.bsky.convo.defs#messageRef".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ModerationDefsSubjectStatusViewSubjectUnion::ConvoDefsConvoRef(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#convoRef".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -11248,6 +11473,11 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsSubjectStatusViewSubjectUnio
                     )),
                 )
             }
+            "chat.bsky.convo.defs#convoRef" => {
+                let inner: crate::api::chat::bsky::ConvoDefsConvoRef =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ModerationDefsSubjectStatusViewSubjectUnion::ConvoDefsConvoRef(Box::new(inner)))
+            }
             _ => Ok(ModerationDefsSubjectStatusViewSubjectUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -11275,6 +11505,9 @@ impl ModerationDefsSubjectStatusViewSubjectUnion {
                 inner.encode_cbor(buf)
             }
             ModerationDefsSubjectStatusViewSubjectUnion::ConvoDefsMessageRef(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ModerationDefsSubjectStatusViewSubjectUnion::ConvoDefsConvoRef(inner) => {
                 inner.encode_cbor(buf)
             }
             ModerationDefsSubjectStatusViewSubjectUnion::Unknown(v) => {
@@ -11342,6 +11575,11 @@ impl ModerationDefsSubjectStatusViewSubjectUnion {
                         inner,
                     )),
                 )
+            }
+            "chat.bsky.convo.defs#convoRef" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::chat::bsky::ConvoDefsConvoRef::decode_cbor(&mut dec)?;
+                Ok(ModerationDefsSubjectStatusViewSubjectUnion::ConvoDefsConvoRef(Box::new(inner)))
             }
             _ => Ok(ModerationDefsSubjectStatusViewSubjectUnion::Unknown(
                 crate::api::UnknownUnionVariant {

@@ -17,6 +17,9 @@ pub struct ConvoGetMessagesOutput {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<ConvoGetMessagesOutputMessagesUnion>,
+    /// Set of all members who authored or reacted to the returned messages. Members referred to by system messages are also included.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -27,6 +30,7 @@ pub struct ConvoGetMessagesOutput {
 pub enum ConvoGetMessagesOutputMessagesUnion {
     ConvoDefsMessageView(Box<crate::api::chat::bsky::ConvoDefsMessageView>),
     ConvoDefsDeletedMessageView(Box<crate::api::chat::bsky::ConvoDefsDeletedMessageView>),
+    ConvoDefsSystemMessageView(Box<crate::api::chat::bsky::ConvoDefsSystemMessageView>),
     Unknown(crate::api::UnknownUnionVariant),
 }
 
@@ -52,6 +56,19 @@ impl serde::Serialize for ConvoGetMessagesOutputMessagesUnion {
                         "$type".to_string(),
                         serde_json::Value::String(
                             "chat.bsky.convo.defs#deletedMessageView".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoGetMessagesOutputMessagesUnion::ConvoDefsSystemMessageView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#systemMessageView".to_string(),
                         ),
                     );
                 }
@@ -94,6 +111,15 @@ impl<'de> serde::Deserialize<'de> for ConvoGetMessagesOutputMessagesUnion {
                     )),
                 )
             }
+            "chat.bsky.convo.defs#systemMessageView" => {
+                let inner: crate::api::chat::bsky::ConvoDefsSystemMessageView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(
+                    ConvoGetMessagesOutputMessagesUnion::ConvoDefsSystemMessageView(Box::new(
+                        inner,
+                    )),
+                )
+            }
             _ => Ok(ConvoGetMessagesOutputMessagesUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -118,6 +144,9 @@ impl ConvoGetMessagesOutputMessagesUnion {
                 inner.encode_cbor(buf)
             }
             ConvoGetMessagesOutputMessagesUnion::ConvoDefsDeletedMessageView(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoGetMessagesOutputMessagesUnion::ConvoDefsSystemMessageView(inner) => {
                 inner.encode_cbor(buf)
             }
             ConvoGetMessagesOutputMessagesUnion::Unknown(v) => {
@@ -182,6 +211,16 @@ impl ConvoGetMessagesOutputMessagesUnion {
                     )),
                 )
             }
+            "chat.bsky.convo.defs#systemMessageView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::ConvoDefsSystemMessageView::decode_cbor(&mut dec)?;
+                Ok(
+                    ConvoGetMessagesOutputMessagesUnion::ConvoDefsSystemMessageView(Box::new(
+                        inner,
+                    )),
+                )
+            }
             _ => Ok(ConvoGetMessagesOutputMessagesUnion::Unknown(
                 crate::api::UnknownUnionVariant {
                     r#type: type_str.to_string(),
@@ -193,7 +232,7 @@ impl ConvoGetMessagesOutputMessagesUnion {
     }
 }
 
-/// ConvoGetMessages XRPC query.
+/// ConvoGetMessages — Returns a page of messages from a conversation.
 pub async fn convo_get_messages(
     client: &crate::xrpc::Client,
     params: &ConvoGetMessagesParams,

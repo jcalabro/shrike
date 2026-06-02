@@ -5,10 +5,17 @@
 pub struct ConvoListConvosParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Filter by conversation kind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Filter by conversation lock status. Values follow chat.bsky.convo.defs#convoLockStatus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_state: Option<String>,
+    /// Filter convos by their status. It is discouraged to call with "request" and preferred to call chat.bsky.convo.listConvoRequests, which also includes group join requests made by the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }
@@ -25,7 +32,7 @@ pub struct ConvoListConvosOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoListConvos XRPC query.
+/// ConvoListConvos — Returns a page of conversations (direct or group) for the user.
 pub async fn convo_list_convos(
     client: &crate::xrpc::Client,
     params: &ConvoListConvosParams,

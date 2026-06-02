@@ -16,7 +16,7 @@ pub struct ConvoGetConvoForMembersOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoGetConvoForMembers XRPC query.
+/// ConvoGetConvoForMembers — Get or create a 1-1 conversation for the given members. Always returns the same direct (non-group) conversation. To create a group conversation, use createGroup.
 pub async fn convo_get_convo_for_members(
     client: &crate::xrpc::Client,
     params: &ConvoGetConvoForMembersParams,
