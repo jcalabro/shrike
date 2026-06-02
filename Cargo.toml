@@ -12,6 +12,9 @@ keywords = ["atproto", "bluesky", "at-protocol"]
 categories = ["api-bindings", "network-programming"]
 rust-version = "1.92"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [workspace]
 resolver = "2"
 members = [

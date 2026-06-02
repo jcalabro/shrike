@@ -6,32 +6,38 @@
 
 AT Protocol library for Rust. Designed to be correct, fast, and easy to use.
 
-## Modules
+## Feature-Gated Modules
 
-| Module | Description |
-|-|-|
-| [`shrike::syntax`](https://docs.rs/shrike/latest/shrike/syntax) | core identifier types (DID, Handle, NSID, AT-URI, TID, RecordKey) |
-| [`shrike::cbor`](https://docs.rs/shrike/latest/shrike/cbor) | DAG-CBOR encoding and decoding |
-| [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto) | P-256 and secp256k1 signing, verification, and did:key encoding |
-| [`shrike::mst`](https://docs.rs/shrike/latest/shrike/mst) | Merkle Search Tree implementation |
-| [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo) | AT Protocol repository with signed commits |
-| [`shrike::car`](https://docs.rs/shrike/latest/shrike/car) | CAR v1 archive reading and writing |
-| [`shrike::lexicon`](https://docs.rs/shrike/latest/shrike/lexicon) | Lexicon schema loading and record validation |
-| [`shrike::xrpc`](https://docs.rs/shrike/latest/shrike/xrpc) | XRPC HTTP client with retry and auth |
-| [`shrike::xrpc_server`](https://docs.rs/shrike/latest/shrike/xrpc_server) | Axum-based XRPC server framework |
-| [`shrike::identity`](https://docs.rs/shrike/latest/shrike/identity) | DID resolution and handle verification |
-| [`shrike::streaming`](https://docs.rs/shrike/latest/shrike/streaming) | firehose and Jetstream WebSocket consumers |
-| [`shrike::sync`](https://docs.rs/shrike/latest/shrike/sync) | repository download and verification |
-| [`shrike::backfill`](https://docs.rs/shrike/latest/shrike/backfill) | concurrent bulk repo downloading |
-| [`shrike::labeling`](https://docs.rs/shrike/latest/shrike/labeling) | label signing and verification |
-| [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth) | OAuth 2.0 client with PKCE and DPoP |
-| [`shrike::api`](https://docs.rs/shrike/latest/shrike/api) | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
+| Feature | Module | Description |
+|-|-|-|
+| `syntax` | `shrike::syntax` | core identifier types (DID, Handle, NSID, AT-URI, TID, RecordKey) |
+| `cbor` | `shrike::cbor` | DAG-CBOR encoding and decoding |
+| `crypto` | `shrike::crypto` | P-256 and secp256k1 signing, verification, and did:key encoding |
+| `mst` | `shrike::mst` | Merkle Search Tree implementation |
+| `repo` | `shrike::repo` | AT Protocol repository with signed commits |
+| `car` | `shrike::car` | CAR v1 archive reading and writing |
+| `lexicon` | `shrike::lexicon` | Lexicon schema loading and record validation |
+| `xrpc` | `shrike::xrpc` | XRPC HTTP client with retry and auth |
+| `xrpc-server` | `shrike::xrpc_server` | Axum-based XRPC server framework |
+| `identity` | `shrike::identity` | DID resolution and handle verification |
+| `streaming` | `shrike::streaming` | firehose and Jetstream WebSocket consumers |
+| `sync` | `shrike::sync` | repository download and verification |
+| `backfill` | `shrike::backfill` | concurrent bulk repo downloading |
+| `labeling` | `shrike::labeling` | label signing and verification |
+| `oauth` | `shrike::oauth` | OAuth 2.0 client with PKCE and DPoP |
+| `api` | `shrike::api` | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
 
-Each module is behind a feature flag. Enable `full` for everything, or pick what you need.
+The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `car`.
+Enable `full` for everything, or disable defaults and pick only what you need.
 
 ```toml
 [dependencies]
 shrike = { version = "0.1", features = ["full"] }
+```
+
+```toml
+[dependencies]
+shrike = { version = "0.1", default-features = false, features = ["syntax", "xrpc"] }
 ```
 
 ## License

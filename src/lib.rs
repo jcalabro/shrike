@@ -12,18 +12,19 @@
 //!
 //! What you need depends on what you are building:
 //!
-//! - Bot or client app: Start with [`xrpc::Client`] and the [`api`] module to make authenticated requests
+//! - Bot or client app: Start with `xrpc::Client` and the `api` module to make authenticated requests
 //!   to Bluesky or other AT Protocol services.
-//! - Feed generator: Use [`streaming::Client`] to consume the firehose and [`xrpc::Client`] to serve your
+//! - Feed generator: Use `streaming::Client` to consume the firehose and `xrpc::Client` to serve your
 //!   custom feed.
-//! - Labeler: Combine [`streaming::Client`] for processing records, [`labeling`] for creating and signing
-//!   labels, and [`xrpc_server::Server`] to host your labeler service.
-//! - Full relay or PDS: You will need [`repo`], [`sync`], [`identity`], and most other modules to handle
+//! - Labeler: Combine `streaming::Client` for processing records, `labeling` for creating and signing
+//!   labels, and `xrpc_server::Server` to host your labeler service.
+//! - Full relay or PDS: You will need `repo`, `sync`, `identity`, and most other modules to handle
 //!   repository storage, commit verification, identity resolution, and federation.
 //!
 //! ## Feature flags
 //!
-//! By default, no features are enabled. Pick what you need:
+//! The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `car`.
+//! Enable `full` for everything, or disable defaults and pick only what you need:
 //!
 //! | Feature | Description |
 //! |---------|-------------|
