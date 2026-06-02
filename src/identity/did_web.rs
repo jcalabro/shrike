@@ -18,8 +18,7 @@ pub async fn resolve_did_web(
     } else {
         format!("https://{}/{}/did.json", parts[0], parts[1..].join("/"))
     };
-    let resp = http
-        .get(&url)
+    let resp = crate::outbound::apply_user_agent(http.get(&url))
         .send()
         .await
         .map_err(|e| IdentityError::Network(e.to_string()))?;

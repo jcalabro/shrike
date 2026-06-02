@@ -151,12 +151,8 @@ pub async fn revoke_token(
         Err(_) => return,
     };
 
-    let _ = http
-        .post(endpoint)
-        .header("DPoP", &proof)
-        .form(&params)
-        .send()
-        .await;
+    let rb = http.post(endpoint).header("DPoP", &proof).form(&params);
+    let _ = crate::outbound::apply_user_agent(rb).send().await;
 }
 
 /// Shared logic for POST-ing to the token endpoint with DPoP and nonce retry.
@@ -179,12 +175,11 @@ async fn post_token_request(
         None,
     )?;
 
-    let resp = http
+    let rb = http
         .post(token_endpoint)
         .header("DPoP", &proof)
-        .form(params)
-        .send()
-        .await?;
+        .form(params);
+    let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
     // Update nonce from response header
     if let Some(new_nonce) = resp
@@ -209,12 +204,11 @@ async fn post_token_request(
             None,
         )?;
 
-        let retry_resp = http
+        let retry_rb = http
             .post(token_endpoint)
             .header("DPoP", &retry_proof)
-            .form(params)
-            .send()
-            .await?;
+            .form(params);
+        let retry_resp = crate::outbound::apply_user_agent(retry_rb).send().await?;
 
         // Update nonce again
         if let Some(new_nonce) = retry_resp

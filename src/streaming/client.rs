@@ -5,6 +5,8 @@ use std::time::Duration;
 use futures::StreamExt;
 use futures::stream::Stream;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::streaming::StreamError;
@@ -69,6 +71,9 @@ pub struct Config {
     pub backoff: Option<BackoffPolicy>,
     /// Maximum WebSocket message size. None means 2 MB.
     pub max_message_size: Option<usize>,
+    /// User-Agent header for outbound WebSocket connections. None means
+    /// [`crate::USER_AGENT`].
+    pub user_agent: Option<String>,
     /// For Jetstream: filter by collections.
     pub collections: Option<Vec<String>>,
     /// For Jetstream: filter by DIDs.
@@ -102,6 +107,7 @@ pub struct Client {
     backoff: BackoffPolicy,
     batch_size: usize,
     batch_timeout: Duration,
+    user_agent: String,
     cursor: Arc<AtomicI64>,
 }
 
@@ -116,6 +122,9 @@ impl Client {
             backoff: config.backoff.unwrap_or_default(),
             batch_size: config.batch_size.unwrap_or(50),
             batch_timeout: config.batch_timeout.unwrap_or(Duration::from_millis(500)),
+            user_agent: config
+                .user_agent
+                .unwrap_or_else(|| crate::USER_AGENT.to_owned()),
             cursor: Arc::new(AtomicI64::new(cursor_val)),
         }
     }
@@ -160,6 +169,7 @@ impl Client {
                             cursor.load(Ordering::SeqCst),
                             &self.collections,
                             &self.dids,
+                            &self.user_agent,
                         )
                         .await
                         {
@@ -309,6 +319,7 @@ impl Client {
                                 cursor.load(Ordering::SeqCst),
                                 &self.collections,
                                 &self.dids,
+                                &self.user_agent,
                             )
                             .await
                             {
@@ -432,6 +443,7 @@ async fn connect_ws(
     cursor: i64,
     collections: &Option<Vec<String>>,
     dids: &Option<Vec<String>>,
+    user_agent: &str,
 ) -> Result<WsStream, StreamError> {
     let mut url = url::Url::parse(base_url)
         .map_err(|e| StreamError::WebSocket(format!("invalid URL: {e}")))?;
@@ -451,12 +463,30 @@ async fn connect_ws(
         }
     }
 
-    let (ws_stream, _response) = tokio_tungstenite::connect_async(url.as_str())
+    let request = websocket_request(url.as_str(), user_agent)?;
+
+    let (ws_stream, _response) = tokio_tungstenite::connect_async(request)
         .await
         .map_err(|e| StreamError::WebSocket(format!("connection failed: {e}")))?;
 
     let (_write, read) = ws_stream.split();
     Ok(read)
+}
+
+fn websocket_request(
+    url: &str,
+    user_agent: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, StreamError> {
+    let mut request = url
+        .into_client_request()
+        .map_err(|e| StreamError::WebSocket(format!("invalid request: {e}")))?;
+    let user_agent = HeaderValue::from_str(user_agent)
+        .map_err(|e| StreamError::WebSocket(format!("invalid User-Agent header: {e}")))?;
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::USER_AGENT,
+        user_agent,
+    );
+    Ok(request)
 }
 
 pub(crate) fn event_seq(event: &Event) -> i64 {
@@ -509,6 +539,7 @@ mod tests {
         let cfg = Config::default();
         assert!(cfg.url.is_empty());
         assert!(cfg.cursor.is_none());
+        assert!(cfg.user_agent.is_none());
         assert!(cfg.max_message_size.is_none());
         assert!(cfg.batch_size.is_none());
         assert!(cfg.batch_timeout.is_none());
@@ -526,6 +557,7 @@ mod tests {
             batch_timeout: Some(Duration::from_secs(2)),
             collections: Some(vec!["app.bsky.feed.post".into()]),
             dids: Some(vec!["did:plc:test123456789abcdefghij".into()]),
+            user_agent: Some("my-stream-consumer/1.0".into()),
             ..Config::default()
         };
         assert_eq!(cfg.url, "wss://example.com");
@@ -534,6 +566,7 @@ mod tests {
         assert_eq!(cfg.batch_timeout, Some(Duration::from_secs(2)));
         assert_eq!(cfg.collections.as_ref().unwrap().len(), 1);
         assert_eq!(cfg.dids.as_ref().unwrap().len(), 1);
+        assert_eq!(cfg.user_agent.as_deref(), Some("my-stream-consumer/1.0"));
     }
 
     #[test]
@@ -543,8 +576,19 @@ mod tests {
             ..Config::default()
         });
         assert_eq!(client.cursor(), None);
+        assert_eq!(client.user_agent, crate::USER_AGENT);
         assert_eq!(client.batch_size, 50);
         assert_eq!(client.batch_timeout, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn client_overrides_user_agent() {
+        let client = Client::new(Config {
+            url: "wss://example.com".into(),
+            user_agent: Some("custom-client/2.3".into()),
+            ..Config::default()
+        });
+        assert_eq!(client.user_agent, "custom-client/2.3");
     }
 
     #[test]
@@ -672,5 +716,50 @@ mod tests {
         ];
         update_jetstream_cursor(&cursor, &batch);
         assert_eq!(cursor.load(Ordering::SeqCst), 200);
+    }
+
+    #[test]
+    fn websocket_request_sets_shrike_user_agent() {
+        let request = websocket_request(
+            "wss://example.com/xrpc/com.atproto.sync.subscribeRepos",
+            crate::USER_AGENT,
+        )
+        .unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .get(tokio_tungstenite::tungstenite::http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some(crate::USER_AGENT)
+        );
+    }
+
+    #[test]
+    fn websocket_request_sets_custom_user_agent() {
+        let request = websocket_request(
+            "wss://example.com/xrpc/com.atproto.sync.subscribeRepos",
+            "custom-client/2.3",
+        )
+        .unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .get(tokio_tungstenite::tungstenite::http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("custom-client/2.3")
+        );
+    }
+
+    #[test]
+    fn websocket_request_rejects_invalid_user_agent() {
+        let err = websocket_request(
+            "wss://example.com/xrpc/com.atproto.sync.subscribeRepos",
+            "bad\nagent",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid User-Agent"),
+            "unexpected error: {err}"
+        );
     }
 }

@@ -82,11 +82,11 @@ pub async fn fetch_protected_resource_metadata(
         .build()
         .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
 
-    let resp = no_redirect
-        .get(&url)
-        .header("Accept", "application/json")
-        .send()
-        .await?;
+    let resp = crate::outbound::apply_user_agent(
+        no_redirect.get(&url).header("Accept", "application/json"),
+    )
+    .send()
+    .await?;
 
     if resp.status() != reqwest::StatusCode::OK {
         return Err(OAuthError::Http(format!(
@@ -121,11 +121,11 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
         .build()
         .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
 
-    let resp = no_redirect
-        .get(&url)
-        .header("Accept", "application/json")
-        .send()
-        .await?;
+    let resp = crate::outbound::apply_user_agent(
+        no_redirect.get(&url).header("Accept", "application/json"),
+    )
+    .send()
+    .await?;
 
     if resp.status() != reqwest::StatusCode::OK {
         return Err(OAuthError::Http(format!(

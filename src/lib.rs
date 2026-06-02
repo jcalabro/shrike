@@ -60,6 +60,12 @@
 //! let profile = bsky::actor_get_profile(&client, &params).await?;
 //! ```
 
+/// Default User-Agent sent by Shrike outbound HTTP and WebSocket clients.
+pub const USER_AGENT: &str = concat!("shrike/", env!("CARGO_PKG_VERSION"));
+
+#[cfg(any(feature = "xrpc", feature = "identity", feature = "oauth"))]
+mod outbound;
+
 #[cfg(feature = "syntax")]
 pub mod syntax;
 
@@ -116,3 +122,14 @@ pub use crate::cbor::Cid;
 pub use crate::syntax::{
     AtIdentifier, AtUri, Datetime, Did, Handle, Language, Nsid, RecordKey, Tid, TidClock,
 };
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn user_agent_includes_crate_version() {
+        assert_eq!(
+            crate::USER_AGENT,
+            concat!("shrike/", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}

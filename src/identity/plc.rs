@@ -26,9 +26,7 @@ impl PlcClient {
     /// Resolve a `did:plc` DID to its DID document.
     pub async fn resolve(&self, did: &Did) -> Result<DidDocument, IdentityError> {
         let url = format!("{}/{}", self.url, did.as_str());
-        let resp = self
-            .http
-            .get(&url)
+        let resp = crate::outbound::apply_user_agent(self.http.get(&url))
             .send()
             .await
             .map_err(|e| IdentityError::Network(e.to_string()))?;

@@ -63,14 +63,13 @@ impl AuthenticatedClient {
             Some(&access_token),
         )?;
 
-        let resp = self
+        let rb = self
             .http
             .get(&url)
             .query(params)
             .header("Authorization", format!("DPoP {access_token}"))
-            .header("DPoP", &proof)
-            .send()
-            .await?;
+            .header("DPoP", &proof);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         // Update nonce from response
         self.update_nonce_from_response(&url, &resp)?;
@@ -116,14 +115,13 @@ impl AuthenticatedClient {
             Some(access_token),
         )?;
 
-        let resp = self
+        let rb = self
             .http
             .get(url)
             .query(params)
             .header("Authorization", format!("DPoP {access_token}"))
-            .header("DPoP", &proof)
-            .send()
-            .await?;
+            .header("DPoP", &proof);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         // Update nonce from retry response
         self.update_nonce_from_response(url, &resp)?;
@@ -165,14 +163,13 @@ impl AuthenticatedClient {
             Some(&access_token),
         )?;
 
-        let resp = self
+        let rb = self
             .http
             .post(&url)
             .json(input)
             .header("Authorization", format!("DPoP {access_token}"))
-            .header("DPoP", &proof)
-            .send()
-            .await?;
+            .header("DPoP", &proof);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         // Update nonce from response
         self.update_nonce_from_response(&url, &resp)?;
@@ -218,14 +215,13 @@ impl AuthenticatedClient {
             Some(access_token),
         )?;
 
-        let resp = self
+        let rb = self
             .http
             .post(url)
             .json(input)
             .header("Authorization", format!("DPoP {access_token}"))
-            .header("DPoP", &proof)
-            .send()
-            .await?;
+            .header("DPoP", &proof);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         // Update nonce from retry response
         self.update_nonce_from_response(url, &resp)?;

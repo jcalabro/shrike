@@ -169,7 +169,7 @@ impl Client {
                 tokio::time::sleep(delay).await;
             }
 
-            let rb = self.http.get(&url).query(params);
+            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {
@@ -230,6 +230,7 @@ impl Client {
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .body(body.clone());
+            let rb = crate::outbound::apply_user_agent(rb);
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {
@@ -281,7 +282,7 @@ impl Client {
                 tokio::time::sleep(delay).await;
             }
 
-            let rb = self.http.get(&url).query(params);
+            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {
@@ -353,6 +354,7 @@ impl Client {
                 .post(&url)
                 .header("Content-Type", content_type)
                 .body(body.clone());
+            let rb = crate::outbound::apply_user_agent(rb);
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {
@@ -406,13 +408,12 @@ impl Client {
         });
         let body_bytes = serde_json::to_vec(&body)?;
 
-        let resp = self
+        let rb = self
             .http
             .post(&url)
             .header("Content-Type", "application/json")
-            .body(body_bytes)
-            .send()
-            .await?;
+            .body(body_bytes);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         let status = resp.status();
         if status.is_success() {
@@ -432,7 +433,7 @@ impl Client {
         let url = self.xrpc_url("com.atproto.server.refreshSession");
         let refresh_jwt = self.refresh_bearer().await;
 
-        let rb = self.http.post(&url);
+        let rb = crate::outbound::apply_user_agent(self.http.post(&url));
         let rb = self.apply_auth(rb, refresh_jwt.as_deref());
 
         let resp = rb.send().await?;
@@ -455,7 +456,7 @@ impl Client {
         let url = self.xrpc_url("com.atproto.server.deleteSession");
         let refresh_jwt = self.refresh_bearer().await;
 
-        let rb = self.http.post(&url);
+        let rb = crate::outbound::apply_user_agent(self.http.post(&url));
         let rb = self.apply_auth(rb, refresh_jwt.as_deref());
 
         let resp = rb.send().await?;

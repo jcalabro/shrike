@@ -211,13 +211,12 @@ impl OAuthClient {
             dpop::create_dpop_proof(&dpop_key, "POST", par_endpoint, nonce.as_deref(), None)?;
 
         // 13. POST params to PAR endpoint with DPoP header.
-        let resp = self
+        let rb = self
             .http
             .post(par_endpoint)
             .header("DPoP", &proof)
-            .form(&params)
-            .send()
-            .await?;
+            .form(&params);
+        let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
         // Update nonce from response header.
         if let Some(new_nonce) = resp
@@ -244,13 +243,12 @@ impl OAuthClient {
                 None,
             )?;
 
-            let retry_resp = self
+            let retry_rb = self
                 .http
                 .post(par_endpoint)
                 .header("DPoP", &retry_proof)
-                .form(&params)
-                .send()
-                .await?;
+                .form(&params);
+            let retry_resp = crate::outbound::apply_user_agent(retry_rb).send().await?;
 
             if let Some(new_nonce) = retry_resp
                 .headers()
@@ -454,7 +452,9 @@ impl OAuthClient {
 
         // Try .well-known/atproto-did first (cheapest).
         let url = format!("https://{}/.well-known/atproto-did", input);
-        if let Ok(resp) = self.http.get(&url).send().await
+        if let Ok(resp) = crate::outbound::apply_user_agent(self.http.get(&url))
+            .send()
+            .await
             && resp.status().is_success()
             && let Ok(body) = resp.text().await
             && let Ok(did) = Did::try_from(body.trim())
@@ -467,9 +467,12 @@ impl OAuthClient {
             "https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={}",
             input
         );
-        let resp = self.http.get(&resolve_url).send().await.map_err(|e| {
-            OAuthError::Identity(format!("failed to resolve handle '{input}': {e}"))
-        })?;
+        let resp = crate::outbound::apply_user_agent(self.http.get(&resolve_url))
+            .send()
+            .await
+            .map_err(|e| {
+                OAuthError::Identity(format!("failed to resolve handle '{input}': {e}"))
+            })?;
 
         if !resp.status().is_success() {
             return Err(OAuthError::Identity(format!(
