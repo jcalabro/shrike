@@ -135,12 +135,10 @@ impl Blob {
                         blob.r#type = s.to_string();
                     }
                 }
-                "ref" => {
-                    if !matches!(value, crate::cbor::Value::Null) {
-                        let raw = crate::cbor::encode_value(&value)?;
-                        let mut dec = crate::cbor::Decoder::new(&raw);
-                        blob.r#ref = Some(CidLink::decode_cbor(&mut dec)?);
-                    }
+                "ref" if !matches!(value, crate::cbor::Value::Null) => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    blob.r#ref = Some(CidLink::decode_cbor(&mut dec)?);
                 }
                 "mimeType" => {
                     if let crate::cbor::Value::Text(s) = value {
