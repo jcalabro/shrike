@@ -3,12 +3,14 @@
 //! Provides Cid, Decoder, Encoder, and Value types for working with
 //! deterministic CBOR. Maps are automatically sorted by key.
 //!
-//! ```ignore
+//! ```
 //! use shrike::cbor::{decode, encode_value, Value};
 //!
 //! let val = Value::Map(vec![("key", Value::Text("value"))]);
 //! let bytes = encode_value(&val)?;
 //! let decoded = decode(&bytes)?;
+//! assert_eq!(decoded, val);
+//! # Ok::<(), shrike::cbor::CborError>(())
 //! ```
 
 pub mod cid;

@@ -51,10 +51,10 @@ impl<E> BatchState<E> {
 /// Only [`url`](Config::url) is required. All other fields default to `None`,
 /// which means "use the built-in default" (see each field's doc comment).
 ///
-/// ```ignore
+/// ```
 /// use shrike::streaming::{Client, Config};
 ///
-/// let client = Client::new(Config {
+/// let _client = Client::new(Config {
 ///     url: "wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos".into(),
 ///     cursor: Some(12345),
 ///     ..Config::default()

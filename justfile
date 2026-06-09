@@ -6,9 +6,13 @@ default: lint test
 build:
     cargo build --workspace --features full
 
-# Run all tests (uses nextest for parallel execution)
+# Run unit and integration tests (uses nextest for parallel execution)
 test:
     cargo nextest run --workspace --features full
+
+# Run Rust documentation examples
+test-docs:
+    cargo test --doc -p shrike --all-features
 
 # Run format check + clippy on library and test code
 lint:
@@ -19,8 +23,8 @@ lint:
 fmt:
     cargo fmt --all -- --check
 
-# Run all checks (build + lint + test)
-check: build lint test
+# Run all checks (build + lint + tests + doctests)
+check: build lint test test-docs
 
 # Runs fuzz tests for the given duration (default 30s per target).
 # Targets are ordered by attack surface: network-facing binary parsers first,

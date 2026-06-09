@@ -9,16 +9,17 @@
 //! Use the auto-generated api module for typed method calls or use the
 //! client directly for raw XRPC.
 //!
-//! ```ignore
+//! ```no_run
 //! use shrike::xrpc::Client;
+//! use shrike::api::app::bsky;
 //!
-//! let client = Client::builder()
-//!     .base_url("https://bsky.social")
-//!     .build()?;
-//!
+//! # async fn example() -> Result<(), shrike::xrpc::Error> {
+//! let client = Client::new("https://bsky.social");
 //! // Use with generated API types:
-//! use shrike::api::app::bsky::feed::get_timeline;
-//! let timeline = get_timeline::query(&client, &params).await?;
+//! let params = bsky::FeedGetTimelineParams::default();
+//! let _timeline = bsky::feed_get_timeline(&client, &params).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 mod auth;

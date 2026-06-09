@@ -9,23 +9,24 @@
 //! timestamp-based revision ID (TID), and an optional reference to the
 //! previous commit. Commits form a linear history chain.
 //!
-//! ```ignore
+//! ```
 //! use shrike::repo::Repo;
 //! use shrike::syntax::{Did, Nsid, RecordKey, TidClock};
 //! use shrike::crypto::P256SigningKey;
 //!
-//! let did = Did::try_from("did:plc:example")?;
+//! let did = Did::try_from("did:plc:test123456789abcdefghij")?;
 //! let clock = TidClock::new(0)?;
 //! let mut repo = Repo::new(did, clock);
 //!
 //! let collection = Nsid::try_from("app.bsky.feed.post")?;
 //! let rkey = RecordKey::try_from("abc123")?;
-//! let record = b"{\"text\":\"hello\"}"; // DRISL bytes
+//! let record = b"\xa1\x64text\x65hello"; // DRISL bytes: {"text": "hello"}
 //!
 //! repo.create(&collection, &rkey, record)?;
 //!
 //! let key = P256SigningKey::generate();
-//! let commit = repo.commit(&key)?;
+//! let _commit = repo.commit(&key)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 pub mod commit;

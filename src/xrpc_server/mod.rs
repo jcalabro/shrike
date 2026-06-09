@@ -8,20 +8,39 @@
 //! Procedure handlers are called for POST requests with JSON bodies. Both
 //! return JSON responses or XRPC error envelopes.
 //!
-//! ```ignore
-//! use shrike::xrpc_server::{Server, ServerError};
+//! ```
+//! use serde::{Deserialize, Serialize};
+//! use shrike::xrpc_server::{RequestContext, Server, ServerError};
+//!
+//! #[derive(Deserialize)]
+//! struct PingParams;
+//!
+//! #[derive(Serialize)]
+//! struct PingOutput {
+//!     message: String,
+//! }
+//!
+//! #[derive(Deserialize)]
+//! struct EchoInput {
+//!     text: String,
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct EchoOutput {
+//!     text: String,
+//! }
 //!
 //! let server = Server::new()
 //!     .query("com.example.ping",
-//!         |params: PingParams, _ctx| async move {
+//!         |_params: PingParams, _ctx: RequestContext| async move {
 //!             Ok(PingOutput { message: "pong".into() })
 //!         })
 //!     .procedure("com.example.echo",
-//!         |input: EchoInput, _ctx| async move {
+//!         |input: EchoInput, _ctx: RequestContext| async move {
 //!             Ok(EchoOutput { text: input.text })
 //!         });
 //!
-//! let app = server.into_router();
+//! let _app = server.into_router();
 //! // Serve with axum
 //! ```
 

@@ -15,11 +15,12 @@
 //! Use MemorySessionStore for development or implement SessionStore for
 //! persistent storage.
 //!
-//! ```ignore
+//! ```no_run
 //! use shrike::oauth::{OAuthClient, OAuthClientConfig, AuthorizeOptions};
 //! use shrike::oauth::session::{MemorySessionStore, MemoryStateStore};
 //! use shrike::oauth::metadata::ClientMetadata;
 //!
+//! # async fn example(params: shrike::oauth::CallbackParams) -> Result<(), shrike::oauth::OAuthError> {
 //! let client = OAuthClient::new(OAuthClientConfig {
 //!     metadata: ClientMetadata {
 //!         client_id: "https://myapp.example/client-metadata.json".into(),
@@ -41,8 +42,10 @@
 //! // Redirect user to result.url
 //!
 //! // On callback:
-//! let session = client.callback(params).await?;
+//! let _session = client.callback(params).await?;
 //! // Use session to make authenticated requests
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod client;

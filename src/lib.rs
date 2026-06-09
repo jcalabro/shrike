@@ -48,17 +48,20 @@
 //!
 //! ## Quick start
 //!
-//! ```rust,ignore
-//! use shrike::xrpc::{Client, AuthInfo};
+//! ```rust,no_run
+//! use shrike::xrpc::Client;
 //! use shrike::api::app::bsky;
 //!
+//! # async fn example() -> Result<(), shrike::xrpc::Error> {
 //! // Create a client and make a query
 //! let client = Client::new("https://bsky.social");
 //! let params = bsky::ActorGetProfileParams {
 //!     actor: "alice.bsky.social".into(),
 //!     ..Default::default()
 //! };
-//! let profile = bsky::actor_get_profile(&client, &params).await?;
+//! let _profile = bsky::actor_get_profile(&client, &params).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 /// Default User-Agent sent by Shrike outbound HTTP and WebSocket clients.
