@@ -4,6 +4,8 @@
 [![docs.rs](https://docs.rs/shrike/badge.svg)](https://docs.rs/shrike)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](https://github.com/jcalabro/shrike)
 
+<img src="https://github.com/user-attachments/assets/5a4418e4-6de7-4d8d-869c-64ef7a322062" />
+
 AT Protocol library for Rust. Designed to be correct, fast, and easy to use.
 
 ## Feature-Gated Modules
