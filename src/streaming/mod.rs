@@ -23,8 +23,12 @@
 pub mod client;
 pub mod event;
 pub mod jetstream;
+#[cfg(feature = "sync")]
+pub mod parallel;
 pub mod reconnect;
 
+#[cfg(feature = "sync")]
+pub use crate::sync::raw::parse_raw_sync_frame;
 pub use client::{Client, Config};
 pub use event::{Event, Label, Operation};
 pub use jetstream::{JetstreamCommit, JetstreamEvent, parse_jetstream_message};
@@ -43,11 +47,24 @@ pub enum StreamError {
     WebSocket(String),
     #[error("unknown event type: {0}")]
     UnknownType(String),
+    #[cfg(feature = "sync")]
+    #[error("verifier error: {0}")]
+    Verifier(#[source] Box<crate::sync::VerifierError>),
+    #[cfg(feature = "sync")]
+    #[error("per-DID verify queue overflow for {did}: dropped event at seq {seq}")]
+    QueueOverflow { did: String, seq: i64 },
 }
 
 impl From<crate::cbor::CborError> for StreamError {
     fn from(e: crate::cbor::CborError) -> Self {
         StreamError::ParseCbor(e.to_string())
+    }
+}
+
+#[cfg(feature = "sync")]
+impl From<crate::sync::VerifierError> for StreamError {
+    fn from(err: crate::sync::VerifierError) -> Self {
+        Self::Verifier(Box::new(err))
     }
 }
 

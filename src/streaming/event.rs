@@ -74,6 +74,17 @@ pub enum Operation {
         /// Record key of the deleted record.
         rkey: RecordKey,
     },
+    /// A record observed during full-repo resync.
+    Resync {
+        /// Collection NSID.
+        collection: Nsid,
+        /// Record key within the collection.
+        rkey: RecordKey,
+        /// Content hash of the record data, when present.
+        cid: Option<Cid>,
+        /// Raw DRISL-encoded record bytes.
+        record: Vec<u8>,
+    },
 }
 
 /// A moderation label from a firehose labels event.

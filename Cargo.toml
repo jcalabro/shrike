@@ -92,7 +92,7 @@ api = ["syntax", "cbor", "xrpc"]
 
 # Layer 3 (depend on multiple lower layers)
 oauth = ["syntax", "crypto", "identity", "dep:reqwest", "dep:tokio", "dep:url", "dep:rand", "dep:async-trait"]
-sync = ["syntax", "cbor", "crypto", "mst", "repo", "car", "identity", "xrpc", "dep:tokio"]
+sync = ["syntax", "cbor", "crypto", "mst", "repo", "car", "identity", "xrpc", "dep:tokio", "dep:async-trait"]
 backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand", "dep:futures"]
 
 # Everything
@@ -142,7 +142,7 @@ rand = { workspace = true, optional = true }
 # backfill
 tokio-util = { workspace = true, optional = true }
 
-# oauth
+# oauth, sync
 async-trait = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -4,9 +4,34 @@
 //! and [`verify_blocks`] checks that every block's CID matches its data.
 
 pub mod client;
+pub mod error;
+pub mod invert;
+pub mod raw;
+pub mod resync;
+pub mod state;
+pub mod verifier;
 pub mod verify;
 
 pub use client::SyncClient;
+pub use error::VerifierError;
+pub use invert::{
+    CarBlockStore, DecodedCommitCar, check_op_cids, decode_commit_car, decode_sync_commit,
+    find_duplicate_path, invert_commit, invert_decoded_commit,
+};
+pub use raw::{RawAccount, RawCommit, RawIdentity, RawRepoOp, RawSync, RawSyncError, RawSyncEvent};
+pub use resync::{
+    DEFAULT_MAX_REPO_BLOCK_BYTES, DEFAULT_MAX_REPO_BLOCKS, DEFAULT_MAX_REPO_CAR_BYTES,
+    DEFAULT_MAX_REPO_RECORDS, RepoLoadLimits, ResyncEvent,
+};
+pub use state::{
+    ChainState, HostingState, MemStateStore, StateStore, StateStoreError, StateStoreOperation,
+};
+pub use verifier::{
+    DEFAULT_FUTURE_REV_TOLERANCE, DEFAULT_RESYNC_BURST, DEFAULT_RESYNC_LIMIT_PER_SECOND,
+    DEFAULT_RESYNC_LIMITER_CAPACITY, HostingPolicy, IdentityResolver, LegacyCommitPolicy,
+    MAX_COMMIT_BLOCKS_BYTES, MAX_COMMIT_OPS, ResyncRateLimit, SyncRepoSource,
+    VERIFIER_LOCK_STRIPES, Verifier, VerifierOp, VerifierOptions, VerifierPolicy, VerifierStats,
+};
 pub use verify::verify_blocks;
 
 use crate::cbor::Cid;
@@ -20,6 +45,10 @@ pub enum SyncError {
     Sync(String),
     #[error("verification failed: {0}")]
     Verification(String),
+    #[error("verifier error: {0}")]
+    Verifier(#[source] Box<crate::sync::error::VerifierError>),
+    #[error("state store error: {0}")]
+    StateStore(#[from] crate::sync::state::StateStoreError),
     #[error("XRPC error: {0}")]
     Xrpc(#[from] crate::xrpc::Error),
     #[error("CAR error: {0}")]
@@ -30,6 +59,12 @@ pub enum SyncError {
     Repo(#[from] crate::repo::RepoError),
     #[error("identity error: {0}")]
     Identity(#[from] crate::identity::IdentityError),
+}
+
+impl From<crate::sync::error::VerifierError> for SyncError {
+    fn from(err: crate::sync::error::VerifierError) -> Self {
+        Self::Verifier(Box::new(err))
+    }
 }
 
 /// A fully downloaded repository, including its commit and all CAR blocks.

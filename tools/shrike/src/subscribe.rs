@@ -314,6 +314,7 @@ fn matches_filters(
             Operation::Create { collection, .. } => collection.as_str(),
             Operation::Update { collection, .. } => collection.as_str(),
             Operation::Delete { collection, .. } => collection.as_str(),
+            Operation::Resync { collection, .. } => collection.as_str(),
         };
         if op_collection != col {
             return false;
@@ -324,6 +325,7 @@ fn matches_filters(
             Operation::Create { .. } => "create",
             Operation::Update { .. } => "update",
             Operation::Delete { .. } => "delete",
+            Operation::Resync { .. } => "resync",
         };
         if op_action != act {
             return false;
@@ -363,6 +365,17 @@ fn op_to_output(op: &Operation) -> OpOutput {
             collection: collection.to_string(),
             rkey: rkey.to_string(),
             cid: None,
+        },
+        Operation::Resync {
+            collection,
+            rkey,
+            cid,
+            ..
+        } => OpOutput {
+            action: "resync".into(),
+            collection: collection.to_string(),
+            rkey: rkey.to_string(),
+            cid: cid.map(|cid| cid.to_string()),
         },
     }
 }

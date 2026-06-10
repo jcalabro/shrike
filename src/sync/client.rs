@@ -34,11 +34,7 @@ impl SyncClient {
     /// Calls `com.atproto.sync.getRepo` with the given DID, then parses the
     /// binary CAR response.
     pub async fn get_repo(&self, did: &Did) -> Result<DownloadedRepo, SyncError> {
-        let params = serde_json::json!({ "did": did.as_str() });
-        let car_bytes = self
-            .xrpc
-            .query_raw("com.atproto.sync.getRepo", &params)
-            .await?;
+        let car_bytes = self.get_repo_car(did).await?;
 
         let (roots, blocks) = crate::car::read_all(&car_bytes[..])?;
 
@@ -58,6 +54,15 @@ impl SyncClient {
             commit,
             blocks,
         })
+    }
+
+    /// Download an entire repository as raw CAR bytes.
+    pub async fn get_repo_car(&self, did: &Did) -> Result<Vec<u8>, SyncError> {
+        let params = serde_json::json!({ "did": did.as_str() });
+        Ok(self
+            .xrpc
+            .query_raw("com.atproto.sync.getRepo", &params)
+            .await?)
     }
 
     /// List repositories available on a PDS or relay, with cursor-based pagination.

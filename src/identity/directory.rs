@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::syntax::Did;
@@ -17,6 +18,7 @@ const DEFAULT_CAPACITY: usize = 1024;
 struct CacheEntry {
     identity: Arc<Identity>,
     expires_at: Instant,
+    generation: u64,
 }
 
 /// A caching identity resolver that supports `did:plc` and `did:web`.
@@ -24,6 +26,7 @@ pub struct Directory {
     plc: PlcClient,
     http: reqwest::Client,
     cache: Mutex<HashMap<Did, CacheEntry>>,
+    generation: AtomicU64,
     ttl: Duration,
     capacity: usize,
 }
@@ -40,6 +43,7 @@ impl Directory {
             plc: PlcClient::new(plc_url),
             http: reqwest::Client::new(),
             cache: Mutex::new(HashMap::new()),
+            generation: AtomicU64::new(0),
             ttl: DEFAULT_TTL,
             capacity: DEFAULT_CAPACITY,
         }
@@ -47,11 +51,14 @@ impl Directory {
 
     /// Resolve a DID to an `Arc<Identity>`, using the cache when possible.
     pub async fn lookup_did(&self, did: &Did) -> Result<Arc<Identity>, IdentityError> {
+        let generation = self.generation.load(Ordering::Acquire);
+
         // Check cache first.
         {
             let cache = self.cache.lock().await;
             if let Some(entry) = cache.get(did)
                 && entry.expires_at > Instant::now()
+                && entry.generation == generation
             {
                 return Ok(Arc::clone(&entry.identity));
             }
@@ -72,6 +79,9 @@ impl Directory {
 
         // Store in cache, evicting one stale entry if at capacity.
         let mut cache = self.cache.lock().await;
+        if self.generation.load(Ordering::Acquire) != generation {
+            return Ok(identity);
+        }
         if cache.len() >= self.capacity && !cache.contains_key(did) {
             // Simple eviction: remove the first expired entry found, or any entry.
             let expired_key = cache
@@ -89,10 +99,17 @@ impl Directory {
             CacheEntry {
                 identity: Arc::clone(&identity),
                 expires_at: Instant::now() + self.ttl,
+                generation,
             },
         );
 
         Ok(identity)
+    }
+
+    /// Remove a cached DID entry, forcing the next lookup to resolve it again.
+    pub async fn purge(&self, did: &Did) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.cache.lock().await.remove(did);
     }
 }
 

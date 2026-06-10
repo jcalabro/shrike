@@ -5,6 +5,7 @@ use rand::Rng;
 /// Configures exponential backoff with full jitter for reconnection attempts.
 ///
 /// Defaults to 1s initial delay, 30s max, 2x multiplier.
+#[derive(Debug, Clone, Copy)]
 pub struct BackoffPolicy {
     /// Delay before the first reconnection attempt (default 1s).
     pub initial_delay: Duration,
