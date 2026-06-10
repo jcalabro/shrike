@@ -158,6 +158,26 @@ url.workspace = true
 sha2.workspace = true
 data-encoding.workspace = true
 
+[[test]]
+name = "api_cbor_roundtrip"
+required-features = ["api"]
+
+[[test]]
+name = "oauth_integration"
+required-features = ["oauth"]
+
+[[test]]
+name = "sync_1_1_parser"
+required-features = ["sync", "streaming"]
+
+[[test]]
+name = "sync_1_1_streaming"
+required-features = ["sync", "streaming", "identity"]
+
+[[test]]
+name = "sync_1_1_verifier"
+required-features = ["sync", "identity"]
+
 [[bench]]
 name = "cbor_benchmarks"
 harness = false

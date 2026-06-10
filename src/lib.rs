@@ -49,10 +49,11 @@
 //! ## Quick start
 //!
 //! ```rust,no_run
-//! use shrike::xrpc::Client;
-//! use shrike::api::app::bsky;
-//!
+//! # #[cfg(all(feature = "xrpc", feature = "api"))]
 //! # async fn example() -> Result<(), shrike::xrpc::Error> {
+//! use shrike::api::app::bsky;
+//! use shrike::xrpc::Client;
+//!
 //! // Create a client and make a query
 //! let client = Client::new("https://bsky.social");
 //! let params = bsky::ActorGetProfileParams {
