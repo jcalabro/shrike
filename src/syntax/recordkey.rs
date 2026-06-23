@@ -110,6 +110,40 @@ fn is_record_key_char(b: u8) -> bool {
 mod tests {
     use super::*;
 
+    fn load_vectors(path: &str) -> Vec<String> {
+        let content = std::fs::read_to_string(path).unwrap();
+        content
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn recordkey_interop_valid() {
+        let vectors = load_vectors("testdata/recordkey_syntax_valid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            RecordKey::try_from(v.as_str())
+                .unwrap_or_else(|e| panic!("should be valid record key: {v:?}, got error: {e}"));
+        }
+    }
+
+    #[test]
+    fn recordkey_interop_invalid() {
+        let vectors = load_vectors("testdata/recordkey_syntax_invalid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            assert!(
+                RecordKey::try_from(v.as_str()).is_err(),
+                "should be invalid record key: {v:?}"
+            );
+        }
+    }
+
     #[test]
     fn recordkey_valid_tid() {
         RecordKey::try_from("3jui7kd2z3b2a").unwrap();

@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::syntax::SyntaxError;
+use crate::syntax::{AtIdentifier, Nsid, RecordKey, SyntaxError};
 
 /// A validated AT Protocol URI (e.g. `"at://did:plc:abc123/app.bsky.feed.post/tid"`).
 ///
@@ -123,14 +123,10 @@ impl TryFrom<&str> for AtUri {
             return Err(err("empty authority"));
         }
 
-        // Validate authority characters (must be a valid DID or handle).
-        // We do a lightweight character-level check here (non-empty, no control chars,
-        // no whitespace) without fully re-parsing the DID/handle.
-        for b in authority.bytes() {
-            if !is_authority_char(b) {
-                return Err(err("invalid character in authority"));
-            }
-        }
+        // The authority MUST be a valid AT identifier (DID or handle). Delegate
+        // to the canonical parser rather than a loose character class, so the
+        // AT-URI grammar can't drift from the identifier grammar.
+        AtIdentifier::try_from(authority).map_err(|e| err(&format!("invalid authority: {e}")))?;
 
         // No path — authority only is valid.
         if !has_path {
@@ -152,8 +148,8 @@ impl TryFrom<&str> for AtUri {
             return Err(err("empty collection segment"));
         }
 
-        // Validate collection as an NSID (dot-separated segments, at least 3).
-        validate_collection(collection, raw)?;
+        // The collection MUST be a valid NSID. Delegate to the canonical parser.
+        Nsid::try_from(collection).map_err(|e| err(&format!("invalid collection: {e}")))?;
 
         if !has_rkey {
             return Ok(AtUri(raw.to_owned()));
@@ -169,8 +165,10 @@ impl TryFrom<&str> for AtUri {
             return Err(err("too many path segments"));
         }
 
-        // Validate rkey characters.
-        validate_rkey(rkey, raw)?;
+        // The record key MUST satisfy the record-key grammar (which also
+        // rejects the reserved "." and ".." values and the over-broad
+        // URI-sub-delims charset). Delegate to the canonical parser.
+        RecordKey::try_from(rkey).map_err(|e| err(&format!("invalid record key: {e}")))?;
 
         Ok(AtUri(raw.to_owned()))
     }
@@ -197,85 +195,6 @@ impl<'de> Deserialize<'de> for AtUri {
     }
 }
 
-/// Validates a collection NSID segment: at least 3 dot-separated segments,
-/// each non-empty, first segment starts with a letter, all chars alphanumeric or hyphen.
-fn validate_collection(collection: &str, raw: &str) -> Result<(), SyntaxError> {
-    let err = |msg: &str| SyntaxError::InvalidAtUri(format!("{raw:?}: invalid collection: {msg}"));
-
-    let segments: Vec<&str> = collection.split('.').collect();
-    if segments.len() < 3 {
-        return Err(err("must have at least 3 dot-separated segments"));
-    }
-
-    for (i, seg) in segments.iter().enumerate() {
-        if seg.is_empty() {
-            return Err(err("empty segment"));
-        }
-        let bytes = seg.as_bytes();
-        // First segment must start with a letter.
-        if i == 0 && !bytes[0].is_ascii_alphabetic() {
-            return Err(err("first segment must start with a letter"));
-        }
-        for &b in bytes {
-            if !b.is_ascii_alphanumeric() && b != b'-' {
-                return Err(err("invalid character in segment"));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Validates record key characters: printable ASCII excluding space and certain reserved chars.
-fn validate_rkey(rkey: &str, raw: &str) -> Result<(), SyntaxError> {
-    let err = |msg: &str| SyntaxError::InvalidAtUri(format!("{raw:?}: invalid record key: {msg}"));
-
-    if rkey.is_empty() {
-        return Err(err("empty"));
-    }
-    if rkey.len() > 512 {
-        return Err(err("too long"));
-    }
-
-    for b in rkey.bytes() {
-        if !is_rkey_char(b) {
-            return Err(err("invalid character"));
-        }
-    }
-
-    Ok(())
-}
-
-/// Characters valid in the authority portion: alphanumeric, '.', '-', '_', ':'.
-#[inline]
-fn is_authority_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_' || b == b':'
-}
-
-/// Characters valid in a record key: printable ASCII excluding '/' and certain specials.
-/// Follows the AT Protocol record key spec: [a-zA-Z0-9._~:@!$&'()*+,;=-]
-#[inline]
-fn is_rkey_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric()
-        || b == b'.'
-        || b == b'_'
-        || b == b'~'
-        || b == b':'
-        || b == b'@'
-        || b == b'!'
-        || b == b'$'
-        || b == b'&'
-        || b == b'\''
-        || b == b'('
-        || b == b')'
-        || b == b'*'
-        || b == b'+'
-        || b == b','
-        || b == b';'
-        || b == b'='
-        || b == b'-'
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -285,6 +204,43 @@ fn is_rkey_char(b: u8) -> bool {
 )]
 mod tests {
     use super::*;
+
+    /// Load test vectors, keeping each raw line (untrimmed) so that vectors
+    /// whose (in)validity depends on leading/trailing whitespace are preserved.
+    /// Comment (`#`) and blank lines are filtered on the trimmed form.
+    fn load_vectors(path: &str) -> Vec<String> {
+        let content = std::fs::read_to_string(path).unwrap();
+        content
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn aturi_interop_valid() {
+        let vectors = load_vectors("testdata/aturi_syntax_valid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            AtUri::try_from(v.as_str())
+                .unwrap_or_else(|e| panic!("should be valid AT-URI: {v:?}, got error: {e}"));
+        }
+    }
+
+    #[test]
+    fn aturi_interop_invalid() {
+        let vectors = load_vectors("testdata/aturi_syntax_invalid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            assert!(
+                AtUri::try_from(v.as_str()).is_err(),
+                "should be invalid AT-URI: {v:?}"
+            );
+        }
+    }
 
     #[test]
     fn aturi_full_path() {
