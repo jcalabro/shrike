@@ -8,7 +8,7 @@ use crate::repo::RepoError;
 ///
 /// Version 3 commits require `rev` and `sig`. Version 2 commits (historical)
 /// may have both absent, in which case `sig` is `None` and `rev` defaults to
-/// `Tid::new(0, 0)`.
+/// the epoch TID (`Tid::default()`).
 #[derive(Debug, Clone)]
 pub struct Commit {
     /// DID of the repository owner.
@@ -72,8 +72,19 @@ impl Commit {
     }
 
     /// Encode the full commit (including sig) to DRISL bytes.
+    ///
+    /// Errors if the commit is unsigned: fabricating an all-zero signature
+    /// would round-trip back through [`Commit::from_cbor`] as a *present*
+    /// (but bogus) signature, silently promoting an unsigned commit into a
+    /// structurally-signed one. Sign the commit first (or use
+    /// [`Commit::unsigned_bytes`] for the to-be-signed bytes).
     #[inline]
     pub fn to_cbor(&self) -> Result<Vec<u8>, RepoError> {
+        if self.sig.is_none() {
+            return Err(RepoError::Commit(
+                "cannot encode an unsigned commit with to_cbor; sign it first".into(),
+            ));
+        }
         let mut buf = Vec::with_capacity(256);
         let mut enc = Encoder::new(&mut buf);
         let keys: &[&str] = &["did", "rev", "sig", "data", "prev", "version"];
@@ -173,8 +184,9 @@ impl Commit {
             return Err(RepoError::Commit("v3 commit missing required 'sig'".into()));
         }
 
-        // For v2, rev may be absent; default to epoch.
-        let rev = rev.unwrap_or_else(|| Tid::new(0, 0));
+        // For v2, rev may be absent; default to the epoch TID (timestamp 0,
+        // clock 0), which is the zero value.
+        let rev = rev.unwrap_or_default();
 
         Ok(Commit {
             did,

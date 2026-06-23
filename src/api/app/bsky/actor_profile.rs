@@ -7,6 +7,9 @@ pub const NSID_ACTOR_PROFILE: &str = "app.bsky.actor.profile";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorProfile {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_actorprofile")]
+    pub r#type: String,
     /// Small image to be displayed next to posts from account. AKA, 'profile picture'
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<crate::api::Blob>,
@@ -38,6 +41,10 @@ pub struct ActorProfile {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_actorprofile() -> String {
+    "app.bsky.actor.profile".to_string()
 }
 
 /// Self-label values, specific to the Bluesky application, on the overall account.
@@ -183,7 +190,7 @@ impl ActorProfile {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 0u64;
+            let mut count = 1u64;
             if self.avatar.is_some() {
                 count += 1;
             }
@@ -215,6 +222,8 @@ impl ActorProfile {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.avatar.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("avatar")?;
                 if let Some(ref val) = self.avatar {
@@ -278,6 +287,11 @@ impl ActorProfile {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             if self.avatar.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.avatar {
@@ -377,6 +391,7 @@ impl ActorProfile {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_avatar: Option<crate::api::Blob> = None;
         let mut field_banner: Option<crate::api::Blob> = None;
         let mut field_labels: Option<ActorProfileLabelsUnion> = None;
@@ -392,6 +407,13 @@ impl ActorProfile {
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "avatar" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -467,6 +489,7 @@ impl ActorProfile {
         }
 
         Ok(ActorProfile {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.actor.profile".to_string()),
             avatar: field_avatar,
             banner: field_banner,
             labels: field_labels,

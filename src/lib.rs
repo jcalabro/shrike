@@ -40,7 +40,7 @@
 //! | `identity` | DID resolution and handle verification |
 //! | `streaming` | Firehose and Jetstream WebSocket consumers with reconnection |
 //! | `sync` | Repository sync and commit verification |
-//! | `backfill` | Concurrent bulk repo downloading |
+//! | `backfill` | Concurrent bulk repo downloading (engine scaffolding; download loop WIP) |
 //! | `labeling` | Label creation, signing, and verification |
 //! | `oauth` | OAuth2 authorization client (DPoP, PKCE, session management) |
 //! | `api` | Generated types for all Bluesky and AT Protocol lexicons |

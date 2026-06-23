@@ -703,11 +703,37 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
 
     let mut key_buf = Vec::new();
     n.entries = Vec::with_capacity(nd.entries.len());
+    let mut prev_key: Option<String> = None;
     for ed in &nd.entries {
+        // The prefix length must not exceed the previous key's length. For the
+        // first entry this means prefix_len must be 0 (full key). Vec::truncate
+        // is a silent no-op when the requested length exceeds the current
+        // length, so without this guard a malformed/hostile node block would
+        // silently reconstruct the WRONG key — silent corruption of a
+        // content-addressed structure. Reject instead. (atmos mst.go:886-888)
+        if ed.prefix_len > key_buf.len() {
+            return Err(MstError::InvalidNode(format!(
+                "entry prefix length {} exceeds previous key length {}",
+                ed.prefix_len,
+                key_buf.len()
+            )));
+        }
         key_buf.truncate(ed.prefix_len);
         key_buf.extend_from_slice(&ed.key_suffix);
         let key = String::from_utf8(key_buf.clone())
             .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
+
+        // Entries within a node must be in strictly ascending key order; the
+        // whole tree's get/diff/binary-search logic relies on it. A block whose
+        // entries are out of order (malformed or hostile) must be rejected, not
+        // loaded as-is. (atmos mst.go:894-896)
+        if let Some(prev) = &prev_key
+            && key.as_str() <= prev.as_str()
+        {
+            return Err(MstError::InvalidNode(format!(
+                "entry key {key:?} is not greater than previous key {prev:?}"
+            )));
+        }
 
         let right = ed.right.map(|right_cid| {
             Box::new(Node {
@@ -720,10 +746,11 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
         });
 
         n.entries.push(Entry {
-            key,
+            key: key.clone(),
             val: ed.value,
             right,
         });
+        prev_key = Some(key);
     }
 
     // Derive height from entries when we have one; otherwise preserve the
@@ -826,6 +853,151 @@ mod tests {
             tree.insert(k.to_string(), val).unwrap();
         }
         tree
+    }
+
+    // --- Hardening: malformed node blocks must error on load, never silently
+    // reconstruct wrong keys (content-addressed integrity). Mirrors atmos
+    // hardening_test.go C2 series. ---
+
+    /// Store a hand-built NodeData as the root block and return a Tree whose
+    /// first access will load (and validate) it.
+    fn tree_from_node_data(nd: &NodeData) -> Tree {
+        use crate::cbor::{Cid, Codec};
+        let data = encode_node_data(nd).unwrap();
+        let cid = Cid::compute(Codec::Drisl, &data);
+        let store = MemBlockStore::new();
+        store.put_block(cid, data).unwrap();
+        Tree::load(Box::new(store), cid)
+    }
+
+    #[test]
+    fn load_rejects_nonzero_first_entry_prefix() {
+        // First entry must carry the full key (prefix_len 0). A non-zero first
+        // prefix would be silently swallowed by Vec::truncate on an empty
+        // buffer, reconstructing a wrong (too-short) key.
+        let nd = NodeData {
+            left: None,
+            entries: vec![EntryData {
+                prefix_len: 5,
+                key_suffix: b"key".to_vec(),
+                value: test_value_cid(),
+                right: None,
+            }],
+        };
+        let mut tree = tree_from_node_data(&nd);
+        assert!(
+            tree.entries().is_err(),
+            "non-zero first-entry prefix must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_rejects_prefix_exceeding_previous_key() {
+        // Second entry's prefix_len (99) exceeds the previous key length (2).
+        let nd = NodeData {
+            left: None,
+            entries: vec![
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"ab".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+                EntryData {
+                    prefix_len: 99,
+                    key_suffix: b"x".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+            ],
+        };
+        let mut tree = tree_from_node_data(&nd);
+        assert!(
+            tree.entries().is_err(),
+            "prefix length exceeding previous key must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_rejects_out_of_order_entries() {
+        // Entries must be strictly ascending; "zzz/aaa" then "aaa/bbb" is
+        // descending and must be rejected, not loaded with a broken sort order.
+        let nd = NodeData {
+            left: None,
+            entries: vec![
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"zzz/aaa".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"aaa/bbb".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+            ],
+        };
+        let mut tree = tree_from_node_data(&nd);
+        assert!(
+            tree.entries().is_err(),
+            "out-of-order entries must be rejected"
+        );
+    }
+
+    #[test]
+    fn load_rejects_duplicate_keys() {
+        // Equal adjacent keys are not strictly ascending → rejected.
+        let nd = NodeData {
+            left: None,
+            entries: vec![
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"dup".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"dup".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+            ],
+        };
+        let mut tree = tree_from_node_data(&nd);
+        assert!(tree.entries().is_err(), "duplicate keys must be rejected");
+    }
+
+    #[test]
+    fn load_accepts_valid_prefix_compressed_node() {
+        // Positive control: a well-formed prefix-compressed node loads and
+        // reconstructs the two expected full keys.
+        let nd = NodeData {
+            left: None,
+            entries: vec![
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: b"app.bsky.feed.post/aaa".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+                EntryData {
+                    prefix_len: 19, // shares "app.bsky.feed.post/"
+                    key_suffix: b"bbb".to_vec(),
+                    value: test_value_cid(),
+                    right: None,
+                },
+            ],
+        };
+        let mut tree = tree_from_node_data(&nd);
+        let entries = tree.entries().expect("valid node must load");
+        let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["app.bsky.feed.post/aaa", "app.bsky.feed.post/bbb"]
+        );
     }
 
     #[test]

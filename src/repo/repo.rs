@@ -37,7 +37,6 @@ pub struct Repo {
     clock: TidClock,
     store: Rc<MemBlockStore>,
     tree: Tree,
-    prev_commit: Option<Cid>,
 }
 
 impl Repo {
@@ -50,7 +49,6 @@ impl Repo {
             clock,
             store,
             tree,
-            prev_commit: None,
         }
     }
 
@@ -129,7 +127,12 @@ impl Repo {
             did: self.did.clone(),
             version: 3,
             rev,
-            prev: self.prev_commit,
+            // v3 commits always carry prev: null. The field exists for v2
+            // backwards compatibility but is "virtually always null" per the
+            // repository spec; both atmos and the TS reference always emit null.
+            // A non-null prev would change the commit bytes and produce a
+            // commit CID that diverges from every other implementation.
+            prev: None,
             data: root_cid,
             sig: None,
         };
@@ -140,7 +143,6 @@ impl Repo {
         let commit_data = commit.to_cbor()?;
         let commit_cid = Cid::compute(Codec::Drisl, &commit_data);
         self.store.put_block(commit_cid, commit_data)?;
-        self.prev_commit = Some(commit_cid);
 
         Ok(commit)
     }

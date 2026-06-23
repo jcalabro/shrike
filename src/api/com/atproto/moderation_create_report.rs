@@ -77,7 +77,7 @@ impl<'de> serde::Deserialize<'de> for ModerationCreateReportInputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationCreateReportInputSubjectUnion::RepoStrongRef(
@@ -160,7 +160,7 @@ impl ModerationCreateReportInputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationCreateReportInputSubjectUnion::RepoStrongRef(
@@ -254,7 +254,7 @@ impl<'de> serde::Deserialize<'de> for ModerationCreateReportOutputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationCreateReportOutputSubjectUnion::RepoStrongRef(
@@ -339,7 +339,7 @@ impl ModerationCreateReportOutputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationCreateReportOutputSubjectUnion::RepoStrongRef(

@@ -1,5 +1,5 @@
 //! Roundtrip tests for generated CBOR encode/decode.
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[test]
 fn strong_ref_cbor_roundtrip() {
@@ -145,6 +145,7 @@ fn embed_external_roundtrip() {
 #[test]
 fn feed_post_minimal_roundtrip() {
     let post = shrike::api::app::bsky::FeedPost {
+        r#type: "app.bsky.feed.post".into(),
         text: "Hello world!".into(),
         created_at: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00.000Z").unwrap(),
         embed: None,
@@ -158,7 +159,18 @@ fn feed_post_minimal_roundtrip() {
         extra_cbor: Vec::new(),
     };
     let cbor = post.to_cbor().unwrap();
+    // The encoded record must carry a $type discriminator equal to the NSID.
+    if let shrike::cbor::Value::Map(entries) = shrike::cbor::decode(&cbor).unwrap() {
+        let ty = entries
+            .iter()
+            .find(|(k, _)| *k == "$type")
+            .expect("$type present");
+        assert_eq!(ty.1, shrike::cbor::Value::Text("app.bsky.feed.post"));
+    } else {
+        panic!("expected map");
+    }
     let decoded = shrike::api::app::bsky::FeedPost::from_cbor(&cbor).unwrap();
+    assert_eq!(decoded.r#type, "app.bsky.feed.post");
     assert_eq!(decoded.text, post.text);
     assert_eq!(decoded.created_at, post.created_at);
     assert!(decoded.embed.is_none());
@@ -170,6 +182,7 @@ fn feed_post_minimal_roundtrip() {
 #[test]
 fn feed_post_with_langs_roundtrip() {
     let post = shrike::api::app::bsky::FeedPost {
+        r#type: "app.bsky.feed.post".into(),
         text: "Hello!".into(),
         created_at: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00.000Z").unwrap(),
         embed: None,
@@ -190,4 +203,178 @@ fn feed_post_with_langs_roundtrip() {
     assert_eq!(decoded.text, post.text);
     assert_eq!(decoded.langs, post.langs);
     assert_eq!(decoded.tags, vec!["test"]);
+}
+
+#[test]
+fn label_bytes_sig_encodes_as_cbor_byte_string() {
+    // C2 regression: lexicon `bytes` fields must encode as a DAG-CBOR byte
+    // string (major type 2), not a text string. The label `sig` is the
+    // canonical example — encoding it as text breaks the label CID and makes
+    // the signature unverifiable by any real labeler.
+    use shrike::api::Bytes;
+    use shrike::api::com::atproto::LabelDefsLabel;
+
+    let sig_bytes: Vec<u8> = (0u8..64).collect();
+    let label = LabelDefsLabel {
+        ver: Some(1),
+        src: shrike::syntax::Did::try_from("did:plc:labeler12345678901234").unwrap(),
+        uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
+        cid: None,
+        val: "spam".into(),
+        neg: None,
+        cts: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
+        exp: None,
+        sig: Some(Bytes(sig_bytes.clone())),
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+
+    let cbor = label.to_cbor().unwrap();
+    // Find the "sig" entry in the decoded map and assert it is Bytes, not Text.
+    let val = shrike::cbor::decode(&cbor).unwrap();
+    let entries = match val {
+        shrike::cbor::Value::Map(e) => e,
+        _ => panic!("expected map"),
+    };
+    let sig_entry = entries
+        .iter()
+        .find(|(k, _)| *k == "sig")
+        .expect("sig present");
+    match &sig_entry.1 {
+        shrike::cbor::Value::Bytes(b) => assert_eq!(*b, &sig_bytes[..]),
+        other => panic!("sig must be a CBOR byte string, got {other:?}"),
+    }
+
+    // Round-trip preserves the raw bytes.
+    let decoded = LabelDefsLabel::from_cbor(&cbor).unwrap();
+    assert_eq!(decoded.sig.as_ref().map(|b| b.0.clone()), Some(sig_bytes));
+}
+
+#[test]
+fn label_bytes_sig_json_uses_dollar_bytes() {
+    // C2 regression: JSON form of a `bytes` field must be {"$bytes": "<base64>"}.
+    use shrike::api::Bytes;
+    use shrike::api::com::atproto::LabelDefsLabel;
+
+    let label = LabelDefsLabel {
+        ver: Some(1),
+        src: shrike::syntax::Did::try_from("did:plc:labeler12345678901234").unwrap(),
+        uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
+        cid: None,
+        val: "spam".into(),
+        neg: None,
+        cts: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
+        exp: None,
+        sig: Some(Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&label).unwrap();
+    let sig = &json["sig"];
+    assert!(
+        sig.get("$bytes").is_some(),
+        "bytes JSON must be {{\"$bytes\": ...}}, got {sig}"
+    );
+    // Round-trips back to the same bytes.
+    let decoded: LabelDefsLabel = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.sig.unwrap().0, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+}
+
+#[test]
+fn repo_op_nullable_cid_encodes_null_and_roundtrips() {
+    // M29 regression: repoOp.cid is required+nullable ("null" on deletes). The
+    // key must always be present (CBOR null when None), and decode must accept
+    // a CBOR null cid as None rather than rejecting it.
+    use shrike::api::com::atproto::SyncSubscribeReposRepoOp;
+
+    let delete_op = SyncSubscribeReposRepoOp {
+        action: "delete".into(),
+        cid: None,
+        path: "app.bsky.feed.post/abc".into(),
+        prev: None,
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+    let cbor = delete_op.to_cbor().unwrap();
+    // The `cid` key must be present with a null value.
+    let val = shrike::cbor::decode(&cbor).unwrap();
+    if let shrike::cbor::Value::Map(entries) = val {
+        let cid = entries
+            .iter()
+            .find(|(k, _)| *k == "cid")
+            .expect("cid key must be present even when null");
+        assert_eq!(cid.1, shrike::cbor::Value::Null);
+        // `prev` (plain optional) must be omitted when None.
+        assert!(entries.iter().all(|(k, _)| *k != "prev"));
+    } else {
+        panic!("expected map");
+    }
+    // Decode must accept the null cid as None.
+    let decoded = SyncSubscribeReposRepoOp::from_cbor(&cbor).unwrap();
+    assert!(decoded.cid.is_none());
+    assert_eq!(decoded.action, "delete");
+
+    // JSON: cid present as null, prev omitted.
+    let json = serde_json::to_value(&delete_op).unwrap();
+    assert!(json.get("cid").is_some(), "cid must be present in JSON");
+    assert!(json["cid"].is_null(), "cid must be JSON null");
+    assert!(json.get("prev").is_none(), "prev must be omitted in JSON");
+}
+
+#[test]
+fn union_accepts_explicit_hash_main_type_alias() {
+    // L27: a main-def union variant must accept both the conformant bare NSID
+    // `$type` and the non-conformant explicit `nsid#main` form on deserialize
+    // (matching the TS reference, which registers both). app.bsky.embed.images
+    // is a main def used in EmbedRecordWithMediaMediaUnion.
+    use shrike::api::app::bsky::EmbedRecordWithMediaMediaUnion as U;
+
+    let bare = serde_json::json!({
+        "$type": "app.bsky.embed.images",
+        "images": [],
+    });
+    let explicit = serde_json::json!({
+        "$type": "app.bsky.embed.images#main",
+        "images": [],
+    });
+
+    let from_bare: U = serde_json::from_value(bare).unwrap();
+    let from_explicit: U = serde_json::from_value(explicit).unwrap();
+
+    assert!(
+        matches!(from_bare, U::EmbedImages(_)),
+        "bare NSID must map to EmbedImages"
+    );
+    assert!(
+        matches!(from_explicit, U::EmbedImages(_)),
+        "explicit #main must map to EmbedImages, not Unknown"
+    );
+
+    // And re-serialization must always emit the bare NSID, never `#main`.
+    let reserialized = serde_json::to_value(&from_explicit).unwrap();
+    assert_eq!(
+        reserialized["$type"], "app.bsky.embed.images",
+        "serializer must emit the bare NSID"
+    );
+}
+
+#[test]
+fn union_cbor_accepts_explicit_hash_main_type_alias() {
+    // L27 (CBOR path): the same alias acceptance must hold for decode_cbor.
+    use shrike::api::app::bsky::EmbedRecordWithMediaMediaUnion as U;
+    use shrike::cbor::{Value, encode_value};
+
+    // { "$type": "app.bsky.embed.images#main", "images": [] }. encode_value
+    // canonicalizes key order, producing valid DRISL.
+    let value = Value::Map(vec![
+        ("$type", Value::Text("app.bsky.embed.images#main")),
+        ("images", Value::Array(Vec::new())),
+    ]);
+    let buf = encode_value(&value).unwrap();
+
+    let decoded = U::from_cbor(&buf).unwrap();
+    assert!(
+        matches!(decoded, U::EmbedImages(_)),
+        "explicit #main must decode to EmbedImages over CBOR"
+    );
 }

@@ -870,7 +870,9 @@ impl ConvoDefsConvoView {
                 }
                 "unreadCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_unread_count = Some(n as i64);
+                        field_unread_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_unread_count = Some(n);
@@ -1344,7 +1346,9 @@ impl ConvoDefsGroupConvo {
                 }
                 "memberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_member_count = Some(n as i64);
+                        field_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_member_count = Some(n);
@@ -1357,7 +1361,9 @@ impl ConvoDefsGroupConvo {
                 },
                 "memberLimit" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_member_limit = Some(n as i64);
+                        field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_member_limit = Some(n);
@@ -1370,7 +1376,9 @@ impl ConvoDefsGroupConvo {
                 },
                 "joinRequestCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_join_request_count = Some(n as i64);
+                        field_join_request_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_join_request_count = Some(n);
@@ -1383,7 +1391,9 @@ impl ConvoDefsGroupConvo {
                 },
                 "unreadJoinRequestCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_unread_join_request_count = Some(n as i64);
+                        field_unread_join_request_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_unread_join_request_count = Some(n);
@@ -6851,14 +6861,14 @@ impl<'de> serde::Deserialize<'de> for ConvoDefsMessageInputEmbedUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let inner: crate::api::app::bsky::EmbedRecord =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedRecord(Box::new(
                     inner,
                 )))
             }
-            "chat.bsky.embed.joinLink" => {
+            "chat.bsky.embed.joinLink" | "chat.bsky.embed.joinLink#main" => {
                 let inner: crate::api::chat::bsky::EmbedJoinLink =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedJoinLink(Box::new(
@@ -6932,14 +6942,14 @@ impl ConvoDefsMessageInputEmbedUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedRecord::decode_cbor(&mut dec)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedRecord(Box::new(
                     inner,
                 )))
             }
-            "chat.bsky.embed.joinLink" => {
+            "chat.bsky.embed.joinLink" | "chat.bsky.embed.joinLink#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::chat::bsky::EmbedJoinLink::decode_cbor(&mut dec)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedJoinLink(Box::new(

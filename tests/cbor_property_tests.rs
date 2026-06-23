@@ -4,13 +4,24 @@ use proptest::prelude::*;
 use shrike::cbor::{Cid, Codec, Value, decode, encode_value};
 
 proptest! {
+    // AT Protocol integers are signed 64-bit, so the valid unsigned domain is
+    // [0, i64::MAX]. Values in range must round-trip exactly.
     #[test]
-    fn encode_decode_roundtrip_unsigned(n in any::<u64>()) {
+    fn encode_decode_roundtrip_unsigned(n in 0u64..=(i64::MAX as u64)) {
         let val = Value::Unsigned(n);
         let encoded = encode_value(&val).unwrap();
         let decoded = decode(&encoded).unwrap();
         let re_encoded = encode_value(&decoded).unwrap();
         prop_assert_eq!(&encoded, &re_encoded);
+        prop_assert_eq!(decoded, Value::Unsigned(n));
+    }
+
+    // Unsigned values above i64::MAX are out of the signed-64-bit domain and
+    // MUST be rejected on decode (not silently round-tripped / wrapped).
+    #[test]
+    fn decode_rejects_unsigned_above_i64_max(n in (i64::MAX as u64 + 1)..=u64::MAX) {
+        let encoded = encode_value(&Value::Unsigned(n)).unwrap();
+        prop_assert!(decode(&encoded).is_err());
     }
 
     #[test]
@@ -50,7 +61,9 @@ proptest! {
     }
 
     #[test]
-    fn encode_decode_roundtrip_array_of_ints(nums in prop::collection::vec(any::<u64>(), 0..50)) {
+    fn encode_decode_roundtrip_array_of_ints(
+        nums in prop::collection::vec(0u64..=(i64::MAX as u64), 0..50)
+    ) {
         let val = Value::Array(nums.iter().map(|n| Value::Unsigned(*n)).collect());
         let encoded = encode_value(&val).unwrap();
         let decoded = decode(&encoded).unwrap();

@@ -80,7 +80,9 @@ impl EmbedDefsAspectRatio {
             match key {
                 "width" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_width = Some(n as i64);
+                        field_width = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_width = Some(n);
@@ -93,7 +95,9 @@ impl EmbedDefsAspectRatio {
                 },
                 "height" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_height = Some(n as i64);
+                        field_height = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_height = Some(n);

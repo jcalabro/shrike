@@ -302,4 +302,102 @@ mod tests {
         let missing = serde_json::json!({"inner": {}});
         assert!(validate_record(&catalog, "com.example.outer", &missing).is_err());
     }
+
+    // --- Validator hardening (M19-M22) ---
+
+    fn single_field_catalog(id: &str, field: &str, schema: serde_json::Value) -> Catalog {
+        let doc = serde_json::json!({
+            "lexicon": 1,
+            "id": id,
+            "defs": {
+                "main": {
+                    "type": "record",
+                    "record": {
+                        "type": "object",
+                        "required": [field],
+                        "properties": { field: schema }
+                    }
+                }
+            }
+        });
+        let mut catalog = Catalog::new();
+        catalog.add_schema(doc.to_string().as_bytes()).unwrap();
+        catalog
+    }
+
+    #[test]
+    fn validate_integer_rejects_out_of_range_float() {
+        // M19: a whole-valued float outside i64 range must be rejected, not
+        // saturated to i64::MAX.
+        let catalog =
+            single_field_catalog("com.example.n", "n", serde_json::json!({"type": "integer"}));
+        let big = serde_json::json!({"n": 1e30});
+        assert!(validate_record(&catalog, "com.example.n", &big).is_err());
+        let ok = serde_json::json!({"n": 5});
+        validate_record(&catalog, "com.example.n", &ok).unwrap();
+    }
+
+    #[test]
+    fn validate_integer_const() {
+        // M21: const integer.
+        let catalog = single_field_catalog(
+            "com.example.c",
+            "c",
+            serde_json::json!({"type": "integer", "const": 1}),
+        );
+        validate_record(&catalog, "com.example.c", &serde_json::json!({"c": 1})).unwrap();
+        assert!(validate_record(&catalog, "com.example.c", &serde_json::json!({"c": 2})).is_err());
+    }
+
+    #[test]
+    fn validate_boolean_const() {
+        // M21: const boolean.
+        let catalog = single_field_catalog(
+            "com.example.b",
+            "b",
+            serde_json::json!({"type": "boolean", "const": true}),
+        );
+        validate_record(&catalog, "com.example.b", &serde_json::json!({"b": true})).unwrap();
+        assert!(
+            validate_record(&catalog, "com.example.b", &serde_json::json!({"b": false})).is_err()
+        );
+    }
+
+    #[test]
+    fn validate_blob_requires_fields() {
+        // M20: blob must have ref/mimeType/size.
+        let catalog =
+            single_field_catalog("com.example.bl", "bl", serde_json::json!({"type": "blob"}));
+        // Bare $type only → invalid.
+        let bare = serde_json::json!({"bl": {"$type": "blob"}});
+        assert!(validate_record(&catalog, "com.example.bl", &bare).is_err());
+        // Full, well-formed blob → valid.
+        let full = serde_json::json!({"bl": {
+            "$type": "blob",
+            "ref": {"$link": "bafyreie5cvv4h45feadgeuwhbcutmh6t2ceseocckahdoe6uat64zmz454"},
+            "mimeType": "image/png",
+            "size": 1234
+        }});
+        validate_record(&catalog, "com.example.bl", &full).unwrap();
+    }
+
+    #[test]
+    fn validate_bytes_length_uses_decoded_len() {
+        // M22: $bytes length is the decoded byte count, and invalid base64 is
+        // rejected. "AAA=" decodes to 2 bytes.
+        let catalog = single_field_catalog(
+            "com.example.by",
+            "by",
+            serde_json::json!({"type": "bytes", "maxLength": 2}),
+        );
+        // 2 decoded bytes, within maxLength 2.
+        let ok = serde_json::json!({"by": {"$bytes": "AAA="}});
+        validate_record(&catalog, "com.example.by", &ok).unwrap();
+        // 3 decoded bytes, over maxLength 2.
+        let too_long = serde_json::json!({"by": {"$bytes": "AAAA"}});
+        assert!(validate_record(&catalog, "com.example.by", &too_long).is_err());
+        // Not valid base64.
+        let bad = serde_json::json!({"by": {"$bytes": "!!!!"}});
+        assert!(validate_record(&catalog, "com.example.by", &bad).is_err());
+    }
 }

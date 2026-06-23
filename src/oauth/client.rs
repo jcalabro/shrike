@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::crypto::P256SigningKey;
-use crate::identity::Directory;
+use crate::identity::{AddressPolicy, Directory};
 use crate::syntax::Did;
 
 use crate::oauth::OAuthError;
@@ -26,6 +26,12 @@ pub struct OAuthClientConfig {
     /// When true, the callback will not resolve the DID to verify the issuer
     /// matches the authorization server. Defaults to `false`.
     pub skip_issuer_verification: bool,
+    /// Connect-time address policy for handle/DID resolution and the token/PAR
+    /// endpoints reached during the flow. Defaults to
+    /// [`AddressPolicy::DenyLocal`] (refuse local/private targets as an SSRF
+    /// guard); set [`AddressPolicy::AllowLocal`] for local dev or self-hosted
+    /// infrastructure on a private network.
+    pub address_policy: AddressPolicy,
 }
 
 /// Main OAuth client that orchestrates the full AT Protocol OAuth flow.
@@ -46,6 +52,7 @@ pub struct OAuthClientConfig {
 ///     state_store: Box::new(MemoryStateStore::new()),
 ///     signing_key: None,
 ///     skip_issuer_verification: false,
+///     address_policy: Default::default(),
 /// });
 ///
 /// let result = client.authorize(AuthorizeOptions {
@@ -66,6 +73,7 @@ pub struct OAuthClient {
     http: reqwest::Client,
     nonces: Arc<NonceStore>,
     skip_issuer_verification: bool,
+    address_policy: AddressPolicy,
     /// Per-DID refresh mutex to prevent concurrent refresh of single-use tokens.
     refresh_locks: tokio::sync::Mutex<std::collections::HashMap<String, ()>>,
 }
@@ -122,9 +130,14 @@ impl OAuthClient {
             sessions: config.session_store,
             states: config.state_store,
             auth,
-            http: reqwest::Client::new(),
+            // Hardened: no redirects (SSRF on handle/DID resolution) + timeouts
+            // + connect-time address filtering per the configured policy.
+            // OAuth token/PAR/revocation endpoints are not expected to redirect,
+            // matching the metadata client and atproto's redirect: 'error'.
+            http: crate::outbound::hardened_client(config.address_policy),
             nonces: Arc::new(NonceStore::new()),
             skip_issuer_verification: config.skip_issuer_verification,
+            address_policy: config.address_policy,
             refresh_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -135,9 +148,22 @@ impl OAuthClient {
     /// the authorization server, submits a Pushed Authorization Request (PAR),
     /// and returns the URL the user should be redirected to.
     pub async fn authorize(&self, opts: AuthorizeOptions) -> Result<AuthorizeResult, OAuthError> {
+        // 0. The redirect_uri must be one registered in the client metadata.
+        // Fail fast (and defend against an open-redirect via an unregistered
+        // callback) rather than letting the authorization server reject it
+        // later — when redirect_uris is declared.
+        if !self.metadata.redirect_uris.is_empty()
+            && !self.metadata.redirect_uris.contains(&opts.redirect_uri)
+        {
+            return Err(OAuthError::InvalidMetadata(format!(
+                "redirect_uri {:?} is not registered in client metadata",
+                opts.redirect_uri
+            )));
+        }
+
         // 1. Resolve input to a DID and get PDS endpoint.
         let did = self.resolve_input_to_did(&opts.input).await?;
-        let directory = Directory::new();
+        let directory = Directory::with_address_policy(self.address_policy);
         let identity = directory.lookup_did(&did).await?;
         let pds_url = identity
             .pds_endpoint()
@@ -329,47 +355,96 @@ impl OAuthClient {
         )
         .await?;
 
-        // 5. Verify issuer by resolving the DID fresh (unless skipped for testing).
+        // 5. Verify issuer by resolving the DID fresh (unless skipped for
+        // testing), and bind the token set's audience to the resolved PDS.
+        let mut token_set = token_set;
         if !self.skip_issuer_verification {
-            let sub_did = Did::try_from(token_set.sub.as_str())
-                .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
-            let directory = Directory::new();
-            let identity = directory.lookup_did(&sub_did).await?;
-            let pds_url = identity.pds_endpoint().ok_or_else(|| {
-                OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
-            })?;
-
-            let pr_meta = metadata::fetch_protected_resource_metadata(pds_url).await?;
-            let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
-                OAuthError::IssuerVerification(
-                    "no authorization servers in resource metadata".into(),
-                )
-            })?;
-
-            if *actual_issuer != auth_state.issuer {
-                // Revoke the token before returning error (best-effort).
-                token::revoke_token(
-                    &self.http,
-                    &auth_state.revocation_endpoint,
-                    &token_set.access_token,
-                    self.auth.as_ref(),
-                    &dpop_key,
-                    &self.nonces,
-                )
-                .await;
-                return Err(OAuthError::IssuerVerification(format!(
-                    "AS mismatch: expected {}, got {}",
-                    auth_state.issuer, actual_issuer
-                )));
+            match self
+                .verify_issuer_resolve_pds(&token_set.sub, &auth_state.issuer)
+                .await
+            {
+                Ok(pds_url) => {
+                    // The AT Protocol token response has no `aud` field, so
+                    // without this the audience would default to the AS issuer
+                    // and the authenticated client would send every XRPC request
+                    // to the authorization server instead of the user's PDS.
+                    // Bind aud to the verified PDS (matches atmos/TS).
+                    token_set.aud = pds_url;
+                }
+                Err(e) => {
+                    // Revoke the just-issued token before returning (best-effort),
+                    // matching the reference's exchangeCode error path.
+                    token::revoke_token(
+                        &self.http,
+                        &auth_state.revocation_endpoint,
+                        &token_set.access_token,
+                        self.auth.as_ref(),
+                        &dpop_key,
+                        &self.nonces,
+                    )
+                    .await;
+                    return Err(e);
+                }
             }
         }
 
-        // 6. Delete any existing session for this user, then store the new one.
+        // 6. Revoke and delete any existing session for this user (re-auth
+        // supersedes it), then store the new one. Revoking the old token avoids
+        // leaving a live credential behind on re-authorization.
+        if let Ok(Some(old)) = self.sessions.get(&token_set.sub).await
+            && let Ok(old_key) = old.dpop_key()
+        {
+            token::revoke_token(
+                &self.http,
+                &old.token_set.revocation_endpoint,
+                &old.token_set.access_token,
+                self.auth.as_ref(),
+                &old_key,
+                &self.nonces,
+            )
+            .await;
+        }
         let _ = self.sessions.delete(&token_set.sub).await;
         let session = Session::from_key_and_tokens(&dpop_key, token_set);
         self.sessions.set(&session.token_set.sub, &session).await?;
 
         Ok(session)
+    }
+
+    /// Verify that the token's `sub` DID is genuinely controlled by `issuer`,
+    /// and return the user's PDS URL (to be used as the token audience).
+    ///
+    /// Mirrors the reference client's `verifyIssuer`: resolve the sub DID fresh
+    /// (no cache), find its PDS, read that PDS's protected-resource metadata,
+    /// and require its authorization server to equal the issuer we obtained the
+    /// token from. A mismatch means the token must not be trusted for this DID.
+    async fn verify_issuer_resolve_pds(
+        &self,
+        sub: &str,
+        issuer: &str,
+    ) -> Result<String, OAuthError> {
+        let sub_did = Did::try_from(sub)
+            .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
+        let directory = Directory::with_address_policy(self.address_policy);
+        let identity = directory.lookup_did(&sub_did).await?;
+        let pds_url = identity
+            .pds_endpoint()
+            .ok_or_else(|| {
+                OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
+            })?
+            .to_owned();
+
+        let pr_meta = metadata::fetch_protected_resource_metadata(&pds_url).await?;
+        let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
+            OAuthError::IssuerVerification("no authorization servers in resource metadata".into())
+        })?;
+
+        if actual_issuer != issuer {
+            return Err(OAuthError::IssuerVerification(format!(
+                "AS mismatch: expected {issuer}, got {actual_issuer}"
+            )));
+        }
+        Ok(pds_url)
     }
 
     /// Sign out a user by revoking their token and deleting their session.
@@ -425,7 +500,22 @@ impl OAuthClient {
         }
 
         let dpop_key = session.dpop_key()?;
-        let new_tokens = token::refresh_token(
+
+        // Re-verify the issuer BEFORE refreshing (matches the reference client):
+        // resolve the session's sub DID fresh and confirm its PDS's
+        // authorization server still equals the issuer we hold tokens from. This
+        // both avoids a pointless refresh against a now-mismatched issuer and
+        // yields the PDS to bind as the refreshed token's audience.
+        let verified_pds = if self.skip_issuer_verification {
+            None
+        } else {
+            Some(
+                self.verify_issuer_resolve_pds(&session.token_set.sub, &session.token_set.issuer)
+                    .await?,
+            )
+        };
+
+        let mut new_tokens = token::refresh_token(
             &self.http,
             &session.token_set,
             self.auth.as_ref(),
@@ -434,6 +524,22 @@ impl OAuthClient {
         )
         .await?;
 
+        // The refresh response's `sub` is not trusted to change the account:
+        // keep the original subject (the reference reuses tokenSet.sub). Reject
+        // a refresh that returns a different sub rather than silently binding
+        // another DID's tokens under this key.
+        if new_tokens.sub != session.token_set.sub {
+            return Err(OAuthError::IssuerVerification(format!(
+                "refresh returned a different sub: expected {}, got {}",
+                session.token_set.sub, new_tokens.sub
+            )));
+        }
+        // Bind the audience to the freshly-verified PDS (the AT Proto token
+        // response carries no usable `aud`).
+        if let Some(pds) = verified_pds {
+            new_tokens.aud = pds;
+        }
+
         let new_session = Session::from_key_and_tokens(&dpop_key, new_tokens);
         self.sessions.set(did, &new_session).await?;
         Ok(new_session)
@@ -441,23 +547,22 @@ impl OAuthClient {
 
     /// Resolve an input string to a DID.
     ///
-    /// If the input starts with "did:", parse it directly as a DID.
-    /// Otherwise, try to resolve it as a handle using `.well-known/atproto-did`
-    /// with a fallback to `com.atproto.identity.resolveHandle` on the public API.
+    /// If the input starts with "did:", parse it directly as a DID. Otherwise
+    /// resolve it as a handle via the standard mechanisms (DNS `_atproto` TXT,
+    /// then HTTPS `.well-known/atproto-did`), with a final fallback to the
+    /// public `com.atproto.identity.resolveHandle` API.
+    ///
+    /// Note: this is the *forward* resolution only (input → DID), used to start
+    /// the OAuth flow; the issuer is independently verified later in `callback`.
     async fn resolve_input_to_did(&self, input: &str) -> Result<Did, OAuthError> {
         // Try parsing as a DID first.
         if let Ok(did) = Did::try_from(input) {
             return Ok(did);
         }
 
-        // Try .well-known/atproto-did first (cheapest).
-        let url = format!("https://{}/.well-known/atproto-did", input);
-        if let Ok(resp) = crate::outbound::apply_user_agent(self.http.get(&url))
-            .send()
-            .await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && let Ok(did) = Did::try_from(body.trim())
+        // Resolve as a handle via DNS + HTTPS well-known (shared resolver).
+        if let Ok(handle) = crate::syntax::Handle::try_from(input)
+            && let Ok(did) = crate::identity::resolve_handle(&handle, &self.http).await
         {
             return Ok(did);
         }
@@ -548,6 +653,7 @@ mod tests {
             state_store: Box::new(MemoryStateStore::new()),
             signing_key: None,
             skip_issuer_verification: false,
+            address_policy: Default::default(),
         };
 
         let client = OAuthClient::new(config);
@@ -567,6 +673,7 @@ mod tests {
             state_store: Box::new(MemoryStateStore::new()),
             signing_key: Some((key, "key-1".into())),
             skip_issuer_verification: false,
+            address_policy: Default::default(),
         };
 
         let client = OAuthClient::new(config);

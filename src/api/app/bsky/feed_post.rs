@@ -137,6 +137,9 @@ pub const NSID_FEED_POST: &str = "app.bsky.feed.post";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPost {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedpost")]
+    pub r#type: String,
     /// Client-declared timestamp when this post was originally created.
     pub created_at: crate::syntax::Datetime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +169,10 @@ pub struct FeedPost {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_feedpost() -> String {
+    "app.bsky.feed.post".to_string()
 }
 
 /// FeedPostEmbedUnion is a union type.
@@ -258,27 +265,27 @@ impl<'de> serde::Deserialize<'de> for FeedPostEmbedUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.images" => {
+            "app.bsky.embed.images" | "app.bsky.embed.images#main" => {
                 let inner: crate::api::app::bsky::EmbedImages =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedImages(Box::new(inner)))
             }
-            "app.bsky.embed.video" => {
+            "app.bsky.embed.video" | "app.bsky.embed.video#main" => {
                 let inner: crate::api::app::bsky::EmbedVideo =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedVideo(Box::new(inner)))
             }
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedExternal(Box::new(inner)))
             }
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let inner: crate::api::app::bsky::EmbedRecord =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedRecord(Box::new(inner)))
             }
-            "app.bsky.embed.recordWithMedia" => {
+            "app.bsky.embed.recordWithMedia" | "app.bsky.embed.recordWithMedia#main" => {
                 let inner: crate::api::app::bsky::EmbedRecordWithMedia =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedRecordWithMedia(Box::new(inner)))
@@ -353,27 +360,27 @@ impl FeedPostEmbedUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.images" => {
+            "app.bsky.embed.images" | "app.bsky.embed.images#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedImages::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedImages(Box::new(inner)))
             }
-            "app.bsky.embed.video" => {
+            "app.bsky.embed.video" | "app.bsky.embed.video#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideo::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedVideo(Box::new(inner)))
             }
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedExternal::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedExternal(Box::new(inner)))
             }
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedRecord::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedRecord(Box::new(inner)))
             }
-            "app.bsky.embed.recordWithMedia" => {
+            "app.bsky.embed.recordWithMedia" | "app.bsky.embed.recordWithMedia#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedRecordWithMedia::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedRecordWithMedia(Box::new(inner)))
@@ -528,7 +535,7 @@ impl FeedPost {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if !self.tags.is_empty() {
                 count += 1;
             }
@@ -560,6 +567,8 @@ impl FeedPost {
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("text")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.text)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.embed.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("embed")?;
                 if let Some(ref val) = self.embed {
@@ -618,6 +627,11 @@ impl FeedPost {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.text)?;
                 pairs.push(("text", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if self.embed.is_some() {
                 let mut vbuf = Vec::new();
@@ -702,6 +716,7 @@ impl FeedPost {
 
         let mut field_tags: Vec<String> = Vec::new();
         let mut field_text: Option<String> = None;
+        let mut field_type: Option<String> = None;
         let mut field_embed: Option<FeedPostEmbedUnion> = None;
         let mut field_langs: Vec<crate::syntax::Language> = Vec::new();
         let mut field_reply: Option<FeedPostReplyRef> = None;
@@ -731,6 +746,13 @@ impl FeedPost {
                 "text" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_text = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -812,6 +834,7 @@ impl FeedPost {
             text: field_text.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.post".to_string()),
             embed: field_embed,
             langs: field_langs,
             reply: field_reply,
@@ -1019,7 +1042,9 @@ impl FeedPostTextSlice {
             match key {
                 "end" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_end = Some(n as i64);
+                        field_end = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_end = Some(n);
@@ -1032,7 +1057,9 @@ impl FeedPostTextSlice {
                 },
                 "start" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_start = Some(n as i64);
+                        field_start = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_start = Some(n);

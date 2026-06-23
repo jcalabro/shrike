@@ -111,6 +111,7 @@ async fn oauth_login(args: OauthLoginArgs) -> Result<()> {
         state_store: Box::new(state_store),
         signing_key: None,
         skip_issuer_verification: false,
+        address_policy: Default::default(),
     });
 
     // Start the authorize flow.

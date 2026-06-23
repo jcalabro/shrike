@@ -7,6 +7,9 @@ pub const NSID_GRAPH_VERIFICATION: &str = "app.bsky.graph.verification";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphVerification {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_graphverification")]
+    pub r#type: String,
     /// Date of when the verification was created.
     pub created_at: crate::syntax::Datetime,
     /// Display name of the subject the verification applies to at the moment of verifying, which might not be the same at the time of viewing. The verification is only valid if the current displayName matches the one at the time of verifying.
@@ -23,6 +26,10 @@ pub struct GraphVerification {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
+fn default_type_graphverification() -> String {
+    "app.bsky.graph.verification".to_string()
+}
+
 impl GraphVerification {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -33,8 +40,10 @@ impl GraphVerification {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 4u64;
+            let count = 5u64;
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("handle")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.handle.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("subject")?;
@@ -46,6 +55,11 @@ impl GraphVerification {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.handle.as_str())?;
@@ -95,6 +109,7 @@ impl GraphVerification {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_handle: Option<crate::syntax::Handle> = None;
         let mut field_subject: Option<crate::syntax::Did> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
@@ -103,6 +118,13 @@ impl GraphVerification {
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "handle" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_handle = Some(
@@ -148,6 +170,7 @@ impl GraphVerification {
         }
 
         Ok(GraphVerification {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.graph.verification".to_string()),
             handle: field_handle.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'handle'".into())
             })?,

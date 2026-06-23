@@ -7,6 +7,9 @@ pub const NSID_FEED_LIKE: &str = "app.bsky.feed.like";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedLike {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedlike")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     pub subject: crate::api::com::atproto::RepoStrongRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19,6 +22,10 @@ pub struct FeedLike {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
+fn default_type_feedlike() -> String {
+    "app.bsky.feed.like".to_string()
+}
+
 impl FeedLike {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -29,7 +36,7 @@ impl FeedLike {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if self.via.is_some() {
                 count += 1;
             }
@@ -40,6 +47,8 @@ impl FeedLike {
                     val.encode_cbor(buf)?;
                 }
             }
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("subject")?;
             self.subject.encode_cbor(buf)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("createdAt")?;
@@ -53,6 +62,11 @@ impl FeedLike {
                     val.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("via", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -94,6 +108,7 @@ impl FeedLike {
         };
 
         let mut field_via: Option<crate::api::com::atproto::RepoStrongRef> = None;
+        let mut field_type: Option<String> = None;
         let mut field_subject: Option<crate::api::com::atproto::RepoStrongRef> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
@@ -106,6 +121,13 @@ impl FeedLike {
                     field_via = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
                         &mut dec,
                     )?);
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
                 }
                 "subject" => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -133,6 +155,7 @@ impl FeedLike {
 
         Ok(FeedLike {
             via: field_via,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.like".to_string()),
             subject: field_subject.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
             })?,

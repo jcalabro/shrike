@@ -1,0 +1,146 @@
+[package]
+name = "shrike-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone crate — not part of the shrike workspace (cargo-fuzz convention).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+bumpalo = "3"
+
+[dependencies.shrike]
+path = ".."
+features = [
+    "syntax", "cbor", "mst", "car", "repo", "crypto",
+    "lexicon", "streaming", "sync", "labeling",
+]
+
+# Seed-corpus generator (a normal binary, not a fuzz target).
+[[bin]]
+name = "gen_seeds"
+path = "src/bin/gen_seeds.rs"
+test = false
+doc = false
+bench = false
+
+# --- MST ---
+[[bin]]
+name = "mst_decode_node_data"
+path = "fuzz_targets/mst_decode_node_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_decode_node_data_roundtrip"
+path = "fuzz_targets/mst_decode_node_data_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_load_and_walk"
+path = "fuzz_targets/mst_load_and_walk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_height_for_key"
+path = "fuzz_targets/mst_height_for_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_insert_get"
+path = "fuzz_targets/mst_insert_get.rs"
+test = false
+doc = false
+bench = false
+
+# --- CBOR / DRISL ---
+[[bin]]
+name = "cbor_decode"
+path = "fuzz_targets/cbor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cbor_decode_differential"
+path = "fuzz_targets/cbor_decode_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cbor_encode_roundtrip"
+path = "fuzz_targets/cbor_encode_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+# --- CID ---
+[[bin]]
+name = "cid_parse"
+path = "fuzz_targets/cid_parse.rs"
+test = false
+doc = false
+bench = false
+
+# --- CAR ---
+[[bin]]
+name = "car_read_all"
+path = "fuzz_targets/car_read_all.rs"
+test = false
+doc = false
+bench = false
+
+# --- Syntax identifiers ---
+[[bin]]
+name = "syntax_parsers"
+path = "fuzz_targets/syntax_parsers.rs"
+test = false
+doc = false
+bench = false
+
+# --- Repo commit ---
+[[bin]]
+name = "repo_commit_from_cbor"
+path = "fuzz_targets/repo_commit_from_cbor.rs"
+test = false
+doc = false
+bench = false
+
+# --- Firehose / sync frames ---
+[[bin]]
+name = "firehose_frame"
+path = "fuzz_targets/firehose_frame.rs"
+test = false
+doc = false
+bench = false
+
+# --- Labels ---
+[[bin]]
+name = "label_decode"
+path = "fuzz_targets/label_decode.rs"
+test = false
+doc = false
+bench = false
+
+# --- Lexicon validation ---
+[[bin]]
+name = "lexicon_validate"
+path = "fuzz_targets/lexicon_validate.rs"
+test = false
+doc = false
+bench = false

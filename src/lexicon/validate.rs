@@ -179,10 +179,19 @@ fn validate_field(
             minimum,
             maximum,
             r#enum,
+            const_val,
             ..
-        } => validate_integer(path, value, *minimum, *maximum, r#enum.as_deref(), errors),
+        } => validate_integer(
+            path,
+            value,
+            *minimum,
+            *maximum,
+            r#enum.as_deref(),
+            *const_val,
+            errors,
+        ),
 
-        FieldSchema::Boolean { .. } => validate_boolean(path, value, errors),
+        FieldSchema::Boolean { const_val, .. } => validate_boolean(path, value, *const_val, errors),
 
         FieldSchema::Bytes {
             min_length,
@@ -388,6 +397,7 @@ fn validate_integer(
     minimum: Option<i64>,
     maximum: Option<i64>,
     enum_vals: Option<&[i64]>,
+    const_val: Option<i64>,
     errors: &mut Vec<ValidationError>,
 ) {
     let n = match value {
@@ -397,6 +407,13 @@ fn validate_integer(
             } else if let Some(f) = n.as_f64() {
                 if f.fract() != 0.0 {
                     other_err(path, format!("float {f} is not a valid integer"), errors);
+                    return;
+                }
+                // A whole-valued float outside i64 range must be rejected, not
+                // saturated (`f as i64` clamps to i64::MAX/MIN, silently
+                // corrupting the value). AT Protocol integers are signed 64-bit.
+                if f < i64::MIN as f64 || f > i64::MAX as f64 {
+                    other_err(path, format!("integer {f} out of i64 range"), errors);
                     return;
                 }
                 f as i64
@@ -438,20 +455,51 @@ fn validate_integer(
             errors,
         );
     }
+
+    // `const`: the value must equal the fixed constant.
+    if let Some(c) = const_val
+        && n != c
+    {
+        field_err(
+            path,
+            ValidationErrorKind::InvalidEnum { got: n.to_string() },
+            errors,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Boolean
 // ---------------------------------------------------------------------------
 
-fn validate_boolean(path: &str, value: &Value, errors: &mut Vec<ValidationError>) {
-    if !value.is_boolean() {
+fn validate_boolean(
+    path: &str,
+    value: &Value,
+    const_val: Option<bool>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let b = match value.as_bool() {
+        Some(b) => b,
+        None => {
+            field_err(
+                path,
+                ValidationErrorKind::TypeMismatch {
+                    expected: "boolean".to_owned(),
+                    got: json_type_name(value).to_owned(),
+                },
+                errors,
+            );
+            return;
+        }
+    };
+
+    // `const`: the value must equal the fixed constant.
+    if let Some(c) = const_val
+        && b != c
+    {
         field_err(
             path,
-            ValidationErrorKind::TypeMismatch {
-                expected: "boolean".to_owned(),
-                got: json_type_name(value).to_owned(),
-            },
+            ValidationErrorKind::InvalidEnum { got: b.to_string() },
             errors,
         );
     }
@@ -474,8 +522,17 @@ fn validate_bytes(
     let byte_len: u64 = match value {
         Value::Object(m) => {
             if let Some(b64) = m.get("$bytes").and_then(|v| v.as_str()) {
-                // base64-encoded length → approximate raw byte count
-                (b64.len() as u64 * 3) / 4
+                // Decode the base64 to get the EXACT raw byte count (the prior
+                // (len*3)/4 approximation ignored padding and mis-evaluated
+                // minLength/maxLength at boundaries) and to validate that the
+                // value is in fact valid base64.
+                match decode_dollar_bytes(b64) {
+                    Ok(raw) => raw.len() as u64,
+                    Err(()) => {
+                        other_err(path, "$bytes is not valid base64", errors);
+                        return;
+                    }
+                }
             } else {
                 other_err(path, "bytes object missing $bytes key", errors);
                 return;
@@ -513,6 +570,18 @@ fn validate_bytes(
             errors,
         );
     }
+}
+
+/// Decode a JSON `$bytes` base64 string. The data-model specifies base64; we
+/// accept both the padded and unpadded standard alphabets for robustness across
+/// producers, returning the raw bytes (used for exact length checks).
+fn decode_dollar_bytes(s: &str) -> Result<Vec<u8>, ()> {
+    if let Ok(raw) = data_encoding::BASE64.decode(s.as_bytes()) {
+        return Ok(raw);
+    }
+    data_encoding::BASE64_NOPAD
+        .decode(s.as_bytes())
+        .map_err(|_| ())
 }
 
 // ---------------------------------------------------------------------------
@@ -571,22 +640,63 @@ fn validate_blob(
         _ => other_err(path, "blob missing or wrong $type", errors),
     }
 
-    if let Some(accept_types) = accept
-        && let Some(mime) = m.get("mimeType").and_then(|v| v.as_str())
-        && !match_mime(accept_types, mime)
-    {
-        other_err(path, format!("blob mimeType {mime:?} not accepted"), errors);
+    // `ref` is required and must be a cid-link object ({"$link": "<cid>"}).
+    match m.get("ref") {
+        None => other_err(path, "blob missing ref", errors),
+        Some(Value::Object(r)) => {
+            if !r.get("$link").map(|v| v.is_string()).unwrap_or(false) {
+                other_err(path, "blob ref missing $link string", errors);
+            }
+        }
+        Some(other) => other_err(
+            path,
+            format!("blob ref expected object, got {}", json_type_name(other)),
+            errors,
+        ),
     }
 
-    if let Some(max) = max_size
-        && let Some(size) = m.get("size").and_then(|v| v.as_u64())
-        && size > max
-    {
-        field_err(
+    // `mimeType` is required and must be a (non-empty) string.
+    match m.get("mimeType") {
+        None => other_err(path, "blob missing mimeType", errors),
+        Some(Value::String(mime)) => {
+            if mime.is_empty() {
+                other_err(path, "blob mimeType must not be empty", errors);
+            } else if let Some(accept_types) = accept
+                && !match_mime(accept_types, mime)
+            {
+                other_err(path, format!("blob mimeType {mime:?} not accepted"), errors);
+            }
+        }
+        Some(other) => other_err(
             path,
-            ValidationErrorKind::TooLong { max, got: size },
+            format!(
+                "blob mimeType expected string, got {}",
+                json_type_name(other)
+            ),
             errors,
-        );
+        ),
+    }
+
+    // `size` is required and must be a non-negative integer.
+    match m.get("size") {
+        None => other_err(path, "blob missing size", errors),
+        Some(Value::Number(_)) => {
+            if let Some(size) = m.get("size").and_then(|v| v.as_u64())
+                && let Some(max) = max_size
+                && size > max
+            {
+                field_err(
+                    path,
+                    ValidationErrorKind::TooLong { max, got: size },
+                    errors,
+                );
+            }
+        }
+        Some(other) => other_err(
+            path,
+            format!("blob size expected number, got {}", json_type_name(other)),
+            errors,
+        ),
     }
 }
 
@@ -789,9 +899,9 @@ fn validate_def(
             }
         }
 
-        Def::BooleanDef(_) => validate_boolean(path, value, errors),
+        Def::BooleanDef(_) => validate_boolean(path, value, None, errors),
 
-        Def::IntegerDef(_) => validate_integer(path, value, None, None, None, errors),
+        Def::IntegerDef(_) => validate_integer(path, value, None, None, None, None, errors),
 
         Def::BytesDef(_) => validate_bytes(path, value, None, None, errors),
 

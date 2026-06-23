@@ -32,7 +32,7 @@ pub fn gen_object(ctx: &GenContext<'_>, def_name: &str, obj: &ObjectDef) -> Resu
     };
     out.push_str(&comment);
 
-    let (struct_code, extras) = gen_struct_body(ctx, &type_name, obj, false)?;
+    let (struct_code, extras) = gen_struct_body(ctx, &type_name, obj, None)?;
     out.push_str(&struct_code);
     for extra in extras {
         out.push_str("\n\n");
@@ -68,15 +68,15 @@ pub fn gen_record(
         writeln!(out, "/// {} record from {}.", type_name, ctx.schema.id).ok();
     }
 
-    let (struct_code, extras) = gen_struct_body(ctx, &type_name, record_obj, true)?;
+    let (struct_code, extras) = gen_struct_body(ctx, &type_name, record_obj, Some(&ctx.schema.id))?;
     out.push_str(&struct_code);
     for extra in extras {
         out.push_str("\n\n");
         out.push_str(&extra);
     }
 
-    // Generate CBOR encode/decode impl.
-    let cbor_impl = gen_cbor::gen_cbor_impl(ctx, &type_name, record_obj)?;
+    // Generate CBOR encode/decode impl (records emit a $type discriminator).
+    let cbor_impl = gen_cbor::gen_record_cbor_impl(ctx, &type_name, record_obj, &ctx.schema.id)?;
     out.push_str("\n\n");
     out.push_str(&cbor_impl);
 
@@ -134,7 +134,7 @@ fn gen_struct_body(
     ctx: &GenContext<'_>,
     type_name: &str,
     obj: &ObjectDef,
-    _is_record: bool,
+    record_nsid: Option<&str>,
 ) -> Result<(String, Vec<String>), String> {
     let required: HashSet<&str> = obj.required.iter().map(|s| s.as_str()).collect();
     let nullable: HashSet<&str> = obj.nullable.iter().map(|s| s.as_str()).collect();
@@ -153,10 +153,32 @@ fn gen_struct_body(
     writeln!(out, "#[serde(rename_all = \"camelCase\")]").ok();
     writeln!(out, "pub struct {type_name} {{").ok();
 
+    // Records carry a `$type` discriminator equal to the record NSID. It is
+    // always serialized (in both JSON and DAG-CBOR) and defaults to the NSID so
+    // a programmatically-built record produces conformant bytes and a correct
+    // CID. Plain (non-record) objects do not carry $type when embedded.
+    if let Some(nsid) = record_nsid {
+        let default_fn = format!("default_type_{}", type_name.to_lowercase());
+        writeln!(out, "    /// Record type discriminator (`$type`).").ok();
+        writeln!(
+            out,
+            "    #[serde(rename = \"$type\", default = {default_fn:?})]"
+        )
+        .ok();
+        writeln!(out, "    pub r#type: String,").ok();
+        // Emit the default function after the struct.
+        extras.push(format!(
+            "fn {default_fn}() -> String {{ {nsid:?}.to_string() }}"
+        ));
+    }
+
     for json_name in &field_names {
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
         let is_required = required.contains(json_name_str) && !nullable.contains(json_name_str);
+        // A required+nullable field is Option<T> but its key must always be
+        // present in JSON (null when None), so it must NOT skip_serializing.
+        let is_nullable = required.contains(json_name_str) && nullable.contains(json_name_str);
 
         let rust_field = util::rust_field_name(json_name_str);
         let (rust_type, field_extras) =
@@ -185,6 +207,13 @@ fn gen_struct_body(
                 "    #[serde(default, skip_serializing_if = \"Vec::is_empty\""
             )
             .ok();
+            if needs_rename {
+                write!(out, ", rename = {json_name_str:?}").ok();
+            }
+            writeln!(out, ")]").ok();
+        } else if is_option && is_nullable {
+            // Nullable: always serialize (null when None), so no skip.
+            write!(out, "    #[serde(default").ok();
             if needs_rename {
                 write!(out, ", rename = {json_name_str:?}").ok();
             }
@@ -290,7 +319,7 @@ pub fn resolve_field_type(
         },
         FieldSchema::Integer { .. } => "i64".to_string(),
         FieldSchema::Boolean { .. } => "bool".to_string(),
-        FieldSchema::Bytes { .. } => "String".to_string(), // Base64 in JSON
+        FieldSchema::Bytes { .. } => "crate::api::Bytes".to_string(),
         FieldSchema::CidLink { .. } => "crate::api::CidLink".to_string(),
         FieldSchema::Blob { .. } => "crate::api::Blob".to_string(),
         FieldSchema::Unknown { .. } => "serde_json::Value".to_string(),

@@ -17,8 +17,16 @@ struct CborField {
     rust_type: String,
     /// The kind of encoding needed.
     kind: FieldKind,
-    /// Whether this field is required (not optional).
+    /// Whether this field is required (not optional). A `required && nullable`
+    /// field is NOT `required` here (its Rust type is `Option<T>`), but is
+    /// `nullable` — see below.
     required: bool,
+    /// Whether this field is `required` in the lexicon AND `nullable`. Such a
+    /// field is `Option<T>` in Rust but its key must ALWAYS be present in the
+    /// encoded map (CBOR null when `None`), and decode must accept null → None.
+    /// This is distinct from a plain optional field, whose key is omitted when
+    /// absent.
+    nullable: bool,
 }
 
 /// Classification of field types for encoding/decoding dispatch.
@@ -55,6 +63,27 @@ pub fn gen_cbor_impl(
     type_name: &str,
     obj: &ObjectDef,
 ) -> Result<String, String> {
+    gen_cbor_impl_inner(ctx, type_name, obj, None)
+}
+
+/// As [`gen_cbor_impl`], but for record defs: `type_nsid` is the record's NSID,
+/// emitted as a synthetic `$type` field so the encoded DAG-CBOR carries the
+/// record's type discriminator (required for a correct record CID).
+pub fn gen_record_cbor_impl(
+    ctx: &GenContext<'_>,
+    type_name: &str,
+    obj: &ObjectDef,
+    type_nsid: &str,
+) -> Result<String, String> {
+    gen_cbor_impl_inner(ctx, type_name, obj, Some(type_nsid))
+}
+
+fn gen_cbor_impl_inner(
+    ctx: &GenContext<'_>,
+    type_name: &str,
+    obj: &ObjectDef,
+    type_nsid: Option<&str>,
+) -> Result<String, String> {
     let required: HashSet<&str> = obj.required.iter().map(|s| s.as_str()).collect();
     let nullable: HashSet<&str> = obj.nullable.iter().map(|s| s.as_str()).collect();
 
@@ -63,9 +92,28 @@ pub fn gen_cbor_impl(
 
     // Build field info.
     let mut fields: Vec<CborField> = Vec::new();
+
+    // Records carry a synthetic, always-present `$type` field set to the
+    // record's NSID. It is a normal field for CBOR purposes (sorted into key
+    // order, emitted as text); on the Rust side it is the `r#type` String.
+    // It is required on encode but tolerant on decode (defaults to the NSID),
+    // matching atmos/TS which always emit `$type` but do not hard-fail when a
+    // record arrives without it.
+    if type_nsid.is_some() {
+        fields.push(CborField {
+            json_name: "$type".to_string(),
+            rust_field: "r#type".to_string(),
+            rust_type: "String".to_string(),
+            kind: FieldKind::Text,
+            required: true,
+            nullable: false,
+        });
+    }
+
     for json_name in &field_names {
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
+        let is_nullable = required.contains(json_name_str) && nullable.contains(json_name_str);
         let is_required = required.contains(json_name_str) && !nullable.contains(json_name_str);
 
         let rust_field = util::rust_field_name(json_name_str);
@@ -84,6 +132,7 @@ pub fn gen_cbor_impl(
             rust_type,
             kind,
             required: is_required,
+            nullable: is_nullable,
         });
     }
 
@@ -94,7 +143,7 @@ pub fn gen_cbor_impl(
     writeln!(out, "impl {type_name} {{").ok();
     gen_to_cbor(&mut out, &fields);
     out.push('\n');
-    gen_from_cbor(&mut out, type_name, &fields);
+    gen_from_cbor(&mut out, type_name, &fields, type_nsid);
     writeln!(out, "}}").ok();
     Ok(out)
 }
@@ -111,16 +160,21 @@ pub fn gen_union_cbor(
     // Gather variant info.
     let mut variant_names = Vec::new();
     let mut type_ids = Vec::new();
+    let mut type_id_aliases: Vec<Option<String>> = Vec::new();
     let mut qualified_types = Vec::new();
 
     for ref_str in refs {
         let variant_name = gen_union::variant_short_name(&ctx.schema.id, ref_str);
         let (target_nsid, def_name) = shrike::lexicon::split_ref(&ctx.schema.id, ref_str);
-        let type_id = if def_name == "main" {
+        let is_main = def_name == "main";
+        let type_id = if is_main {
             target_nsid.clone()
         } else {
             format!("{target_nsid}#{def_name}")
         };
+        // Accept the non-conformant explicit `nsid#main` form as an alias for a
+        // main def (matching the TS reference); always emit the bare NSID.
+        let type_id_alias = is_main.then(|| format!("{target_nsid}#main"));
         let resolved = crate::resolver::resolve_ref(ctx.cfg, &ctx.schema.id, ref_str, ctx.schemas)?;
         let qualified = if resolved.nsid == ctx.schema.id {
             resolved.type_name.clone()
@@ -129,6 +183,7 @@ pub fn gen_union_cbor(
         };
         variant_names.push(variant_name);
         type_ids.push(type_id);
+        type_id_aliases.push(type_id_alias);
         qualified_types.push(qualified);
     }
 
@@ -237,7 +292,14 @@ pub fn gen_union_cbor(
     for (i, v) in variant_names.iter().enumerate() {
         let type_id = &type_ids[i];
         let qualified = &qualified_types[i];
-        writeln!(out, "            {type_id:?} => {{").ok();
+        match &type_id_aliases[i] {
+            Some(alias) => {
+                writeln!(out, "            {type_id:?} | {alias:?} => {{").ok();
+            }
+            None => {
+                writeln!(out, "            {type_id:?} => {{").ok();
+            }
+        }
         writeln!(
             out,
             "                let mut dec = crate::cbor::Decoder::new(raw);"
@@ -298,17 +360,30 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
 
-    let required_count = cbor_fields.iter().filter(|f| f.required).count();
-    let optional_fields: Vec<&&CborField> = cbor_fields.iter().filter(|f| !f.required).collect();
+    // A nullable field's key is ALWAYS present (null when None), so it counts
+    // toward the fixed map size like a required field. Only plain-optional
+    // fields are conditionally counted.
+    let always_present_count = cbor_fields
+        .iter()
+        .filter(|f| f.required || f.nullable)
+        .count();
+    let optional_fields: Vec<&&CborField> = cbor_fields
+        .iter()
+        .filter(|f| !f.required && !f.nullable)
+        .collect();
 
     writeln!(out, "        if self.extra_cbor.is_empty() {{").ok();
     writeln!(out, "            // Fast path: no extra fields to merge.").ok();
 
     // Count the map size.
     if optional_fields.is_empty() {
-        writeln!(out, "            let count = {required_count}u64;").ok();
+        writeln!(out, "            let count = {always_present_count}u64;").ok();
     } else {
-        writeln!(out, "            let mut count = {required_count}u64;").ok();
+        writeln!(
+            out,
+            "            let mut count = {always_present_count}u64;"
+        )
+        .ok();
         for f in &optional_fields {
             let check = option_check(f);
             writeln!(out, "            if {check} {{ count += 1; }}").ok();
@@ -330,6 +405,23 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             )
             .ok();
             gen_encode_field(out, f, "            ");
+        } else if f.nullable {
+            // Always emit the key; value is the field or CBOR null.
+            writeln!(
+                out,
+                "            crate::cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
+            )
+            .ok();
+            writeln!(out, "            match &self.{} {{", f.rust_field).ok();
+            writeln!(out, "                Some(val) => {{").ok();
+            gen_encode_value(out, &f.kind, "val", "                    ", true);
+            writeln!(out, "                }}").ok();
+            writeln!(
+                out,
+                "                None => {{ crate::cbor::Encoder::new(&mut *buf).encode_null()?; }}"
+            )
+            .ok();
+            writeln!(out, "            }}").ok();
         } else {
             let check = option_check(f);
             writeln!(out, "            if {check} {{").ok();
@@ -362,6 +454,18 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             writeln!(out, "            {{").ok();
             writeln!(out, "                let mut vbuf = Vec::new();").ok();
             gen_encode_field_vbuf(out, f, "                ");
+            writeln!(out, "                pairs.push(({key:?}, vbuf));").ok();
+            writeln!(out, "            }}").ok();
+        } else if f.nullable {
+            // Always push a pair; value is the field or CBOR null.
+            writeln!(out, "            {{").ok();
+            writeln!(out, "                let mut vbuf = Vec::new();").ok();
+            writeln!(out, "                match &self.{} {{", f.rust_field).ok();
+            writeln!(out, "                    Some(val) => {{").ok();
+            gen_encode_value_vbuf(out, &f.kind, "val", "                        ", true);
+            writeln!(out, "                    }}").ok();
+            writeln!(out, "                    None => {{ crate::cbor::Encoder::new(&mut vbuf).encode_null()?; }}").ok();
+            writeln!(out, "                }}").ok();
             writeln!(out, "                pairs.push(({key:?}, vbuf));").ok();
             writeln!(out, "            }}").ok();
         } else {
@@ -402,7 +506,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     writeln!(out, "    }}").ok();
 }
 
-fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
+fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_nsid: Option<&str>) {
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
 
@@ -490,7 +594,19 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
         let key = &f.json_name;
         let clean_var = clean_field_name(&f.rust_field);
         writeln!(out, "                {key:?} => {{").ok();
-        gen_decode_field(out, f, &clean_var, "                    ");
+        if f.nullable {
+            // A nullable field carries either the value or CBOR null; null
+            // leaves the Option as None rather than erroring on type mismatch.
+            writeln!(
+                out,
+                "                    if !matches!(value, crate::cbor::Value::Null) {{"
+            )
+            .ok();
+            gen_decode_field(out, f, &clean_var, "                        ");
+            writeln!(out, "                    }}").ok();
+        } else {
+            gen_decode_field(out, f, &clean_var, "                    ");
+        }
         writeln!(out, "                }}").ok();
     }
 
@@ -523,6 +639,11 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
         let clean_var = clean_field_name(&f.rust_field);
         if f.rust_type.starts_with("Vec<") || f.rust_type.starts_with("Option<") {
             writeln!(out, "            {rust_field}: field_{clean_var},").ok();
+        } else if f.json_name == "$type" && type_nsid.is_some() {
+            // Synthetic record $type: default to the record NSID when absent
+            // (tolerant decode), rather than erroring on a missing field.
+            let nsid = type_nsid.unwrap_or_default();
+            writeln!(out, "            {rust_field}: field_{clean_var}.unwrap_or_else(|| {nsid:?}.to_string()),").ok();
         } else {
             // Required field -- must be present.
             let key = &f.json_name;
@@ -611,20 +732,8 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
             }
         }
         FieldKind::Bytes => {
-            // Stored as String in Rust. Encode as text for now.
-            if is_ref {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text({access})?;"
-                )
-                .ok();
-            } else {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
-                )
-                .ok();
-            }
+            // bytes is a DAG-CBOR byte string (major type 2), not text.
+            writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::CidLink => {
             writeln!(out, "{indent}let cid = {access}.link.parse::<crate::cbor::Cid>().map_err(|e| crate::cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
@@ -698,11 +807,7 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
             writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text({access})?;"
-            )
-            .ok();
+            writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::Array(inner) => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
@@ -792,19 +897,7 @@ fn gen_encode_value_vbuf(
             }
         }
         FieldKind::Bytes => {
-            if is_ref {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
-                )
-                .ok();
-            } else {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
-                )
-                .ok();
-            }
+            writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::CidLink => {
             writeln!(out, "{indent}let cid = {access}.link.parse::<crate::cbor::Cid>().map_err(|e| crate::cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
@@ -878,11 +971,7 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
             writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
-            )
-            .ok();
+            writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::Array(inner) => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
@@ -939,7 +1028,7 @@ fn gen_decode_single(
         }
         FieldKind::Integer => {
             writeln!(out, "{indent}match value {{").ok();
-            writeln!(out, "{indent}    crate::cbor::Value::Unsigned(n) => {{ {assign_pre}n as i64{assign_post} }}").ok();
+            writeln!(out, "{indent}    crate::cbor::Value::Unsigned(n) => {{ {assign_pre}i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?{assign_post} }}").ok();
             writeln!(
                 out,
                 "{indent}    crate::cbor::Value::Signed(n) => {{ {assign_pre}n{assign_post} }}"
@@ -956,10 +1045,18 @@ fn gen_decode_single(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bytes => {
-            writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = value {{").ok();
-            writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
+            writeln!(
+                out,
+                "{indent}if let crate::cbor::Value::Bytes(b) = value {{"
+            )
+            .ok();
+            writeln!(
+                out,
+                "{indent}    {assign_pre}crate::api::Bytes(b.to_vec()){assign_post}"
+            )
+            .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text for bytes field\".into()));").ok();
+            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected byte string for bytes field\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::CidLink => {
@@ -1050,7 +1147,7 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}match item {{").ok();
             writeln!(
                 out,
-                "{indent}    crate::cbor::Value::Unsigned(n) => field_{var}.push(n as i64),"
+                "{indent}    crate::cbor::Value::Unsigned(n) => field_{var}.push(i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?),"
             )
             .ok();
             writeln!(
@@ -1093,10 +1190,14 @@ fn gen_decode_array_item(
             .ok();
         }
         FieldKind::Bytes => {
-            writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = item {{").ok();
-            writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
+            writeln!(out, "{indent}if let crate::cbor::Value::Bytes(b) = item {{").ok();
+            writeln!(
+                out,
+                "{indent}    field_{var}.push(crate::api::Bytes(b.to_vec()));"
+            )
+            .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected byte string in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Array(_) | FieldKind::JsonValue => {}

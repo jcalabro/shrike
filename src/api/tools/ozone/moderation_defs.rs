@@ -575,7 +575,9 @@ impl ModerationDefsAccountStats {
             match key {
                 "appealCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_appeal_count = Some(n as i64);
+                        field_appeal_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_appeal_count = Some(n);
@@ -588,7 +590,9 @@ impl ModerationDefsAccountStats {
                 },
                 "reportCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_report_count = Some(n as i64);
+                        field_report_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_report_count = Some(n);
@@ -601,7 +605,9 @@ impl ModerationDefsAccountStats {
                 },
                 "suspendCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_suspend_count = Some(n as i64);
+                        field_suspend_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_suspend_count = Some(n);
@@ -614,7 +620,9 @@ impl ModerationDefsAccountStats {
                 },
                 "escalateCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_escalate_count = Some(n as i64);
+                        field_escalate_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_escalate_count = Some(n);
@@ -627,7 +635,9 @@ impl ModerationDefsAccountStats {
                 },
                 "takedownCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_takedown_count = Some(n as i64);
+                        field_takedown_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_takedown_count = Some(n);
@@ -819,7 +829,9 @@ impl ModerationDefsAccountStrike {
                 }
                 "totalStrikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_total_strike_count = Some(n as i64);
+                        field_total_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_total_strike_count = Some(n);
@@ -832,7 +844,9 @@ impl ModerationDefsAccountStrike {
                 },
                 "activeStrikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_active_strike_count = Some(n as i64);
+                        field_active_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_active_strike_count = Some(n);
@@ -1731,7 +1745,9 @@ impl ModerationDefsBlobView {
                 }
                 "size" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_size = Some(n as i64);
+                        field_size = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_size = Some(n);
@@ -2301,7 +2317,9 @@ impl ModerationDefsImageDetails {
             match key {
                 "width" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_width = Some(n as i64);
+                        field_width = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_width = Some(n);
@@ -2314,7 +2332,9 @@ impl ModerationDefsImageDetails {
                 },
                 "height" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_height = Some(n as i64);
+                        field_height = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_height = Some(n);
@@ -2956,7 +2976,9 @@ impl ModerationDefsModEventEmail {
                 }
                 "strikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_strike_count = Some(n as i64);
+                        field_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_strike_count = Some(n);
@@ -3275,7 +3297,9 @@ impl ModerationDefsModEventLabel {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);
@@ -3417,7 +3441,9 @@ impl ModerationDefsModEventMute {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);
@@ -3556,7 +3582,9 @@ impl ModerationDefsModEventMuteReporter {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);
@@ -3673,7 +3701,9 @@ impl ModerationDefsModEventPriorityScore {
             match key {
                 "score" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_score = Some(n as i64);
+                        field_score = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_score = Some(n);
@@ -4128,7 +4158,9 @@ impl ModerationDefsModEventReverseTakedown {
                 }
                 "strikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_strike_count = Some(n as i64);
+                        field_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_strike_count = Some(n);
@@ -4338,7 +4370,9 @@ impl ModerationDefsModEventTag {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);
@@ -4618,7 +4652,9 @@ impl ModerationDefsModEventTakedown {
                 }
                 "strikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_strike_count = Some(n as i64);
+                        field_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_strike_count = Some(n);
@@ -4653,7 +4689,9 @@ impl ModerationDefsModEventTakedown {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);
@@ -5988,7 +6026,7 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsModEventViewSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsModEventViewSubjectUnion::RepoStrongRef(
@@ -6091,7 +6129,7 @@ impl ModerationDefsModEventViewSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsModEventViewSubjectUnion::RepoStrongRef(
@@ -6280,7 +6318,9 @@ impl ModerationDefsModEventView {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);
@@ -7547,7 +7587,9 @@ impl ModerationDefsModEventViewDetail {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);
@@ -9051,7 +9093,9 @@ impl ModerationDefsRecordsStats {
             match key {
                 "pendingCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_pending_count = Some(n as i64);
+                        field_pending_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_pending_count = Some(n);
@@ -9064,7 +9108,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "subjectCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_subject_count = Some(n as i64);
+                        field_subject_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_subject_count = Some(n);
@@ -9077,7 +9123,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "totalReports" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_total_reports = Some(n as i64);
+                        field_total_reports = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_total_reports = Some(n);
@@ -9090,7 +9138,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "appealedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_appealed_count = Some(n as i64);
+                        field_appealed_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_appealed_count = Some(n);
@@ -9103,7 +9153,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "reportedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_reported_count = Some(n as i64);
+                        field_reported_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_reported_count = Some(n);
@@ -9116,7 +9168,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "escalatedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_escalated_count = Some(n as i64);
+                        field_escalated_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_escalated_count = Some(n);
@@ -9129,7 +9183,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "processedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_processed_count = Some(n as i64);
+                        field_processed_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_processed_count = Some(n);
@@ -9142,7 +9198,9 @@ impl ModerationDefsRecordsStats {
                 },
                 "takendownCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_takendown_count = Some(n as i64);
+                        field_takendown_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_takendown_count = Some(n);
@@ -10214,7 +10272,9 @@ impl ModerationDefsReporterStats {
                 }
                 "recordReportCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_record_report_count = Some(n as i64);
+                        field_record_report_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_record_report_count = Some(n);
@@ -10227,7 +10287,9 @@ impl ModerationDefsReporterStats {
                 },
                 "accountReportCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_account_report_count = Some(n as i64);
+                        field_account_report_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_account_report_count = Some(n);
@@ -10240,7 +10302,9 @@ impl ModerationDefsReporterStats {
                 },
                 "labeledRecordCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_labeled_record_count = Some(n as i64);
+                        field_labeled_record_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_labeled_record_count = Some(n);
@@ -10253,7 +10317,9 @@ impl ModerationDefsReporterStats {
                 },
                 "labeledAccountCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_labeled_account_count = Some(n as i64);
+                        field_labeled_account_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_labeled_account_count = Some(n);
@@ -10266,7 +10332,9 @@ impl ModerationDefsReporterStats {
                 },
                 "reportedRecordCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_reported_record_count = Some(n as i64);
+                        field_reported_record_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_reported_record_count = Some(n);
@@ -10279,7 +10347,9 @@ impl ModerationDefsReporterStats {
                 },
                 "reportedAccountCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_reported_account_count = Some(n as i64);
+                        field_reported_account_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_reported_account_count = Some(n);
@@ -10292,7 +10362,9 @@ impl ModerationDefsReporterStats {
                 },
                 "takendownRecordCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_takendown_record_count = Some(n as i64);
+                        field_takendown_record_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_takendown_record_count = Some(n);
@@ -10305,7 +10377,9 @@ impl ModerationDefsReporterStats {
                 },
                 "takendownAccountCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_takendown_account_count = Some(n as i64);
+                        field_takendown_account_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_takendown_account_count = Some(n);
@@ -10954,7 +11028,9 @@ impl ModerationDefsScheduledActionView {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);
@@ -11061,7 +11137,9 @@ impl ModerationDefsScheduledActionView {
                 }
                 "executionEventId" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_execution_event_id = Some(n as i64);
+                        field_execution_event_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_execution_event_id = Some(n);
@@ -11457,7 +11535,7 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsSubjectStatusViewSubjectUnio
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::AdminDefsRepoRef(Box::new(inner)))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::RepoStrongRef(
@@ -11560,7 +11638,7 @@ impl ModerationDefsSubjectStatusViewSubjectUnion {
                 let inner = crate::api::com::atproto::AdminDefsRepoRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::AdminDefsRepoRef(Box::new(inner)))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::RepoStrongRef(
@@ -12028,7 +12106,9 @@ impl ModerationDefsSubjectStatusView {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);
@@ -12154,7 +12234,9 @@ impl ModerationDefsSubjectStatusView {
                 }
                 "priorityScore" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_priority_score = Some(n as i64);
+                        field_priority_score = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_priority_score = Some(n);
@@ -12721,7 +12803,9 @@ impl ModerationDefsVideoDetails {
             match key {
                 "width" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_width = Some(n as i64);
+                        field_width = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_width = Some(n);
@@ -12734,7 +12818,9 @@ impl ModerationDefsVideoDetails {
                 },
                 "height" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_height = Some(n as i64);
+                        field_height = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_height = Some(n);
@@ -12747,7 +12833,9 @@ impl ModerationDefsVideoDetails {
                 },
                 "length" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_length = Some(n as i64);
+                        field_length = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_length = Some(n);

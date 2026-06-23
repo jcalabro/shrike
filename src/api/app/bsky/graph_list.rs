@@ -7,6 +7,9 @@ pub const NSID_GRAPH_LIST: &str = "app.bsky.graph.list";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphList {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_graphlist")]
+    pub r#type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar: Option<crate::api::Blob>,
     pub created_at: crate::syntax::Datetime,
@@ -26,6 +29,10 @@ pub struct GraphList {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_graphlist() -> String {
+    "app.bsky.graph.list".to_string()
 }
 
 /// GraphListLabelsUnion is a union type.
@@ -167,7 +174,7 @@ impl GraphList {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 3u64;
+            let mut count = 4u64;
             if self.avatar.is_some() {
                 count += 1;
             }
@@ -183,6 +190,8 @@ impl GraphList {
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("name")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.name)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.avatar.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("avatar")?;
                 if let Some(ref val) = self.avatar {
@@ -220,6 +229,11 @@ impl GraphList {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.name)?;
                 pairs.push(("name", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if self.avatar.is_some() {
                 let mut vbuf = Vec::new();
@@ -291,6 +305,7 @@ impl GraphList {
         };
 
         let mut field_name: Option<String> = None;
+        let mut field_type: Option<String> = None;
         let mut field_avatar: Option<crate::api::Blob> = None;
         let mut field_labels: Option<GraphListLabelsUnion> = None;
         let mut field_purpose: Option<crate::api::app::bsky::GraphDefsListPurpose> = None;
@@ -304,6 +319,13 @@ impl GraphList {
                 "name" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -365,6 +387,7 @@ impl GraphList {
             name: field_name.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.graph.list".to_string()),
             avatar: field_avatar,
             labels: field_labels,
             purpose: field_purpose.ok_or_else(|| {

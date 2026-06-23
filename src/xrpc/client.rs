@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::xrpc::auth::AuthInfo;
 use crate::xrpc::error::Error;
+use crate::xrpc::ratelimit::RateLimit;
 use crate::xrpc::retry::RetryPolicy;
 
 const MAX_RESPONSE_BODY: u64 = 5 << 20; // 5 MB for JSON
@@ -38,6 +39,10 @@ pub struct Client {
     host: String,
     auth: RwLock<Option<AuthInfo>>,
     retry: RetryPolicy,
+    /// Most recent rate-limit snapshot advertised by the server (`RateLimit-*`
+    /// headers), updated on every response. Lets callers pace themselves before
+    /// hitting a 429.
+    rate_limit: RwLock<Option<RateLimit>>,
 }
 
 impl Client {
@@ -49,6 +54,7 @@ impl Client {
             host: host.to_owned(),
             auth: RwLock::new(None),
             retry: RetryPolicy::default(),
+            rate_limit: RwLock::new(None),
         }
     }
 
@@ -60,6 +66,7 @@ impl Client {
             host: host.to_owned(),
             auth: RwLock::new(Some(auth)),
             retry: RetryPolicy::default(),
+            rate_limit: RwLock::new(None),
         }
     }
 
@@ -70,6 +77,23 @@ impl Client {
             host: host.to_owned(),
             auth: RwLock::new(None),
             retry,
+            rate_limit: RwLock::new(None),
+        }
+    }
+
+    /// The most recent rate-limit snapshot advertised by the server, if any.
+    ///
+    /// Updated from the `RateLimit-*` headers on every response (success or
+    /// error). Use it to pace requests proactively — e.g. back off when
+    /// [`RateLimit::is_exhausted`] is true or `remaining` is low.
+    pub async fn rate_limit(&self) -> Option<RateLimit> {
+        self.rate_limit.read().await.clone()
+    }
+
+    /// Capture the server's `RateLimit-*` headers from a response, if present.
+    async fn record_rate_limit(&self, resp: &reqwest::Response) {
+        if let Some(rl) = RateLimit::from_headers(resp.headers()) {
+            *self.rate_limit.write().await = Some(rl);
         }
     }
 
@@ -165,7 +189,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -180,6 +210,7 @@ impl Client {
                 }
             };
 
+            self.record_rate_limit(&resp).await;
             let status = resp.status();
 
             if status.is_success() {
@@ -221,7 +252,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -241,6 +278,7 @@ impl Client {
                 }
             };
 
+            self.record_rate_limit(&resp).await;
             let status = resp.status();
 
             if status.is_success() {
@@ -278,7 +316,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -293,6 +337,7 @@ impl Client {
                 }
             };
 
+            self.record_rate_limit(&resp).await;
             let status = resp.status();
 
             if status.is_success() {
@@ -345,7 +390,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -365,6 +416,7 @@ impl Client {
                 }
             };
 
+            self.record_rate_limit(&resp).await;
             let status = resp.status();
 
             if status.is_success() {
@@ -415,6 +467,7 @@ impl Client {
             .body(body_bytes);
         let resp = crate::outbound::apply_user_agent(rb).send().await?;
 
+        self.record_rate_limit(&resp).await;
         let status = resp.status();
         if status.is_success() {
             let auth: AuthInfo = resp.json().await.map_err(Error::Network)?;
@@ -438,6 +491,7 @@ impl Client {
 
         let resp = rb.send().await?;
 
+        self.record_rate_limit(&resp).await;
         let status = resp.status();
         if status.is_success() {
             let auth: AuthInfo = resp.json().await.map_err(Error::Network)?;
@@ -461,6 +515,7 @@ impl Client {
 
         let resp = rb.send().await?;
 
+        self.record_rate_limit(&resp).await;
         let status = resp.status();
         if status.is_success() {
             let mut guard = self.auth.write().await;
@@ -560,6 +615,21 @@ mod tests {
                     }),
                 )
                 .route(
+                    "/xrpc/com.example.ratelimited_ok",
+                    get(|| async {
+                        (
+                            StatusCode::OK,
+                            [
+                                ("ratelimit-limit", "3000"),
+                                ("ratelimit-remaining", "2998"),
+                                ("ratelimit-reset", "1700000000"),
+                                ("ratelimit-policy", "3000;w=300"),
+                            ],
+                            Json(json!({"message": "pong"})),
+                        )
+                    }),
+                )
+                .route(
                     "/xrpc/com.atproto.server.createSession",
                     post(|| async {
                         Json(json!({
@@ -585,6 +655,38 @@ mod tests {
         let client = Client::new(&url);
         let result: serde_json::Value = client.query("com.example.ping", &json!({})).await.unwrap();
         assert_eq!(result["message"], "pong");
+    }
+
+    #[tokio::test]
+    async fn captures_ratelimit_headers_on_success() {
+        // L25: RateLimit-* headers on a successful response must be captured for
+        // proactive pacing.
+        let url = start_mock().await;
+        let client = Client::new(&url);
+        assert!(client.rate_limit().await.is_none(), "none before any call");
+
+        let _: serde_json::Value = client
+            .query("com.example.ratelimited_ok", &json!({}))
+            .await
+            .unwrap();
+
+        let rl = client.rate_limit().await.expect("rate limit captured");
+        assert_eq!(rl.limit, Some(3000));
+        assert_eq!(rl.remaining, Some(2998));
+        assert_eq!(rl.reset, Some(1_700_000_000));
+        assert_eq!(rl.policy.as_deref(), Some("3000;w=300"));
+        assert!(!rl.is_exhausted());
+    }
+
+    #[tokio::test]
+    async fn rate_limit_none_when_server_sends_no_headers() {
+        let url = start_mock().await;
+        let client = Client::new(&url);
+        let _: serde_json::Value = client.query("com.example.ping", &json!({})).await.unwrap();
+        assert!(
+            client.rate_limit().await.is_none(),
+            "no RateLimit-* headers → no snapshot"
+        );
     }
 
     #[tokio::test]

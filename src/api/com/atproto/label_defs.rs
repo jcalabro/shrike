@@ -17,7 +17,7 @@ pub struct LabelDefsLabel {
     pub neg: Option<bool>,
     /// Signature of dag-cbor encoded label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sig: Option<String>,
+    pub sig: Option<crate::api::Bytes>,
     /// DID of the actor who created this label.
     pub src: crate::syntax::Did,
     /// AT URI of the record, repository (account), or other resource that this label applies to.
@@ -85,7 +85,7 @@ impl LabelDefsLabel {
             if self.sig.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("sig")?;
                 if let Some(ref val) = self.sig {
-                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                    val.encode_cbor(buf)?;
                 }
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("src")?;
@@ -132,7 +132,7 @@ impl LabelDefsLabel {
             if self.sig.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.sig {
-                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                    val.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("sig", vbuf));
             }
@@ -191,7 +191,7 @@ impl LabelDefsLabel {
         let mut field_cts: Option<crate::syntax::Datetime> = None;
         let mut field_exp: Option<crate::syntax::Datetime> = None;
         let mut field_neg: Option<bool> = None;
-        let mut field_sig: Option<String> = None;
+        let mut field_sig: Option<crate::api::Bytes> = None;
         let mut field_src: Option<crate::syntax::Did> = None;
         let mut field_uri: Option<String> = None;
         let mut field_val: Option<String> = None;
@@ -235,11 +235,11 @@ impl LabelDefsLabel {
                     }
                 }
                 "sig" => {
-                    if let crate::cbor::Value::Text(s) = value {
-                        field_sig = Some(s.to_string());
+                    if let crate::cbor::Value::Bytes(b) = value {
+                        field_sig = Some(crate::api::Bytes(b.to_vec()));
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor(
-                            "expected text for bytes field".into(),
+                            "expected byte string for bytes field".into(),
                         ));
                     }
                 }
@@ -269,7 +269,9 @@ impl LabelDefsLabel {
                 }
                 "ver" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_ver = Some(n as i64);
+                        field_ver = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_ver = Some(n);

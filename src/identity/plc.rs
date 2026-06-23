@@ -11,10 +11,16 @@ pub struct PlcClient {
 
 impl PlcClient {
     /// Create a PLC client pointing at the given directory URL.
+    ///
+    /// The PLC endpoint is operator-configured (the DID travels in the URL
+    /// path, not the host), so it is treated as trusted: connect-time address
+    /// filtering is **not** applied here. The redirect/timeout hardening still
+    /// applies. This is also what lets a local PLC mirror
+    /// (`http://127.0.0.1:...`) be used in tests and self-hosting.
     pub fn new(url: &str) -> Self {
         PlcClient {
             url: url.to_string(),
-            http: reqwest::Client::new(),
+            http: crate::outbound::hardened_client(crate::outbound::AddressPolicy::AllowLocal),
         }
     }
 
@@ -33,8 +39,6 @@ impl PlcClient {
         if !resp.status().is_success() {
             return Err(IdentityError::NotFound(did.to_string()));
         }
-        resp.json()
-            .await
-            .map_err(|e| IdentityError::InvalidDocument(e.to_string()))
+        crate::identity::fetch_did_document(resp, did).await
     }
 }

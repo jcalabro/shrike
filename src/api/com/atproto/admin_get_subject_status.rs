@@ -97,7 +97,7 @@ impl<'de> serde::Deserialize<'de> for AdminGetSubjectStatusOutputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(AdminGetSubjectStatusOutputSubjectUnion::RepoStrongRef(
@@ -188,7 +188,7 @@ impl AdminGetSubjectStatusOutputSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(AdminGetSubjectStatusOutputSubjectUnion::RepoStrongRef(

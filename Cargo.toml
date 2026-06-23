@@ -64,6 +64,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 rand = "0.9"
 url = "2"
 async-trait = "0.1"
+hickory-resolver = "0.25"
 
 [lints]
 workspace = true
@@ -85,7 +86,7 @@ xrpc-server = ["syntax", "dep:tokio", "dep:axum", "dep:http"]
 
 # Layer 2 (depend on lower layers)
 repo = ["syntax", "cbor", "crypto", "mst"]
-identity = ["syntax", "crypto", "dep:reqwest", "dep:tokio"]
+identity = ["syntax", "crypto", "dep:reqwest", "dep:tokio", "dep:hickory-resolver"]
 labeling = ["syntax", "cbor", "crypto"]
 streaming = ["syntax", "cbor", "car", "dep:tokio", "dep:tokio-tungstenite", "dep:futures", "dep:url", "dep:rand"]
 api = ["syntax", "cbor", "xrpc"]
@@ -126,6 +127,9 @@ zeroize = { version = "1", optional = true }
 # xrpc, identity, oauth
 reqwest = { workspace = true, optional = true }
 
+# identity (DNS handle resolution)
+hickory-resolver = { workspace = true, optional = true }
+
 # xrpc, xrpc-server, identity, streaming, sync, backfill, oauth
 tokio = { workspace = true, optional = true }
 
@@ -163,8 +167,24 @@ name = "api_cbor_roundtrip"
 required-features = ["api"]
 
 [[test]]
+name = "crypto_interop"
+required-features = ["crypto"]
+
+[[test]]
+name = "cbor_interop"
+required-features = ["cbor"]
+
+[[test]]
+name = "repo_car_interop"
+required-features = ["repo", "car", "mst"]
+
+[[test]]
 name = "oauth_integration"
 required-features = ["oauth"]
+
+[[test]]
+name = "identity_integration"
+required-features = ["identity"]
 
 [[test]]
 name = "sync_1_1_parser"

@@ -10,6 +10,9 @@ pub const NSID_ACTOR_STATUS: &str = "app.bsky.actor.status";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorStatus {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_actorstatus")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     /// The duration of the status in minutes. Applications can choose to impose minimum and maximum limits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,6 +28,10 @@ pub struct ActorStatus {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_actorstatus() -> String {
+    "app.bsky.actor.status".to_string()
 }
 
 /// An optional embed associated with the status.
@@ -69,7 +76,7 @@ impl<'de> serde::Deserialize<'de> for ActorStatusEmbedUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ActorStatusEmbedUnion::EmbedExternal(Box::new(inner)))
@@ -140,7 +147,7 @@ impl ActorStatusEmbedUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedExternal::decode_cbor(&mut dec)?;
                 Ok(ActorStatusEmbedUnion::EmbedExternal(Box::new(inner)))
@@ -166,7 +173,7 @@ impl ActorStatus {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if self.embed.is_some() {
                 count += 1;
             }
@@ -174,6 +181,8 @@ impl ActorStatus {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.embed.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("embed")?;
                 if let Some(ref val) = self.embed {
@@ -193,6 +202,11 @@ impl ActorStatus {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             if self.embed.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.embed {
@@ -246,6 +260,7 @@ impl ActorStatus {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_embed: Option<ActorStatusEmbedUnion> = None;
         let mut field_status: Option<String> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
@@ -254,6 +269,13 @@ impl ActorStatus {
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "embed" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -278,7 +300,9 @@ impl ActorStatus {
                 }
                 "durationMinutes" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_minutes = Some(n as i64);
+                        field_duration_minutes = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_minutes = Some(n);
@@ -297,6 +321,7 @@ impl ActorStatus {
         }
 
         Ok(ActorStatus {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.actor.status".to_string()),
             embed: field_embed,
             status: field_status.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'status'".into())

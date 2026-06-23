@@ -80,17 +80,17 @@ impl<'de> serde::Deserialize<'de> for EmbedRecordWithMediaMediaUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.images" => {
+            "app.bsky.embed.images" | "app.bsky.embed.images#main" => {
                 let inner: crate::api::app::bsky::EmbedImages =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedImages(Box::new(inner)))
             }
-            "app.bsky.embed.video" => {
+            "app.bsky.embed.video" | "app.bsky.embed.video#main" => {
                 let inner: crate::api::app::bsky::EmbedVideo =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedVideo(Box::new(inner)))
             }
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedExternal(Box::new(
@@ -165,17 +165,17 @@ impl EmbedRecordWithMediaMediaUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.images" => {
+            "app.bsky.embed.images" | "app.bsky.embed.images#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedImages::decode_cbor(&mut dec)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedImages(Box::new(inner)))
             }
-            "app.bsky.embed.video" => {
+            "app.bsky.embed.video" | "app.bsky.embed.video#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideo::decode_cbor(&mut dec)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedVideo(Box::new(inner)))
             }
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedExternal::decode_cbor(&mut dec)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedExternal(Box::new(

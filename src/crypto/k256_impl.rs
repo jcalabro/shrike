@@ -103,9 +103,20 @@ impl VerifyingKey for K256VerifyingKey {
     }
 
     fn verify(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError> {
+        use k256::elliptic_curve::scalar::IsHigh;
+
         let digest = Sha256::digest(content);
         let k256_sig = K256Sig::from_bytes(sig.as_bytes().into())
             .map_err(|e| CryptoError::InvalidSignature(e.to_string()))?;
+        // atproto requires the low-S signature variant on both curves. The
+        // k256 crate's verify_prehash happens to reject high-S today, but we do
+        // not rely on that incidental behavior — reject high-S explicitly so
+        // the invariant is enforced by shrike and cannot regress.
+        if bool::from(k256_sig.s().is_high()) {
+            return Err(CryptoError::InvalidSignature(
+                "high-S signature rejected (atproto requires low-S)".into(),
+            ));
+        }
         self.inner
             .verify_prehash(&digest, &k256_sig)
             .map_err(|e| CryptoError::InvalidSignature(e.to_string()))

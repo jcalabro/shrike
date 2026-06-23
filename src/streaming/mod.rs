@@ -47,6 +47,15 @@ pub enum StreamError {
     WebSocket(String),
     #[error("unknown event type: {0}")]
     UnknownType(String),
+    /// A relay-originated error frame (`op == -1`). Carries the structured
+    /// `error` name and optional human-readable `message` so a persistent
+    /// upstream failure (e.g. `FutureCursor`, `ConsumerTooSlow`) surfaces to the
+    /// consumer instead of being silently skipped into a reconnect loop.
+    #[error("relay error frame: {error}{}", .message.as_ref().map(|m| format!(": {m}")).unwrap_or_default())]
+    RelayError {
+        error: String,
+        message: Option<String>,
+    },
     #[cfg(feature = "sync")]
     #[error("verifier error: {0}")]
     Verifier(#[source] Box<crate::sync::VerifierError>),
@@ -96,18 +105,36 @@ pub fn parse_firehose_frame(data: &[u8]) -> Result<Event, StreamError> {
 
     let (op, type_tag) = extract_frame_header(header)?;
 
-    // op=-1 is an error frame; skip it (yield as Unknown).
+    // op=-1 is an error frame. Decode its body `{error, message}` and surface
+    // the structured error name/message rather than dropping it (which would
+    // turn a persistent relay error into a silent reconnect loop).
     if op == -1 {
-        return Err(StreamError::UnknownType("error frame".into()));
+        let body = dec
+            .decode()
+            .map_err(|e| StreamError::ParseCbor(format!("error frame body: {e}")))?;
+        let (error, message) = extract_error_frame_body(body);
+        return Err(StreamError::RelayError { error, message });
     }
     if op != 1 {
-        return Err(StreamError::ParseCbor(format!("unknown frame op: {op}")));
+        // Unknown op codes are forward-compat: surface as a skippable
+        // UnknownType (the consumer continues) rather than a fatal parse error
+        // that would trigger a reconnect loop.
+        return Err(StreamError::UnknownType(format!("unknown frame op: {op}")));
     }
 
     // Decode the body map.
     let body = dec
         .decode()
         .map_err(|e| StreamError::ParseCbor(format!("body: {e}")))?;
+
+    // A firehose frame is exactly a (header, body) pair; reject trailing bytes
+    // rather than silently ignoring them (matches shrike's strict cbor::decode
+    // no-trailing-data invariant).
+    if !dec.is_empty() {
+        return Err(StreamError::ParseCbor(
+            "trailing data after frame body".into(),
+        ));
+    }
 
     match type_tag.as_str() {
         "#commit" => {
@@ -210,6 +237,28 @@ fn extract_frame_header(header: crate::cbor::Value<'_>) -> Result<(i64, String),
     Ok((op, t))
 }
 
+/// Extract the `{error, message?}` body of an `op == -1` error frame. A
+/// missing/non-text `error` defaults to `"Unknown"` (matching the TS reference
+/// `ErrorFrame.fromError`); `message` is optional.
+fn extract_error_frame_body(body: crate::cbor::Value<'_>) -> (String, Option<String>) {
+    use crate::cbor::Value;
+
+    let Value::Map(entries) = body else {
+        return ("Unknown".to_owned(), None);
+    };
+
+    let mut error: Option<String> = None;
+    let mut message: Option<String> = None;
+    for (key, val) in entries {
+        match (key, val) {
+            ("error", Value::Text(s)) => error = Some(s.to_owned()),
+            ("message", Value::Text(s)) => message = Some(s.to_owned()),
+            _ => {}
+        }
+    }
+    (error.unwrap_or_else(|| "Unknown".to_owned()), message)
+}
+
 type Fields<'a> = Vec<(&'a str, crate::cbor::Value<'a>)>;
 
 fn require_map<'a>(val: crate::cbor::Value<'a>, context: &str) -> Result<Fields<'a>, StreamError> {
@@ -286,6 +335,23 @@ fn parse_commit_blocks(
 
     let mut index = HashMap::with_capacity(blocks.len());
     for block in blocks {
+        // Verify the block content hashes to its declared CID. The CAR reader
+        // does not verify CID-to-content, so without this check a malicious or
+        // buggy relay could ship a block labeled CID X whose bytes hash to Y,
+        // and we would emit those bytes as the authentic record for X — silent
+        // data corruption from untrusted network input. Both atmos (every
+        // Next()) and the atproto TS reference (verifyIncomingCarBlocks) verify
+        // by default.
+        let computed = crate::cbor::Cid::compute(block.cid.codec(), &block.data);
+        if computed != block.cid {
+            return Err(StreamError::ParseCbor(format!(
+                "commit block CID mismatch: declared {}, content hashes to {}",
+                block.cid, computed
+            )));
+        }
+        // A duplicate CID with differing bytes is impossible once the hash
+        // check above passes (same CID ⇒ same content), so last-writer-wins is
+        // safe here; identical re-inserts are harmless.
         index.insert(block.cid.to_string(), block.data);
     }
     Ok(index)
@@ -342,9 +408,15 @@ fn parse_commit_ops(
                     StreamError::ParseCbor(format!("missing cid for {action} op"))
                 })?;
 
-                // Look up record data from the blocks CAR by CID.
+                // Look up record data from the blocks CAR by CID. A create/update
+                // op whose record block is absent from the CAR is malformed —
+                // error rather than silently emitting an empty record.
                 let cid_str = cid.to_string();
-                let record = block_index.get(&cid_str).cloned().unwrap_or_default();
+                let record = block_index.get(&cid_str).cloned().ok_or_else(|| {
+                    StreamError::ParseCbor(format!(
+                        "{action} op references CID {cid_str} absent from commit blocks"
+                    ))
+                })?;
 
                 if action == "create" {
                     event::Operation::Create {
@@ -530,7 +602,7 @@ mod tests {
     fn event_commit_pattern_match() {
         let event = Event::Commit {
             did: Did::try_from("did:plc:test123456789abcdefghij").unwrap(),
-            rev: Tid::new(1_700_000_000_000_000, 0),
+            rev: Tid::new(1_700_000_000_000_000, 0).unwrap(),
             seq: 42,
             operations: vec![Operation::Create {
                 collection: Nsid::try_from("app.bsky.feed.post").unwrap(),
@@ -631,6 +703,184 @@ mod tests {
             }
             _ => panic!("expected Commit event"),
         }
+    }
+
+    /// Build a #commit frame whose single create op references `op_cid`, with a
+    /// blocks CAR containing one block `(block_cid, block_data)`. Lets tests
+    /// stage CID/content mismatches and missing blocks.
+    fn build_commit_frame(op_cid: &Cid, block_cid: &Cid, block_data: &[u8]) -> Vec<u8> {
+        use crate::cbor::Encoder;
+        let block = crate::car::Block {
+            cid: *block_cid,
+            data: block_data.to_vec(),
+        };
+        let car_bytes = crate::car::write_all(&[*block_cid], std::slice::from_ref(&block)).unwrap();
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#commit").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_u64(1).unwrap();
+        enc.encode_map_header(5).unwrap();
+        enc.encode_text("ops").unwrap();
+        enc.encode_array_header(1).unwrap();
+        enc.encode_map_header(3).unwrap();
+        enc.encode_text("cid").unwrap();
+        enc.encode_cid(op_cid).unwrap();
+        enc.encode_text("path").unwrap();
+        enc.encode_text("app.bsky.feed.post/abc").unwrap();
+        enc.encode_text("action").unwrap();
+        enc.encode_text("create").unwrap();
+        enc.encode_text("rev").unwrap();
+        enc.encode_text("2222222222222").unwrap();
+        enc.encode_text("seq").unwrap();
+        enc.encode_u64(1).unwrap();
+        enc.encode_text("repo").unwrap();
+        enc.encode_text("did:plc:test123456789abcdefghij").unwrap();
+        enc.encode_text("blocks").unwrap();
+        enc.encode_bytes(&car_bytes).unwrap();
+        frame
+    }
+
+    #[test]
+    fn firehose_rejects_forged_block_cid() {
+        // A block labeled with a CID that does NOT hash to its content must be
+        // rejected, not emitted as the authentic record. Regression test for
+        // H5 (firehose block CID verification).
+        let real_data = b"authentic record";
+        let real_cid = Cid::compute(Codec::Drisl, real_data);
+        let forged_data = b"forged record bytes";
+        // Frame claims the block is `real_cid` but ships `forged_data`.
+        let frame = build_commit_frame(&real_cid, &real_cid, forged_data);
+        let result = parse_firehose_frame(&frame);
+        assert!(
+            result.is_err(),
+            "forged block (CID/content mismatch) must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn firehose_rejects_missing_op_block() {
+        // A create op referencing a CID absent from the blocks CAR must error,
+        // not emit an empty record. Regression test for H5.
+        let present_data = b"present block";
+        let present_cid = Cid::compute(Codec::Drisl, present_data);
+        let missing_cid = Cid::compute(Codec::Drisl, b"some other record");
+        // The op references `missing_cid`, but the CAR only contains present_cid.
+        let frame = build_commit_frame(&missing_cid, &present_cid, present_data);
+        let result = parse_firehose_frame(&frame);
+        assert!(
+            result.is_err(),
+            "op referencing an absent block must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn firehose_accepts_valid_block() {
+        // Positive control: a well-formed frame still parses.
+        let data = b"valid record data";
+        let cid = Cid::compute(Codec::Drisl, data);
+        let frame = build_commit_frame(&cid, &cid, data);
+        let event = parse_firehose_frame(&frame).expect("valid frame must parse");
+        match event {
+            Event::Commit { operations, .. } => {
+                assert_eq!(operations.len(), 1);
+                match &operations[0] {
+                    Operation::Create { record, .. } => assert_eq!(record, data),
+                    _ => panic!("expected Create"),
+                }
+            }
+            _ => panic!("expected Commit"),
+        }
+    }
+
+    #[test]
+    fn firehose_unknown_op_is_skippable() {
+        // L20: an unknown op code must surface as UnknownType (which the
+        // consumer skips) rather than a fatal ParseCbor (reconnect loop).
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        // Header {t:"#weird", op:99}, then an empty body map.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#weird").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_u64(99).unwrap();
+        enc.encode_map_header(0).unwrap();
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::UnknownType(_)) => {}
+            other => panic!("unknown op must be UnknownType (skippable), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_error_frame_surfaces_name_and_message() {
+        // L21: an op=-1 error frame must surface the relay's structured error
+        // name and message as a RelayError, not be silently skipped.
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        // Header {op:-1, t:"#error"}.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#error").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_i64(-1).unwrap();
+        // Body {error:"FutureCursor", message:"cursor in the future"}.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("error").unwrap();
+        enc.encode_text("FutureCursor").unwrap();
+        enc.encode_text("message").unwrap();
+        enc.encode_text("cursor in the future").unwrap();
+
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::RelayError { error, message }) => {
+                assert_eq!(error, "FutureCursor");
+                assert_eq!(message.as_deref(), Some("cursor in the future"));
+            }
+            other => panic!("error frame must be RelayError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_error_frame_without_message_defaults_error_name() {
+        // L21: a message-less error frame still surfaces the error name; a
+        // missing error name defaults to "Unknown".
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#error").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_i64(-1).unwrap();
+        // Body with only an error name, no message.
+        enc.encode_map_header(1).unwrap();
+        enc.encode_text("error").unwrap();
+        enc.encode_text("ConsumerTooSlow").unwrap();
+
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::RelayError { error, message }) => {
+                assert_eq!(error, "ConsumerTooSlow");
+                assert_eq!(message, None);
+            }
+            other => panic!("error frame must be RelayError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_rejects_trailing_frame_data() {
+        // L24: trailing bytes after the (header, body) pair must be rejected.
+        let data = b"valid record data";
+        let cid = Cid::compute(Codec::Drisl, data);
+        let mut frame = build_commit_frame(&cid, &cid, data);
+        frame.push(0x00); // stray trailing byte
+        assert!(
+            parse_firehose_frame(&frame).is_err(),
+            "trailing data after frame body must be rejected"
+        );
     }
 
     // --- Config / Client construction tests ---

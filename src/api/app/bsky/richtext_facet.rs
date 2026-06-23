@@ -80,7 +80,9 @@ impl RichtextFacetByteSlice {
             match key {
                 "byteEnd" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_byte_end = Some(n as i64);
+                        field_byte_end = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_byte_end = Some(n);
@@ -93,7 +95,9 @@ impl RichtextFacetByteSlice {
                 },
                 "byteStart" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_byte_start = Some(n as i64);
+                        field_byte_start = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_byte_start = Some(n);

@@ -30,6 +30,7 @@
 //!     state_store: Box::new(MemoryStateStore::new()),
 //!     signing_key: None,
 //!     skip_issuer_verification: false,
+//!     address_policy: Default::default(),
 //! });
 //!
 //! // Start authorization

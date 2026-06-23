@@ -7,6 +7,9 @@ pub const NSID_GRAPH_BLOCK: &str = "app.bsky.graph.block";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphBlock {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_graphblock")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     /// DID of the account to be blocked.
     pub subject: crate::syntax::Did,
@@ -16,6 +19,10 @@ pub struct GraphBlock {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_graphblock() -> String {
+    "app.bsky.graph.block".to_string()
 }
 
 impl GraphBlock {
@@ -28,8 +35,10 @@ impl GraphBlock {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 2u64;
+            let count = 3u64;
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("subject")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.subject.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("createdAt")?;
@@ -37,6 +46,11 @@ impl GraphBlock {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.subject.as_str())?;
@@ -76,12 +90,20 @@ impl GraphBlock {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_subject: Option<crate::syntax::Did> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "subject" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_subject = Some(
@@ -110,6 +132,7 @@ impl GraphBlock {
         }
 
         Ok(GraphBlock {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.graph.block".to_string()),
             subject: field_subject.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
             })?,

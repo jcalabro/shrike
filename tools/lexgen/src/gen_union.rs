@@ -22,11 +22,17 @@ pub fn gen_union(
     let mut variants = Vec::new();
     for ref_str in refs {
         let (target_nsid, def_name) = split_ref(&ctx.schema.id, ref_str);
-        let type_id = if def_name == "main" {
+        let is_main = def_name == "main";
+        let type_id = if is_main {
             target_nsid.clone()
         } else {
             format!("{target_nsid}#{def_name}")
         };
+        // The conformant `$type` for a main def is the bare NSID, but some
+        // producers emit the non-conformant explicit `nsid#main` form. The TS
+        // reference registers both `lex:nsid` and `lex:nsid#main` for a main
+        // def, so accept both on input (we always *emit* the bare form).
+        let type_id_alias = is_main.then(|| format!("{target_nsid}#main"));
 
         let resolved = resolver::resolve_ref(ctx.cfg, &ctx.schema.id, ref_str, ctx.schemas)?;
         // For refs that target the same schema, use bare name.
@@ -43,6 +49,7 @@ pub fn gen_union(
         variants.push(UnionVariant {
             variant_name,
             type_id,
+            type_id_alias,
             rust_type: qualified,
         });
     }
@@ -84,6 +91,9 @@ pub fn gen_union(
 struct UnionVariant {
     variant_name: String,
     type_id: String,
+    /// For main defs, the non-conformant explicit `nsid#main` form, accepted as
+    /// an alias on deserialize. `None` for non-main defs.
+    type_id_alias: Option<String>,
     rust_type: String,
 }
 
@@ -155,7 +165,14 @@ fn gen_deserialize(out: &mut String, type_name: &str, variants: &[UnionVariant],
     .ok();
     writeln!(out, "        match type_str {{").ok();
     for v in variants {
-        writeln!(out, "            {:?} => {{", v.type_id).ok();
+        match &v.type_id_alias {
+            Some(alias) => {
+                writeln!(out, "            {:?} | {:?} => {{", v.type_id, alias).ok();
+            }
+            None => {
+                writeln!(out, "            {:?} => {{", v.type_id).ok();
+            }
+        }
         writeln!(
             out,
             "                let inner: {} = serde_json::from_value(value).map_err(serde::de::Error::custom)?;",
@@ -282,6 +299,52 @@ mod tests {
         assert!(
             !code.contains("Unknown("),
             "closed union should not have Unknown: {code}"
+        );
+    }
+
+    #[test]
+    fn main_def_union_accepts_explicit_hash_main_alias() {
+        // L27: a main-def variant must accept both the conformant bare NSID and
+        // the non-conformant explicit `nsid#main` form on deserialize, while
+        // still emitting only the bare NSID. app.bsky.embed.images is a main def.
+        let (cfg, schemas) = test_ctx();
+        let schema = schemas.get("app.bsky.feed.post").unwrap();
+        let ctx = GenContext {
+            schema,
+            cfg: &cfg,
+            schemas: &schemas,
+            caller_module: "crate::api::app::bsky",
+        };
+        let refs = vec!["app.bsky.embed.images".to_string()];
+        let code = gen_union(&ctx, "MainAliasUnion", &refs, None, None).unwrap();
+
+        // JSON + CBOR deserialize both alternate on bare-NSID | explicit-#main.
+        assert!(
+            code.contains("\"app.bsky.embed.images\" | \"app.bsky.embed.images#main\" =>"),
+            "expected #main alias arm; code:\n{code}"
+        );
+        // The serializer must still write the bare NSID, never `#main`.
+        assert!(
+            !code.contains("app.bsky.embed.images#main\".to_string()"),
+            "serializer must emit the bare NSID, not #main; code:\n{code}"
+        );
+    }
+
+    #[test]
+    fn non_main_ref_has_no_main_alias() {
+        let (cfg, schemas) = test_ctx();
+        let schema = schemas.get("app.bsky.feed.post").unwrap();
+        let ctx = GenContext {
+            schema,
+            cfg: &cfg,
+            schemas: &schemas,
+            caller_module: "crate::api::app::bsky",
+        };
+        let refs = vec!["com.atproto.label.defs#selfLabels".to_string()];
+        let code = gen_union(&ctx, "NonMainUnion", &refs, None, None).unwrap();
+        assert!(
+            !code.contains("#main"),
+            "non-main ref should not gain a #main alias; code:\n{code}"
         );
     }
 

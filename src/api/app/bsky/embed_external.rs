@@ -89,7 +89,9 @@ impl EmbedExternalColorRGB {
             match key {
                 "b" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_b = Some(n as i64);
+                        field_b = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_b = Some(n);
@@ -102,7 +104,9 @@ impl EmbedExternalColorRGB {
                 },
                 "g" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_g = Some(n as i64);
+                        field_g = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_g = Some(n);
@@ -115,7 +119,9 @@ impl EmbedExternalColorRGB {
                 },
                 "r" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_r = Some(n as i64);
+                        field_r = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_r = Some(n);
@@ -850,7 +856,9 @@ impl EmbedExternalViewExternal {
                 }
                 "readingTime" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_reading_time = Some(n as i64);
+                        field_reading_time = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_reading_time = Some(n);

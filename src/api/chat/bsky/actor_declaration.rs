@@ -7,6 +7,9 @@ pub const NSID_ACTOR_DECLARATION: &str = "chat.bsky.actor.declaration";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActorDeclaration {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_actordeclaration")]
+    pub r#type: String,
     /// [NOTE: This is under active development and should be considered unstable while this note is here]. Declaration about group chat invitation preferences for the record owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_group_invites: Option<String>,
@@ -19,6 +22,10 @@ pub struct ActorDeclaration {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
+fn default_type_actordeclaration() -> String {
+    "chat.bsky.actor.declaration".to_string()
+}
+
 impl ActorDeclaration {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -29,11 +36,13 @@ impl ActorDeclaration {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 1u64;
+            let mut count = 2u64;
             if self.allow_group_invites.is_some() {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("allowIncoming")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.allow_incoming)?;
             if self.allow_group_invites.is_some() {
@@ -45,6 +54,11 @@ impl ActorDeclaration {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.allow_incoming)?;
@@ -86,12 +100,20 @@ impl ActorDeclaration {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_allow_incoming: Option<String> = None;
         let mut field_allow_group_invites: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "allowIncoming" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_allow_incoming = Some(s.to_string());
@@ -114,6 +136,7 @@ impl ActorDeclaration {
         }
 
         Ok(ActorDeclaration {
+            r#type: field_type.unwrap_or_else(|| "chat.bsky.actor.declaration".to_string()),
             allow_incoming: field_allow_incoming.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'allowIncoming'".into())
             })?,

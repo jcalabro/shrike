@@ -208,15 +208,17 @@ fn validate_datetime_syntax(raw: &str) -> Result<(), ()> {
 
     let mut i = 19usize;
 
-    // Optional fractional seconds: .[digits]
+    // Optional fractional seconds: .[digits]. At least one digit is required;
+    // there is no separate cap on the number of fractional digits (the overall
+    // 64-character length bound applies), matching the interop corpus which
+    // accepts e.g. ".1235678912345".
     if i < n && b[i] == b'.' {
         i += 1;
         let frac_start = i;
         while i < n && b[i].is_ascii_digit() {
             i += 1;
         }
-        let frac_len = i - frac_start;
-        if frac_len == 0 || frac_len > 20 {
+        if i == frac_start {
             return Err(());
         }
     }
@@ -245,6 +247,16 @@ fn validate_datetime_syntax(raw: &str) -> Result<(), ()> {
                 return Err(());
             }
             if !b[i + 3].is_ascii_digit() || !b[i + 4].is_ascii_digit() {
+                return Err(());
+            }
+            // Bound the offset: hour 00-23, minute 00-59. The grammar only
+            // permits a real time-zone offset, not an arbitrary number.
+            let off_hour = (b[i] - b'0') * 10 + (b[i + 1] - b'0');
+            if off_hour > 23 {
+                return Err(());
+            }
+            let off_min = (b[i + 3] - b'0') * 10 + (b[i + 4] - b'0');
+            if off_min > 59 {
                 return Err(());
             }
             i += 5;
@@ -289,6 +301,59 @@ fn has_timezone(s: &str) -> bool {
 )]
 mod tests {
     use super::*;
+
+    fn load_vectors(path: &str) -> Vec<String> {
+        let content = std::fs::read_to_string(path).unwrap();
+        content
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn datetime_interop_valid() {
+        let vectors = load_vectors("testdata/datetime_syntax_valid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            Datetime::try_from(v.as_str())
+                .unwrap_or_else(|e| panic!("should be valid datetime: {v:?}, got error: {e}"));
+        }
+    }
+
+    #[test]
+    fn datetime_interop_invalid() {
+        let vectors = load_vectors("testdata/datetime_syntax_invalid.txt");
+        assert!(!vectors.is_empty(), "no vectors loaded");
+        for v in &vectors {
+            assert!(
+                Datetime::try_from(v.as_str()).is_err(),
+                "should be invalid datetime: {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn datetime_rejects_out_of_range_offset() {
+        // M11: offset hour 00-23, minute 00-59.
+        assert!(Datetime::try_from("2024-01-01T00:00:00+24:00").is_err());
+        assert!(Datetime::try_from("2024-01-01T00:00:00+99:00").is_err());
+        assert!(Datetime::try_from("2024-01-01T00:00:00+00:60").is_err());
+        assert!(Datetime::try_from("2024-01-01T00:00:00+00:99").is_err());
+        // Valid boundary offsets still accepted.
+        Datetime::try_from("2024-01-01T00:00:00+23:59").unwrap();
+        Datetime::try_from("2024-01-01T00:00:00-12:00").unwrap();
+        Datetime::try_from("2024-01-01T00:00:00+05:30").unwrap();
+    }
+
+    #[test]
+    fn datetime_accepts_long_fractional_seconds() {
+        // L9: no separate fractional-digit cap (only the 64-char total bound).
+        Datetime::try_from("1985-04-12T23:20:50.1235678912345Z").unwrap();
+    }
 
     #[test]
     fn datetime_valid_z() {
