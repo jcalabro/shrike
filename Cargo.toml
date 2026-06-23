@@ -171,6 +171,14 @@ name = "crypto_interop"
 required-features = ["crypto"]
 
 [[test]]
+name = "cbor_interop"
+required-features = ["cbor"]
+
+[[test]]
+name = "repo_car_interop"
+required-features = ["repo", "car", "mst"]
+
+[[test]]
 name = "oauth_integration"
 required-features = ["oauth"]
 
