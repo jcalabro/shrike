@@ -33,8 +33,6 @@ impl PlcClient {
         if !resp.status().is_success() {
             return Err(IdentityError::NotFound(did.to_string()));
         }
-        resp.json()
-            .await
-            .map_err(|e| IdentityError::InvalidDocument(e.to_string()))
+        crate::identity::fetch_did_document(resp, did).await
     }
 }
