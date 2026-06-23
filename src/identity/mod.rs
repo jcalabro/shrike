@@ -4,8 +4,24 @@
 //! both did:plc (via PlcClient) and did:web. DID documents contain public
 //! keys and service endpoints used for authentication and communication.
 //!
-//! Use Directory::resolve_did to fetch a DID document or
-//! Directory::resolve_handle to look up a DID from a handle.
+//! Use [`Directory::lookup_did`] to fetch a DID document.
+//!
+//! # SSRF considerations
+//!
+//! Resolution fetches URLs whose host is derived from untrusted input (the
+//! `did:web` host, the PLC directory, the handle's HTTPS/DNS records). The
+//! HTTP clients used here are hardened: they follow **no redirects** (so a
+//! resolved host cannot 30x-redirect a request to an internal address) and
+//! apply bounded timeouts. The resolved document's `id` is also verified to
+//! match the requested DID, and `did:web` is restricted to hostname form (no
+//! path/port).
+//!
+//! These mitigations do **not** filter the initial resolved IP: a `did:web` or
+//! handle host that resolves directly to a loopback/RFC1918/link-local address
+//! (or via DNS rebinding) is still reachable. Deployments that resolve
+//! untrusted identities should restrict egress at the network layer. IP-range
+//! filtering may be offered as an opt-in in a future revision (default-deny
+//! private ranges, with an explicit allow for localhost/self-hosted setups).
 
 pub mod did_web;
 pub mod directory;
@@ -112,6 +128,57 @@ mod tests {
             let _ = sock.shutdown().await;
         });
         format!("http://{addr}/")
+    }
+
+    /// Serve a single `302 Found` redirect to `location`, recording whether a
+    /// second request ever arrives. Returns (base_url, hit_count handle).
+    async fn serve_redirect(
+        location: String,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let hits = Arc::new(AtomicU32::new(0));
+        let hits_task = Arc::clone(&hits);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            // Handle several connections so a (wrongly) followed redirect that
+            // loops back here would be counted.
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                hits_task.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        (format!("http://{addr}"), hits)
+    }
+
+    #[tokio::test]
+    async fn resolver_does_not_follow_redirects() {
+        // SSRF guard (H11): a resolved host that 302-redirects must NOT be
+        // followed. We point the PLC client at a mock that redirects to an
+        // internal-looking address and assert resolution fails (does not
+        // follow) — the redirect target is never fetched.
+        use crate::identity::plc::PlcClient;
+        let (base, _hits) = serve_redirect("http://169.254.169.254/latest/meta-data".into()).await;
+        let client = PlcClient::new(&base);
+        let did = Did::try_from("did:plc:z72i7hdynmk6r22z27h6tvur").unwrap();
+        let result = client.resolve(&did).await;
+        // The 302 is surfaced as a non-success status → NotFound, not followed.
+        assert!(
+            matches!(result, Err(IdentityError::NotFound(_))),
+            "redirect must not be followed, got {result:?}"
+        );
     }
 
     #[tokio::test]

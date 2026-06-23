@@ -41,7 +41,7 @@ impl Directory {
     pub fn with_plc_url(plc_url: &str) -> Self {
         Directory {
             plc: PlcClient::new(plc_url),
-            http: reqwest::Client::new(),
+            http: crate::outbound::hardened_client(),
             cache: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
             ttl: DEFAULT_TTL,

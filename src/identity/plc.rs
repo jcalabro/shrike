@@ -14,7 +14,7 @@ impl PlcClient {
     pub fn new(url: &str) -> Self {
         PlcClient {
             url: url.to_string(),
-            http: reqwest::Client::new(),
+            http: crate::outbound::hardened_client(),
         }
     }
 

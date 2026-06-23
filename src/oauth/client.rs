@@ -122,7 +122,10 @@ impl OAuthClient {
             sessions: config.session_store,
             states: config.state_store,
             auth,
-            http: reqwest::Client::new(),
+            // Hardened: no redirects (SSRF on handle/DID resolution) + timeouts.
+            // OAuth token/PAR/revocation endpoints are not expected to redirect,
+            // matching the metadata client and atproto's redirect: 'error'.
+            http: crate::outbound::hardened_client(),
             nonces: Arc::new(NonceStore::new()),
             skip_issuer_verification: config.skip_issuer_verification,
             refresh_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
