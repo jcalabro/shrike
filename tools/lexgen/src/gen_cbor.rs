@@ -55,6 +55,27 @@ pub fn gen_cbor_impl(
     type_name: &str,
     obj: &ObjectDef,
 ) -> Result<String, String> {
+    gen_cbor_impl_inner(ctx, type_name, obj, None)
+}
+
+/// As [`gen_cbor_impl`], but for record defs: `type_nsid` is the record's NSID,
+/// emitted as a synthetic `$type` field so the encoded DAG-CBOR carries the
+/// record's type discriminator (required for a correct record CID).
+pub fn gen_record_cbor_impl(
+    ctx: &GenContext<'_>,
+    type_name: &str,
+    obj: &ObjectDef,
+    type_nsid: &str,
+) -> Result<String, String> {
+    gen_cbor_impl_inner(ctx, type_name, obj, Some(type_nsid))
+}
+
+fn gen_cbor_impl_inner(
+    ctx: &GenContext<'_>,
+    type_name: &str,
+    obj: &ObjectDef,
+    type_nsid: Option<&str>,
+) -> Result<String, String> {
     let required: HashSet<&str> = obj.required.iter().map(|s| s.as_str()).collect();
     let nullable: HashSet<&str> = obj.nullable.iter().map(|s| s.as_str()).collect();
 
@@ -63,6 +84,23 @@ pub fn gen_cbor_impl(
 
     // Build field info.
     let mut fields: Vec<CborField> = Vec::new();
+
+    // Records carry a synthetic, always-present `$type` field set to the
+    // record's NSID. It is a normal field for CBOR purposes (sorted into key
+    // order, emitted as text); on the Rust side it is the `r#type` String.
+    // It is required on encode but tolerant on decode (defaults to the NSID),
+    // matching atmos/TS which always emit `$type` but do not hard-fail when a
+    // record arrives without it.
+    if type_nsid.is_some() {
+        fields.push(CborField {
+            json_name: "$type".to_string(),
+            rust_field: "r#type".to_string(),
+            rust_type: "String".to_string(),
+            kind: FieldKind::Text,
+            required: true,
+        });
+    }
+
     for json_name in &field_names {
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
@@ -94,7 +132,7 @@ pub fn gen_cbor_impl(
     writeln!(out, "impl {type_name} {{").ok();
     gen_to_cbor(&mut out, &fields);
     out.push('\n');
-    gen_from_cbor(&mut out, type_name, &fields);
+    gen_from_cbor(&mut out, type_name, &fields, type_nsid);
     writeln!(out, "}}").ok();
     Ok(out)
 }
@@ -402,7 +440,7 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     writeln!(out, "    }}").ok();
 }
 
-fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
+fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_nsid: Option<&str>) {
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
 
@@ -523,6 +561,11 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField]) {
         let clean_var = clean_field_name(&f.rust_field);
         if f.rust_type.starts_with("Vec<") || f.rust_type.starts_with("Option<") {
             writeln!(out, "            {rust_field}: field_{clean_var},").ok();
+        } else if f.json_name == "$type" && type_nsid.is_some() {
+            // Synthetic record $type: default to the record NSID when absent
+            // (tolerant decode), rather than erroring on a missing field.
+            let nsid = type_nsid.unwrap_or_default();
+            writeln!(out, "            {rust_field}: field_{clean_var}.unwrap_or_else(|| {nsid:?}.to_string()),").ok();
         } else {
             // Required field -- must be present.
             let key = &f.json_name;

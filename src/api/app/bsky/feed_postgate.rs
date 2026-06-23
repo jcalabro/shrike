@@ -81,6 +81,9 @@ pub const NSID_FEED_POSTGATE: &str = "app.bsky.feed.postgate";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPostgate {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedpostgate")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     /// List of AT-URIs embedding this post that the author has detached from.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,6 +99,10 @@ pub struct FeedPostgate {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_feedpostgate() -> String {
+    "app.bsky.feed.postgate".to_string()
 }
 
 /// FeedPostgateEmbeddingRulesUnion is a union type.
@@ -243,7 +250,7 @@ impl FeedPostgate {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if !self.embedding_rules.is_empty() {
                 count += 1;
             }
@@ -253,6 +260,8 @@ impl FeedPostgate {
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("post")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.post.as_str())?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("createdAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.created_at.as_str())?;
             if !self.embedding_rules.is_empty() {
@@ -278,6 +287,11 @@ impl FeedPostgate {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.post.as_str())?;
                 pairs.push(("post", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -332,6 +346,7 @@ impl FeedPostgate {
         };
 
         let mut field_post: Option<crate::syntax::AtUri> = None;
+        let mut field_type: Option<String> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut field_embedding_rules: Vec<FeedPostgateEmbeddingRulesUnion> = Vec::new();
         let mut field_detached_embedding_uris: Vec<crate::syntax::AtUri> = Vec::new();
@@ -345,6 +360,13 @@ impl FeedPostgate {
                             crate::syntax::AtUri::try_from(s)
                                 .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
                         );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -401,6 +423,7 @@ impl FeedPostgate {
             post: field_post.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'post'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.postgate".to_string()),
             created_at: field_created_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
             })?,

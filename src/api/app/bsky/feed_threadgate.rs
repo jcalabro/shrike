@@ -251,6 +251,9 @@ pub const NSID_FEED_THREADGATE: &str = "app.bsky.feed.threadgate";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedThreadgate {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedthreadgate")]
+    pub r#type: String,
     /// List of rules defining who can reply to this post. If value is an empty array, no one can reply. If value is undefined, anyone can reply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<FeedThreadgateAllowUnion>,
@@ -266,6 +269,10 @@ pub struct FeedThreadgate {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_feedthreadgate() -> String {
+    "app.bsky.feed.threadgate".to_string()
 }
 
 /// FeedThreadgateAllowUnion is a union type.
@@ -498,7 +505,7 @@ impl FeedThreadgate {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if !self.allow.is_empty() {
                 count += 1;
             }
@@ -508,6 +515,8 @@ impl FeedThreadgate {
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("post")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.post.as_str())?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if !self.allow.is_empty() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("allow")?;
                 crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.allow.len() as u64)?;
@@ -532,6 +541,11 @@ impl FeedThreadgate {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.post.as_str())?;
                 pairs.push(("post", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if !self.allow.is_empty() {
                 let mut vbuf = Vec::new();
@@ -585,6 +599,7 @@ impl FeedThreadgate {
         };
 
         let mut field_post: Option<crate::syntax::AtUri> = None;
+        let mut field_type: Option<String> = None;
         let mut field_allow: Vec<FeedThreadgateAllowUnion> = Vec::new();
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut field_hidden_replies: Vec<crate::syntax::AtUri> = Vec::new();
@@ -598,6 +613,13 @@ impl FeedThreadgate {
                             crate::syntax::AtUri::try_from(s)
                                 .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
                         );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -653,6 +675,7 @@ impl FeedThreadgate {
             post: field_post.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'post'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.threadgate".to_string()),
             allow: field_allow,
             created_at: field_created_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())

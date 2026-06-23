@@ -7,6 +7,9 @@ pub const NSID_GRAPH_LISTITEM: &str = "app.bsky.graph.listitem";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphListitem {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_graphlistitem")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     /// Reference (AT-URI) to the list record (app.bsky.graph.list).
     pub list: crate::syntax::AtUri,
@@ -20,6 +23,10 @@ pub struct GraphListitem {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
+fn default_type_graphlistitem() -> String {
+    "app.bsky.graph.listitem".to_string()
+}
+
 impl GraphListitem {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -30,10 +37,12 @@ impl GraphListitem {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 3u64;
+            let count = 4u64;
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("list")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.list.as_str())?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("subject")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.subject.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("createdAt")?;
@@ -45,6 +54,11 @@ impl GraphListitem {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.list.as_str())?;
                 pairs.push(("list", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -86,6 +100,7 @@ impl GraphListitem {
         };
 
         let mut field_list: Option<crate::syntax::AtUri> = None;
+        let mut field_type: Option<String> = None;
         let mut field_subject: Option<crate::syntax::Did> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
@@ -98,6 +113,13 @@ impl GraphListitem {
                             crate::syntax::AtUri::try_from(s)
                                 .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
                         );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -133,6 +155,7 @@ impl GraphListitem {
             list: field_list.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.graph.listitem".to_string()),
             subject: field_subject.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
             })?,

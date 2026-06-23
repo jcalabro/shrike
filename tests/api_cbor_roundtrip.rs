@@ -145,6 +145,7 @@ fn embed_external_roundtrip() {
 #[test]
 fn feed_post_minimal_roundtrip() {
     let post = shrike::api::app::bsky::FeedPost {
+        r#type: "app.bsky.feed.post".into(),
         text: "Hello world!".into(),
         created_at: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00.000Z").unwrap(),
         embed: None,
@@ -158,7 +159,15 @@ fn feed_post_minimal_roundtrip() {
         extra_cbor: Vec::new(),
     };
     let cbor = post.to_cbor().unwrap();
+    // The encoded record must carry a $type discriminator equal to the NSID.
+    if let shrike::cbor::Value::Map(entries) = shrike::cbor::decode(&cbor).unwrap() {
+        let ty = entries.iter().find(|(k, _)| *k == "$type").expect("$type present");
+        assert_eq!(ty.1, shrike::cbor::Value::Text("app.bsky.feed.post"));
+    } else {
+        panic!("expected map");
+    }
     let decoded = shrike::api::app::bsky::FeedPost::from_cbor(&cbor).unwrap();
+    assert_eq!(decoded.r#type, "app.bsky.feed.post");
     assert_eq!(decoded.text, post.text);
     assert_eq!(decoded.created_at, post.created_at);
     assert!(decoded.embed.is_none());
@@ -170,6 +179,7 @@ fn feed_post_minimal_roundtrip() {
 #[test]
 fn feed_post_with_langs_roundtrip() {
     let post = shrike::api::app::bsky::FeedPost {
+        r#type: "app.bsky.feed.post".into(),
         text: "Hello!".into(),
         created_at: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00.000Z").unwrap(),
         embed: None,

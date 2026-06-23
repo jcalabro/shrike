@@ -7,6 +7,9 @@ pub const NSID_LABELER_SERVICE: &str = "app.bsky.labeler.service";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelerService {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_labelerservice")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<LabelerServiceLabelsUnion>,
@@ -26,6 +29,10 @@ pub struct LabelerService {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_labelerservice() -> String {
+    "app.bsky.labeler.service".to_string()
 }
 
 /// LabelerServiceLabelsUnion is a union type.
@@ -171,7 +178,7 @@ impl LabelerService {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if self.labels.is_some() {
                 count += 1;
             }
@@ -185,6 +192,8 @@ impl LabelerService {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.labels.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("labels")?;
                 if let Some(ref val) = self.labels {
@@ -222,6 +231,11 @@ impl LabelerService {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             if self.labels.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.labels {
@@ -295,6 +309,7 @@ impl LabelerService {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_labels: Option<LabelerServiceLabelsUnion> = None;
         let mut field_policies: Option<crate::api::app::bsky::LabelerDefsLabelerPolicies> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
@@ -307,6 +322,13 @@ impl LabelerService {
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "labels" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -386,6 +408,7 @@ impl LabelerService {
         }
 
         Ok(LabelerService {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.labeler.service".to_string()),
             labels: field_labels,
             policies: field_policies.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'policies'".into())

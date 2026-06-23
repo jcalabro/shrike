@@ -7,6 +7,9 @@ pub const NSID_FEED_GENERATOR: &str = "app.bsky.feed.generator";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedGenerator {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedgenerator")]
+    pub r#type: String,
     /// Declaration that a feed accepts feedback interactions from a client through app.bsky.feed.sendInteractions
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepts_interactions: Option<bool>,
@@ -30,6 +33,10 @@ pub struct FeedGenerator {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_feedgenerator() -> String {
+    "app.bsky.feed.generator".to_string()
 }
 
 /// Self-label values
@@ -175,7 +182,7 @@ impl FeedGenerator {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 3u64;
+            let mut count = 4u64;
             if self.avatar.is_some() {
                 count += 1;
             }
@@ -197,6 +204,8 @@ impl FeedGenerator {
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("did")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.did.as_str())?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.avatar.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("avatar")?;
                 if let Some(ref val) = self.avatar {
@@ -246,6 +255,11 @@ impl FeedGenerator {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.did.as_str())?;
                 pairs.push(("did", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if self.avatar.is_some() {
                 let mut vbuf = Vec::new();
@@ -331,6 +345,7 @@ impl FeedGenerator {
         };
 
         let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_type: Option<String> = None;
         let mut field_avatar: Option<crate::api::Blob> = None;
         let mut field_labels: Option<FeedGeneratorLabelsUnion> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
@@ -349,6 +364,13 @@ impl FeedGenerator {
                             crate::syntax::Did::try_from(s)
                                 .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
                         );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -424,6 +446,7 @@ impl FeedGenerator {
             did: field_did.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.generator".to_string()),
             avatar: field_avatar,
             labels: field_labels,
             created_at: field_created_at.ok_or_else(|| {

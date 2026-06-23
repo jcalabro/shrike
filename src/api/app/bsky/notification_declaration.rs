@@ -7,6 +7,9 @@ pub const NSID_NOTIFICATION_DECLARATION: &str = "app.bsky.notification.declarati
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationDeclaration {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_notificationdeclaration")]
+    pub r#type: String,
     /// A declaration of the user's preference for allowing activity subscriptions from other users. Absence of a record implies 'followers'.
     pub allow_subscriptions: String,
     /// Extra fields not defined in the schema (JSON).
@@ -15,6 +18,10 @@ pub struct NotificationDeclaration {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_notificationdeclaration() -> String {
+    "app.bsky.notification.declaration".to_string()
 }
 
 impl NotificationDeclaration {
@@ -27,13 +34,20 @@ impl NotificationDeclaration {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 1u64;
+            let count = 2u64;
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("allowSubscriptions")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.allow_subscriptions)?;
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.allow_subscriptions)?;
@@ -68,11 +82,19 @@ impl NotificationDeclaration {
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
         };
 
+        let mut field_type: Option<String> = None;
         let mut field_allow_subscriptions: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
             match key {
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "allowSubscriptions" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_allow_subscriptions = Some(s.to_string());
@@ -88,6 +110,7 @@ impl NotificationDeclaration {
         }
 
         Ok(NotificationDeclaration {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.notification.declaration".to_string()),
             allow_subscriptions: field_allow_subscriptions.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor(
                     "missing required field 'allowSubscriptions'".into(),

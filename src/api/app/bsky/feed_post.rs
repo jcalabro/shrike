@@ -137,6 +137,9 @@ pub const NSID_FEED_POST: &str = "app.bsky.feed.post";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPost {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_feedpost")]
+    pub r#type: String,
     /// Client-declared timestamp when this post was originally created.
     pub created_at: crate::syntax::Datetime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,6 +169,10 @@ pub struct FeedPost {
     /// Extra fields not defined in the schema (CBOR).
     #[serde(skip)]
     pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+fn default_type_feedpost() -> String {
+    "app.bsky.feed.post".to_string()
 }
 
 /// FeedPostEmbedUnion is a union type.
@@ -528,7 +535,7 @@ impl FeedPost {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
+            let mut count = 3u64;
             if !self.tags.is_empty() {
                 count += 1;
             }
@@ -560,6 +567,8 @@ impl FeedPost {
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("text")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.text)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if self.embed.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("embed")?;
                 if let Some(ref val) = self.embed {
@@ -618,6 +627,11 @@ impl FeedPost {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.text)?;
                 pairs.push(("text", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if self.embed.is_some() {
                 let mut vbuf = Vec::new();
@@ -702,6 +716,7 @@ impl FeedPost {
 
         let mut field_tags: Vec<String> = Vec::new();
         let mut field_text: Option<String> = None;
+        let mut field_type: Option<String> = None;
         let mut field_embed: Option<FeedPostEmbedUnion> = None;
         let mut field_langs: Vec<crate::syntax::Language> = Vec::new();
         let mut field_reply: Option<FeedPostReplyRef> = None;
@@ -731,6 +746,13 @@ impl FeedPost {
                 "text" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_text = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -812,6 +834,7 @@ impl FeedPost {
             text: field_text.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.post".to_string()),
             embed: field_embed,
             langs: field_langs,
             reply: field_reply,

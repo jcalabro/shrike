@@ -103,6 +103,9 @@ pub const NSID_GRAPH_STARTERPACK: &str = "app.bsky.graph.starterpack";
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphStarterpack {
+    /// Record type discriminator (`$type`).
+    #[serde(rename = "$type", default = "default_type_graphstarterpack")]
+    pub r#type: String,
     pub created_at: crate::syntax::Datetime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -122,6 +125,10 @@ pub struct GraphStarterpack {
     pub extra_cbor: Vec<(String, Vec<u8>)>,
 }
 
+fn default_type_graphstarterpack() -> String {
+    "app.bsky.graph.starterpack".to_string()
+}
+
 impl GraphStarterpack {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -132,7 +139,7 @@ impl GraphStarterpack {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 3u64;
+            let mut count = 4u64;
             if !self.feeds.is_empty() {
                 count += 1;
             }
@@ -147,6 +154,8 @@ impl GraphStarterpack {
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.list.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("name")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.name)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("$type")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.r#type)?;
             if !self.feeds.is_empty() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("feeds")?;
                 crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.feeds.len() as u64)?;
@@ -182,6 +191,11 @@ impl GraphStarterpack {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.name)?;
                 pairs.push(("name", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.r#type)?;
+                pairs.push(("$type", vbuf));
             }
             if !self.feeds.is_empty() {
                 let mut vbuf = Vec::new();
@@ -243,6 +257,7 @@ impl GraphStarterpack {
 
         let mut field_list: Option<crate::syntax::AtUri> = None;
         let mut field_name: Option<String> = None;
+        let mut field_type: Option<String> = None;
         let mut field_feeds: Vec<GraphStarterpackFeedItem> = Vec::new();
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
         let mut field_description: Option<String> = None;
@@ -264,6 +279,13 @@ impl GraphStarterpack {
                 "name" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "$type" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
@@ -322,6 +344,7 @@ impl GraphStarterpack {
             name: field_name.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
             })?,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.graph.starterpack".to_string()),
             feeds: field_feeds,
             created_at: field_created_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
