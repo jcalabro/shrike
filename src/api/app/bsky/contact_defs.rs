@@ -89,7 +89,9 @@ impl ContactDefsMatchAndContactIndex {
                 }
                 "contactIndex" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_contact_index = Some(n as i64);
+                        field_contact_index = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_contact_index = Some(n);
@@ -332,7 +334,9 @@ impl ContactDefsSyncStatus {
                 }
                 "matchesCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_matches_count = Some(n as i64);
+                        field_matches_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_matches_count = Some(n);

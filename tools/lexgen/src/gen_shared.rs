@@ -10,7 +10,74 @@ pub fn gen_shared_types(top_level_modules: &[&str]) -> String {
 
     // Shared types
     out.push_str(
-        r#"/// A CID link for use in AT Protocol objects.
+        r#"/// Raw bytes for use in AT Protocol objects (lexicon `bytes` type).
+///
+/// Encoded as a DAG-CBOR byte string (major type 2) and, in JSON, as
+/// `{"$bytes": "<base64>"}` with unpadded standard base64 (RFC 4648 §4), per
+/// the AT Protocol data model. Holds arbitrary binary (including non-UTF-8).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Bytes(pub Vec<u8>);
+
+impl Bytes {
+    /// Borrow the raw bytes.
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        crate::cbor::Encoder::new(&mut *buf).encode_bytes(&self.0)?;
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        match decoder.decode()? {
+            crate::cbor::Value::Bytes(b) => Ok(Bytes(b.to_vec())),
+            _ => Err(crate::cbor::CborError::InvalidCbor("expected byte string for bytes field".into())),
+        }
+    }
+}
+
+impl serde::Serialize for Bytes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let encoded = data_encoding::BASE64_NOPAD.encode(&self.0);
+        let mut st = serializer.serialize_struct("Bytes", 1)?;
+        st.serialize_field("$bytes", &encoded)?;
+        st.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Bytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Repr {
+            #[serde(rename = "$bytes")]
+            bytes: String,
+        }
+        let repr = Repr::deserialize(deserializer)?;
+        let decoded = data_encoding::BASE64_NOPAD
+            .decode(repr.bytes.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        Ok(Bytes(decoded))
+    }
+}
+
+/// A CID link for use in AT Protocol objects.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CidLink {
     #[serde(rename = "$link")]

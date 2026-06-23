@@ -247,7 +247,9 @@ impl ModerationSubscribeModEventsEventChatAccepted {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -735,7 +737,9 @@ impl ModerationSubscribeModEventsEventGroupChatCreated {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -1034,7 +1038,9 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequest {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -1321,7 +1327,9 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequestApproved {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -1600,7 +1608,9 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequestRejected {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -1899,7 +1909,9 @@ impl ModerationSubscribeModEventsEventGroupChatMemberAdded {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -1912,7 +1924,9 @@ impl ModerationSubscribeModEventsEventGroupChatMemberAdded {
                 },
                 "requestMembersCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_request_members_count = Some(n as i64);
+                        field_request_members_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_request_members_count = Some(n);
@@ -2211,7 +2225,9 @@ impl ModerationSubscribeModEventsEventGroupChatMemberJoined {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -2515,7 +2531,9 @@ impl ModerationSubscribeModEventsEventGroupChatMemberLeft {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);
@@ -2939,7 +2957,9 @@ impl ModerationSubscribeModEventsEventGroupChatUpdated {
                 }
                 "groupMemberCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_group_member_count = Some(n as i64);
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_group_member_count = Some(n);

@@ -75,7 +75,9 @@ impl LexiconSchema {
             match key {
                 "lexicon" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_lexicon = Some(n as i64);
+                        field_lexicon = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_lexicon = Some(n);

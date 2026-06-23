@@ -887,7 +887,9 @@ impl ModerationScheduleActionTakedown {
                 }
                 "strikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_strike_count = Some(n as i64);
+                        field_strike_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_strike_count = Some(n);
@@ -921,7 +923,9 @@ impl ModerationScheduleActionTakedown {
                 }
                 "durationInHours" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_duration_in_hours = Some(n as i64);
+                        field_duration_in_hours = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_duration_in_hours = Some(n);

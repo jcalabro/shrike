@@ -290,7 +290,7 @@ pub fn resolve_field_type(
         },
         FieldSchema::Integer { .. } => "i64".to_string(),
         FieldSchema::Boolean { .. } => "bool".to_string(),
-        FieldSchema::Bytes { .. } => "String".to_string(), // Base64 in JSON
+        FieldSchema::Bytes { .. } => "crate::api::Bytes".to_string(),
         FieldSchema::CidLink { .. } => "crate::api::CidLink".to_string(),
         FieldSchema::Blob { .. } => "crate::api::Blob".to_string(),
         FieldSchema::Unknown { .. } => "serde_json::Value".to_string(),

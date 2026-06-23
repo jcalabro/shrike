@@ -129,7 +129,9 @@ impl SyncSubscribeReposAccount {
                 }
                 "seq" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_seq = Some(n as i64);
+                        field_seq = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_seq = Some(n);
@@ -198,7 +200,7 @@ pub struct SyncSubscribeReposCommit {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blobs: Vec<crate::api::CidLink>,
     /// CAR file containing relevant blocks, as a diff since the previous repo state. The commit must be included as a block, and the commit block CID must be the first entry in the CAR header 'roots' list.
-    pub blocks: String,
+    pub blocks: crate::api::Bytes,
     /// Repo commit object CID.
     pub commit: crate::api::CidLink,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -281,7 +283,7 @@ impl SyncSubscribeReposCommit {
                 }
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("blocks")?;
-            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.blocks)?;
+            self.blocks.encode_cbor(buf)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("commit")?;
             let cid =
                 self.commit.link.parse::<crate::cbor::Cid>().map_err(|e| {
@@ -358,7 +360,7 @@ impl SyncSubscribeReposCommit {
             }
             {
                 let mut vbuf = Vec::new();
-                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.blocks)?;
+                self.blocks.encode_cbor(&mut vbuf)?;
                 pairs.push(("blocks", vbuf));
             }
             {
@@ -425,7 +427,7 @@ impl SyncSubscribeReposCommit {
         let mut field_time: Option<crate::syntax::Datetime> = None;
         let mut field_blobs: Vec<crate::api::CidLink> = Vec::new();
         let mut field_since: Option<crate::syntax::Tid> = None;
-        let mut field_blocks: Option<String> = None;
+        let mut field_blocks: Option<crate::api::Bytes> = None;
         let mut field_commit: Option<crate::api::CidLink> = None;
         let mut field_rebase: Option<bool> = None;
         let mut field_too_big: Option<bool> = None;
@@ -457,7 +459,9 @@ impl SyncSubscribeReposCommit {
                 }
                 "seq" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_seq = Some(n as i64);
+                        field_seq = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_seq = Some(n);
@@ -516,11 +520,11 @@ impl SyncSubscribeReposCommit {
                     }
                 }
                 "blocks" => {
-                    if let crate::cbor::Value::Text(s) = value {
-                        field_blocks = Some(s.to_string());
+                    if let crate::cbor::Value::Bytes(b) = value {
+                        field_blocks = Some(crate::api::Bytes(b.to_vec()));
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor(
-                            "expected text for bytes field".into(),
+                            "expected byte string for bytes field".into(),
                         ));
                     }
                 }
@@ -717,7 +721,9 @@ impl SyncSubscribeReposIdentity {
                 }
                 "seq" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_seq = Some(n as i64);
+                        field_seq = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_seq = Some(n);
@@ -1081,7 +1087,7 @@ impl SyncSubscribeReposRepoOp {
 #[serde(rename_all = "camelCase")]
 pub struct SyncSubscribeReposSync {
     /// CAR file containing the commit, as a block. The CAR header must include the commit block CID as the first 'root'.
-    pub blocks: String,
+    pub blocks: crate::api::Bytes,
     /// The account this repo event corresponds to. Must match that in the commit object.
     pub did: crate::syntax::Did,
     /// The rev of the commit. This value must match that in the commit object.
@@ -1119,7 +1125,7 @@ impl SyncSubscribeReposSync {
             crate::cbor::Encoder::new(&mut *buf).encode_text("time")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.time.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("blocks")?;
-            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.blocks)?;
+            self.blocks.encode_cbor(buf)?;
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -1145,7 +1151,7 @@ impl SyncSubscribeReposSync {
             }
             {
                 let mut vbuf = Vec::new();
-                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.blocks)?;
+                self.blocks.encode_cbor(&mut vbuf)?;
                 pairs.push(("blocks", vbuf));
             }
             for (k, v) in &self.extra_cbor {
@@ -1181,7 +1187,7 @@ impl SyncSubscribeReposSync {
         let mut field_rev: Option<String> = None;
         let mut field_seq: Option<i64> = None;
         let mut field_time: Option<crate::syntax::Datetime> = None;
-        let mut field_blocks: Option<String> = None;
+        let mut field_blocks: Option<crate::api::Bytes> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -1205,7 +1211,9 @@ impl SyncSubscribeReposSync {
                 }
                 "seq" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_seq = Some(n as i64);
+                        field_seq = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_seq = Some(n);
@@ -1227,11 +1235,11 @@ impl SyncSubscribeReposSync {
                     }
                 }
                 "blocks" => {
-                    if let crate::cbor::Value::Text(s) = value {
-                        field_blocks = Some(s.to_string());
+                    if let crate::cbor::Value::Bytes(b) = value {
+                        field_blocks = Some(crate::api::Bytes(b.to_vec()));
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor(
-                            "expected text for bytes field".into(),
+                            "expected byte string for bytes field".into(),
                         ));
                     }
                 }

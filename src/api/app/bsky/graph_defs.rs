@@ -439,7 +439,9 @@ impl GraphDefsListView {
                 }
                 "listItemCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_list_item_count = Some(n as i64);
+                        field_list_item_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_list_item_count = Some(n);
@@ -763,7 +765,9 @@ impl GraphDefsListViewBasic {
                 }
                 "listItemCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_list_item_count = Some(n as i64);
+                        field_list_item_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_list_item_count = Some(n);
@@ -1635,7 +1639,9 @@ impl GraphDefsStarterPackView {
                 }
                 "joinedWeekCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_joined_week_count = Some(n as i64);
+                        field_joined_week_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_joined_week_count = Some(n);
@@ -1660,7 +1666,9 @@ impl GraphDefsStarterPackView {
                 }
                 "joinedAllTimeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_joined_all_time_count = Some(n as i64);
+                        field_joined_all_time_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_joined_all_time_count = Some(n);
@@ -1930,7 +1938,9 @@ impl GraphDefsStarterPackViewBasic {
                 }
                 "listItemCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_list_item_count = Some(n as i64);
+                        field_list_item_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_list_item_count = Some(n);
@@ -1943,7 +1953,9 @@ impl GraphDefsStarterPackViewBasic {
                 },
                 "joinedWeekCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_joined_week_count = Some(n as i64);
+                        field_joined_week_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_joined_week_count = Some(n);
@@ -1956,7 +1968,9 @@ impl GraphDefsStarterPackViewBasic {
                 },
                 "joinedAllTimeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_joined_all_time_count = Some(n as i64);
+                        field_joined_all_time_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_joined_all_time_count = Some(n);

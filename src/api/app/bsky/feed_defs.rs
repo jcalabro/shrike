@@ -975,7 +975,9 @@ impl FeedDefsGeneratorView {
                 }
                 "likeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_like_count = Some(n as i64);
+                        field_like_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_like_count = Some(n);
@@ -2054,7 +2056,9 @@ impl FeedDefsPostView {
                 }
                 "likeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_like_count = Some(n as i64);
+                        field_like_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_like_count = Some(n);
@@ -2067,7 +2071,9 @@ impl FeedDefsPostView {
                 },
                 "quoteCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_quote_count = Some(n as i64);
+                        field_quote_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_quote_count = Some(n);
@@ -2080,7 +2086,9 @@ impl FeedDefsPostView {
                 },
                 "replyCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_reply_count = Some(n as i64);
+                        field_reply_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_reply_count = Some(n);
@@ -2098,7 +2106,9 @@ impl FeedDefsPostView {
                 }
                 "repostCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_repost_count = Some(n as i64);
+                        field_repost_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_repost_count = Some(n);
@@ -2111,7 +2121,9 @@ impl FeedDefsPostView {
                 },
                 "bookmarkCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_bookmark_count = Some(n as i64);
+                        field_bookmark_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_bookmark_count = Some(n);

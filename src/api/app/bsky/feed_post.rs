@@ -1019,7 +1019,9 @@ impl FeedPostTextSlice {
             match key {
                 "end" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_end = Some(n as i64);
+                        field_end = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_end = Some(n);
@@ -1032,7 +1034,9 @@ impl FeedPostTextSlice {
                 },
                 "start" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_start = Some(n as i64);
+                        field_start = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_start = Some(n);

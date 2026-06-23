@@ -861,7 +861,12 @@ impl ActorDefsFeedViewPref {
                 }
                 "hideRepliesByLikeCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_hide_replies_by_like_count = Some(n as i64);
+                        field_hide_replies_by_like_count =
+                            Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_hide_replies_by_like_count = Some(n);
@@ -1205,7 +1210,9 @@ impl ActorDefsKnownFollowers {
             match key {
                 "count" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_count = Some(n as i64);
+                        field_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_count = Some(n);
@@ -3415,7 +3422,9 @@ impl ActorDefsProfileAssociated {
                 }
                 "lists" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_lists = Some(n as i64);
+                        field_lists = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_lists = Some(n);
@@ -3435,7 +3444,9 @@ impl ActorDefsProfileAssociated {
                 }
                 "feedgens" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_feedgens = Some(n as i64);
+                        field_feedgens = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_feedgens = Some(n);
@@ -3448,7 +3459,9 @@ impl ActorDefsProfileAssociated {
                 },
                 "starterPacks" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_starter_packs = Some(n as i64);
+                        field_starter_packs = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_starter_packs = Some(n);
@@ -5142,7 +5155,9 @@ impl ActorDefsProfileViewDetailed {
                 }
                 "postsCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_posts_count = Some(n as i64);
+                        field_posts_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_posts_count = Some(n);
@@ -5169,7 +5184,9 @@ impl ActorDefsProfileViewDetailed {
                 }
                 "followsCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_follows_count = Some(n as i64);
+                        field_follows_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_follows_count = Some(n);
@@ -5187,7 +5204,9 @@ impl ActorDefsProfileViewDetailed {
                 }
                 "followersCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_followers_count = Some(n as i64);
+                        field_followers_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_followers_count = Some(n);
@@ -5544,7 +5563,9 @@ impl ActorDefsSavedFeedsPref {
                 }
                 "timelineIndex" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_timeline_index = Some(n as i64);
+                        field_timeline_index = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_timeline_index = Some(n);

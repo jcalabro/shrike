@@ -515,7 +515,9 @@ impl AgeassuranceDefsConfigRegion {
                 }
                 "minAccessAge" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_min_access_age = Some(n as i64);
+                        field_min_access_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_min_access_age = Some(n);
@@ -954,7 +956,9 @@ impl AgeassuranceDefsConfigRegionRuleIfAssuredOverAge {
             match key {
                 "age" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_age = Some(n as i64);
+                        field_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_age = Some(n);
@@ -1073,7 +1077,9 @@ impl AgeassuranceDefsConfigRegionRuleIfAssuredUnderAge {
             match key {
                 "age" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_age = Some(n as i64);
+                        field_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_age = Some(n);
@@ -1192,7 +1198,9 @@ impl AgeassuranceDefsConfigRegionRuleIfDeclaredOverAge {
             match key {
                 "age" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_age = Some(n as i64);
+                        field_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_age = Some(n);
@@ -1311,7 +1319,9 @@ impl AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAge {
             match key {
                 "age" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_age = Some(n as i64);
+                        field_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_age = Some(n);

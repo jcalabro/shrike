@@ -1368,7 +1368,13 @@ impl ModerationEmitEventReportAction {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
                             match item {
-                                crate::cbor::Value::Unsigned(n) => field_ids.push(n as i64),
+                                crate::cbor::Value::Unsigned(n) => {
+                                    field_ids.push(i64::try_from(n).map_err(|_| {
+                                        crate::cbor::CborError::InvalidCbor(
+                                            "integer out of i64 range".into(),
+                                        )
+                                    })?)
+                                }
                                 crate::cbor::Value::Signed(n) => field_ids.push(n),
                                 _ => {
                                     return Err(crate::cbor::CborError::InvalidCbor(

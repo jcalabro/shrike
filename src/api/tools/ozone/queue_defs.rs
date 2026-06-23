@@ -137,7 +137,9 @@ impl QueueDefsAssignmentView {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);
@@ -420,7 +422,9 @@ impl QueueDefsQueueStats {
             match key {
                 "actionRate" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_action_rate = Some(n as i64);
+                        field_action_rate = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_action_rate = Some(n);
@@ -443,7 +447,9 @@ impl QueueDefsQueueStats {
                 }
                 "inboundCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_inbound_count = Some(n as i64);
+                        field_inbound_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_inbound_count = Some(n);
@@ -456,7 +462,9 @@ impl QueueDefsQueueStats {
                 },
                 "pendingCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_pending_count = Some(n as i64);
+                        field_pending_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_pending_count = Some(n);
@@ -469,7 +477,9 @@ impl QueueDefsQueueStats {
                 },
                 "actionedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_actioned_count = Some(n as i64);
+                        field_actioned_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_actioned_count = Some(n);
@@ -482,7 +492,9 @@ impl QueueDefsQueueStats {
                 },
                 "escalatedCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_escalated_count = Some(n as i64);
+                        field_escalated_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_escalated_count = Some(n);
@@ -495,7 +507,9 @@ impl QueueDefsQueueStats {
                 },
                 "avgHandlingTimeSec" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_avg_handling_time_sec = Some(n as i64);
+                        field_avg_handling_time_sec = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_avg_handling_time_sec = Some(n);
@@ -755,7 +769,9 @@ impl QueueDefsQueueView {
             match key {
                 "id" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_id = Some(n as i64);
+                        field_id = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_id = Some(n);

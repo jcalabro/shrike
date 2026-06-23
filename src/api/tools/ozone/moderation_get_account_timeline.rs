@@ -241,7 +241,9 @@ impl ModerationGetAccountTimelineTimelineItemSummary {
             match key {
                 "count" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_count = Some(n as i64);
+                        field_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_count = Some(n);

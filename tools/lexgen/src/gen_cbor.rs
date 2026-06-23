@@ -611,20 +611,8 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
             }
         }
         FieldKind::Bytes => {
-            // Stored as String in Rust. Encode as text for now.
-            if is_ref {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text({access})?;"
-                )
-                .ok();
-            } else {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text(&{access})?;"
-                )
-                .ok();
-            }
+            // bytes is a DAG-CBOR byte string (major type 2), not text.
+            writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::CidLink => {
             writeln!(out, "{indent}let cid = {access}.link.parse::<crate::cbor::Cid>().map_err(|e| crate::cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
@@ -698,11 +686,7 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
             writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}crate::cbor::Encoder::new(&mut *buf).encode_text({access})?;"
-            )
-            .ok();
+            writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
         FieldKind::Array(inner) => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
@@ -792,19 +776,7 @@ fn gen_encode_value_vbuf(
             }
         }
         FieldKind::Bytes => {
-            if is_ref {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
-                )
-                .ok();
-            } else {
-                writeln!(
-                    out,
-                    "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text(&{access})?;"
-                )
-                .ok();
-            }
+            writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::CidLink => {
             writeln!(out, "{indent}let cid = {access}.link.parse::<crate::cbor::Cid>().map_err(|e| crate::cbor::CborError::InvalidCbor(format!(\"invalid CID: {{e}}\")))?;").ok();
@@ -878,11 +850,7 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
             writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::Bytes => {
-            writeln!(
-                out,
-                "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_text({access})?;"
-            )
-            .ok();
+            writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
         FieldKind::Array(inner) => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
@@ -939,7 +907,7 @@ fn gen_decode_single(
         }
         FieldKind::Integer => {
             writeln!(out, "{indent}match value {{").ok();
-            writeln!(out, "{indent}    crate::cbor::Value::Unsigned(n) => {{ {assign_pre}n as i64{assign_post} }}").ok();
+            writeln!(out, "{indent}    crate::cbor::Value::Unsigned(n) => {{ {assign_pre}i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?{assign_post} }}").ok();
             writeln!(
                 out,
                 "{indent}    crate::cbor::Value::Signed(n) => {{ {assign_pre}n{assign_post} }}"
@@ -956,10 +924,14 @@ fn gen_decode_single(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bytes => {
-            writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = value {{").ok();
-            writeln!(out, "{indent}    {assign_pre}s.to_string(){assign_post}").ok();
+            writeln!(out, "{indent}if let crate::cbor::Value::Bytes(b) = value {{").ok();
+            writeln!(
+                out,
+                "{indent}    {assign_pre}crate::api::Bytes(b.to_vec()){assign_post}"
+            )
+            .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text for bytes field\".into()));").ok();
+            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected byte string for bytes field\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::CidLink => {
@@ -1050,7 +1022,7 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}match item {{").ok();
             writeln!(
                 out,
-                "{indent}    crate::cbor::Value::Unsigned(n) => field_{var}.push(n as i64),"
+                "{indent}    crate::cbor::Value::Unsigned(n) => field_{var}.push(i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?),"
             )
             .ok();
             writeln!(
@@ -1093,10 +1065,14 @@ fn gen_decode_array_item(
             .ok();
         }
         FieldKind::Bytes => {
-            writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = item {{").ok();
-            writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
+            writeln!(out, "{indent}if let crate::cbor::Value::Bytes(b) = item {{").ok();
+            writeln!(
+                out,
+                "{indent}    field_{var}.push(crate::api::Bytes(b.to_vec()));"
+            )
+            .ok();
             writeln!(out, "{indent}}} else {{").ok();
-            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
+            writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected byte string in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Array(_) | FieldKind::JsonValue => {}

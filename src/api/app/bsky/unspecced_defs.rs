@@ -896,7 +896,9 @@ impl UnspeccedDefsSkeletonTrend {
                 }
                 "postCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_post_count = Some(n as i64);
+                        field_post_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_post_count = Some(n);
@@ -1339,7 +1341,9 @@ impl UnspeccedDefsThreadItemPost {
                 }
                 "moreReplies" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_more_replies = Some(n as i64);
+                        field_more_replies = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_more_replies = Some(n);
@@ -1603,7 +1607,9 @@ impl UnspeccedDefsTrendView {
                 }
                 "postCount" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_post_count = Some(n as i64);
+                        field_post_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_post_count = Some(n);

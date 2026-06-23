@@ -125,7 +125,9 @@ impl ModerationGetActorMetadataMetadata {
             match key {
                 "convos" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_convos = Some(n as i64);
+                        field_convos = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_convos = Some(n);
@@ -138,7 +140,9 @@ impl ModerationGetActorMetadataMetadata {
                 },
                 "messagesSent" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_messages_sent = Some(n as i64);
+                        field_messages_sent = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_messages_sent = Some(n);
@@ -151,7 +155,9 @@ impl ModerationGetActorMetadataMetadata {
                 },
                 "convosStarted" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_convos_started = Some(n as i64);
+                        field_convos_started = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_convos_started = Some(n);
@@ -164,7 +170,9 @@ impl ModerationGetActorMetadataMetadata {
                 },
                 "messagesReceived" => match value {
                     crate::cbor::Value::Unsigned(n) => {
-                        field_messages_received = Some(n as i64);
+                        field_messages_received = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
                     }
                     crate::cbor::Value::Signed(n) => {
                         field_messages_received = Some(n);

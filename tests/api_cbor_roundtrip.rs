@@ -1,5 +1,5 @@
 //! Roundtrip tests for generated CBOR encode/decode.
-#![allow(clippy::unwrap_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[test]
 fn strong_ref_cbor_roundtrip() {
@@ -190,4 +190,79 @@ fn feed_post_with_langs_roundtrip() {
     assert_eq!(decoded.text, post.text);
     assert_eq!(decoded.langs, post.langs);
     assert_eq!(decoded.tags, vec!["test"]);
+}
+
+#[test]
+fn label_bytes_sig_encodes_as_cbor_byte_string() {
+    // C2 regression: lexicon `bytes` fields must encode as a DAG-CBOR byte
+    // string (major type 2), not a text string. The label `sig` is the
+    // canonical example — encoding it as text breaks the label CID and makes
+    // the signature unverifiable by any real labeler.
+    use shrike::api::Bytes;
+    use shrike::api::com::atproto::LabelDefsLabel;
+
+    let sig_bytes: Vec<u8> = (0u8..64).collect();
+    let label = LabelDefsLabel {
+        ver: Some(1),
+        src: shrike::syntax::Did::try_from("did:plc:labeler12345678901234").unwrap(),
+        uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
+        cid: None,
+        val: "spam".into(),
+        neg: None,
+        cts: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
+        exp: None,
+        sig: Some(Bytes(sig_bytes.clone())),
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+
+    let cbor = label.to_cbor().unwrap();
+    // Find the "sig" entry in the decoded map and assert it is Bytes, not Text.
+    let val = shrike::cbor::decode(&cbor).unwrap();
+    let entries = match val {
+        shrike::cbor::Value::Map(e) => e,
+        _ => panic!("expected map"),
+    };
+    let sig_entry = entries
+        .iter()
+        .find(|(k, _)| *k == "sig")
+        .expect("sig present");
+    match &sig_entry.1 {
+        shrike::cbor::Value::Bytes(b) => assert_eq!(*b, &sig_bytes[..]),
+        other => panic!("sig must be a CBOR byte string, got {other:?}"),
+    }
+
+    // Round-trip preserves the raw bytes.
+    let decoded = LabelDefsLabel::from_cbor(&cbor).unwrap();
+    assert_eq!(decoded.sig.as_ref().map(|b| b.0.clone()), Some(sig_bytes));
+}
+
+#[test]
+fn label_bytes_sig_json_uses_dollar_bytes() {
+    // C2 regression: JSON form of a `bytes` field must be {"$bytes": "<base64>"}.
+    use shrike::api::Bytes;
+    use shrike::api::com::atproto::LabelDefsLabel;
+
+    let label = LabelDefsLabel {
+        ver: Some(1),
+        src: shrike::syntax::Did::try_from("did:plc:labeler12345678901234").unwrap(),
+        uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
+        cid: None,
+        val: "spam".into(),
+        neg: None,
+        cts: shrike::syntax::Datetime::try_from("2024-01-01T00:00:00Z").unwrap(),
+        exp: None,
+        sig: Some(Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+    let json: serde_json::Value = serde_json::to_value(&label).unwrap();
+    let sig = &json["sig"];
+    assert!(
+        sig.get("$bytes").is_some(),
+        "bytes JSON must be {{\"$bytes\": ...}}, got {sig}"
+    );
+    // Round-trips back to the same bytes.
+    let decoded: LabelDefsLabel = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded.sig.unwrap().0, vec![0xDE, 0xAD, 0xBE, 0xEF]);
 }
