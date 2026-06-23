@@ -55,27 +55,35 @@ impl Identity {
             .filter_map(|h| Handle::try_from(h).ok())
             .next();
 
-        // Extract verification keys.
+        // Extract verification keys, normalizing the method id to a canonical
+        // relative fragment ("#atproto"). DID documents may use either the
+        // relative form ("#atproto") or the fully-qualified form
+        // ("did:plc:xxx#atproto"); real did:plc documents use the latter, so we
+        // must normalize both to a single key form or signing_key() lookups
+        // miss. See atproto common-web findItemById / atmos fragmentFromID.
         let mut keys: HashMap<String, Box<dyn VerifyingKey>> = HashMap::new();
         for vm in &doc.verification_method {
-            if let Some(ref multibase) = vm.public_key_multibase
+            if let Some(fragment) = normalize_fragment(&vm.id, &doc.id)
+                && let Some(ref multibase) = vm.public_key_multibase
                 && let Ok(key) = crate::crypto::parse_did_key(&format!("did:key:{multibase}"))
             {
-                keys.insert(vm.id.clone(), key);
+                keys.insert(fragment, key);
             }
         }
 
-        // Extract services.
+        // Extract services, normalizing the service id the same way.
         let mut services = HashMap::new();
         for svc in &doc.service {
-            services.insert(
-                svc.id.clone(),
-                ServiceEndpoint {
-                    id: svc.id.clone(),
-                    r#type: svc.r#type.clone(),
-                    endpoint: svc.service_endpoint.clone(),
-                },
-            );
+            if let Some(fragment) = normalize_fragment(&svc.id, &doc.id) {
+                services.insert(
+                    fragment.clone(),
+                    ServiceEndpoint {
+                        id: fragment,
+                        r#type: svc.r#type.clone(),
+                        endpoint: svc.service_endpoint.clone(),
+                    },
+                );
+            }
         }
 
         Ok(Identity {
@@ -84,6 +92,31 @@ impl Identity {
             keys,
             services,
         })
+    }
+}
+
+/// Normalize a verificationMethod/service `id` to its canonical relative
+/// fragment form (e.g. `"#atproto"`), accepting either the relative form
+/// (`"#atproto"`) or the fully-qualified form (`"did:plc:xxx#atproto"`).
+///
+/// Returns `None` for ids that match neither form (no fragment, or a
+/// fully-qualified id whose DID prefix does not match the document id), which
+/// the caller skips. Mirrors atproto common-web `findItemById` and atmos
+/// `fragmentFromID`.
+fn normalize_fragment(id: &str, doc_id: &str) -> Option<String> {
+    if let Some(rest) = id.strip_prefix('#') {
+        // Relative form: must be a non-empty fragment.
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(id.to_owned());
+    }
+    // Fully-qualified form: must be "<doc_id>#<fragment>".
+    let frag = id.strip_prefix(doc_id)?;
+    if frag.starts_with('#') && frag.len() > 1 {
+        Some(frag.to_owned())
+    } else {
+        None
     }
 }
 
@@ -178,6 +211,83 @@ mod tests {
         .unwrap();
         let identity = Identity::from_document(doc).unwrap();
         assert_eq!(identity.pds_endpoint(), None);
+    }
+
+    #[test]
+    fn signing_key_found_with_fully_qualified_vm_id() {
+        // Real did:plc documents use the fully-qualified verificationMethod id
+        // form ("did:plc:xxx#atproto"), NOT the bare fragment. signing_key()
+        // must still find the key. Regression test for the lookup-by-"#atproto"
+        // vs stored-by-full-id mismatch.
+        use crate::crypto::SigningKey;
+        let sk = crate::crypto::K256SigningKey::generate();
+        let multibase = sk.public_key().multibase();
+        let did = "did:plc:z72i7hdynmk6r22z27h6tvur";
+        let json = format!(
+            r#"{{
+            "id": "{did}",
+            "verificationMethod": [{{
+                "id": "{did}#atproto",
+                "type": "Multikey",
+                "publicKeyMultibase": "{multibase}"
+            }}],
+            "service": [{{
+                "id": "{did}#atproto_pds",
+                "type": "AtprotoPersonalDataServer",
+                "serviceEndpoint": "https://pds.example.com"
+            }}]
+        }}"#
+        );
+        let doc: DidDocument = serde_json::from_str(&json).unwrap();
+        let identity = Identity::from_document(doc).unwrap();
+        assert!(
+            identity.signing_key().is_some(),
+            "signing key must resolve from a fully-qualified verificationMethod id"
+        );
+        assert_eq!(identity.pds_endpoint(), Some("https://pds.example.com"));
+    }
+
+    #[test]
+    fn signing_key_found_with_relative_vm_id() {
+        // The relative fragment form must also work.
+        use crate::crypto::SigningKey;
+        let sk = crate::crypto::P256SigningKey::generate();
+        let multibase = sk.public_key().multibase();
+        let json = format!(
+            r##"{{
+            "id": "did:plc:z72i7hdynmk6r22z27h6tvur",
+            "verificationMethod": [{{
+                "id": "#atproto",
+                "type": "Multikey",
+                "publicKeyMultibase": "{multibase}"
+            }}],
+            "service": []
+        }}"##
+        );
+        let doc: DidDocument = serde_json::from_str(&json).unwrap();
+        let identity = Identity::from_document(doc).unwrap();
+        assert!(identity.signing_key().is_some());
+    }
+
+    #[test]
+    fn normalize_fragment_handles_both_forms() {
+        let did = "did:plc:z72i7hdynmk6r22z27h6tvur";
+        assert_eq!(
+            normalize_fragment("#atproto", did).as_deref(),
+            Some("#atproto")
+        );
+        assert_eq!(
+            normalize_fragment(&format!("{did}#atproto"), did).as_deref(),
+            Some("#atproto")
+        );
+        // Fully-qualified id for a DIFFERENT did must not match.
+        assert_eq!(
+            normalize_fragment("did:plc:other#atproto", did),
+            None
+        );
+        // No fragment.
+        assert_eq!(normalize_fragment(did, did), None);
+        assert_eq!(normalize_fragment("#", did), None);
     }
 
     #[test]
