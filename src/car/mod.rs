@@ -676,4 +676,96 @@ mod tests {
         // After reading all blocks, capacity should be >= largest block data
         assert!(max_cap >= 500); // largest block is 500 bytes
     }
+
+    // ---------------------------------------------------------------------------
+    // Varint / header framing hardening (M3-M5, L4, L5)
+    // ---------------------------------------------------------------------------
+
+    /// Build a minimal valid CAR with a single raw block, returning the bytes.
+    fn one_block_car() -> Vec<u8> {
+        let data = b"hello".to_vec();
+        let block = Block {
+            cid: Cid::compute(Codec::Raw, &data),
+            data,
+        };
+        write_all(&[block.cid], std::slice::from_ref(&block)).unwrap()
+    }
+
+    /// Split a CAR into (header-frame, first-block-frame) by reading the two
+    /// leading varints. Returns (header_prefix_len, block_len, block_len_varint_len).
+    fn locate_first_block(car: &[u8]) -> (usize, u64, usize) {
+        let (hlen, hn) = crate::cbor::varint::decode_varint(car).unwrap();
+        let header_end = hn + hlen as usize;
+        let (blen, bn) = crate::cbor::varint::decode_varint(&car[header_end..]).unwrap();
+        (header_end, blen, bn)
+    }
+
+    #[test]
+    fn reader_rejects_non_minimal_block_varint() {
+        // Re-encode the first block's length varint non-minimally (append a
+        // zero continuation group) and assert the reader rejects it.
+        let car = one_block_car();
+        let (header_end, blen, bn) = locate_first_block(&car);
+        let mut tampered = Vec::new();
+        tampered.extend_from_slice(&car[..header_end]);
+        // Non-minimal: low 7 bits with continuation set, then a 0x00 group.
+        tampered.push((blen as u8 & 0x7F) | 0x80);
+        tampered.push(0x00);
+        tampered.extend_from_slice(&car[header_end + bn..]);
+        let err = read_all(&tampered[..]);
+        assert!(err.is_err(), "non-minimal block varint must be rejected");
+    }
+
+    #[test]
+    fn reader_rejects_overflow_block_varint() {
+        // A 10-byte (or >63-bit) block-length varint must be rejected, not
+        // silently truncated.
+        let car = one_block_car();
+        let (header_end, _, bn) = locate_first_block(&car);
+        let mut tampered = Vec::new();
+        tampered.extend_from_slice(&car[..header_end]);
+        // Nine 0xFF continuation bytes then a terminal group: > 63 bits.
+        tampered.extend_from_slice(&[0xFF; 9]);
+        tampered.push(0x7F);
+        tampered.extend_from_slice(&car[header_end + bn..]);
+        let err = read_all(&tampered[..]);
+        assert!(err.is_err(), "overflow block varint must be rejected");
+    }
+
+    #[test]
+    fn reader_rejects_trailing_data_in_header() {
+        // Append a stray byte inside the header frame (after the CBOR map) and
+        // assert the reader rejects it rather than ignoring it.
+        let root = Cid::compute(Codec::Drisl, b"root");
+        let mut header_buf = Vec::new();
+        {
+            let mut enc = crate::cbor::Encoder::new(&mut header_buf);
+            // {roots:[root], version:1}
+            enc.encode_map_header(2).unwrap();
+            enc.encode_text("roots").unwrap();
+            enc.encode_array_header(1).unwrap();
+            enc.encode_cid(&root).unwrap();
+            enc.encode_text("version").unwrap();
+            enc.encode_u64(1).unwrap();
+        }
+        header_buf.push(0x00); // stray trailing byte inside the frame
+        let mut car = Vec::new();
+        crate::cbor::varint::encode_varint(header_buf.len() as u64, &mut car);
+        car.extend_from_slice(&header_buf);
+        assert!(
+            Reader::new(&car[..]).is_err(),
+            "trailing data after header CBOR map must be rejected"
+        );
+    }
+
+    #[test]
+    fn reader_still_reads_valid_car_after_hardening() {
+        // Positive control: the hardened varint/header path still reads a
+        // well-formed CAR.
+        let car = one_block_car();
+        let (roots, blocks) = read_all(&car[..]).unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].data, b"hello");
+    }
 }

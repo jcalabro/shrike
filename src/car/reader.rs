@@ -42,9 +42,16 @@ impl<R: Read> Reader<R> {
             }
         })?;
 
-        // Decode header as a DRISL map.
+        // Decode header as a DRISL map. The header length varint frames exactly
+        // one CBOR map; reject any trailing bytes inside that frame rather than
+        // silently ignoring them (matches shrike's strict cbor::decode).
         let mut dec = Decoder::new(&header_buf);
         let val = dec.decode()?;
+        if !dec.is_empty() {
+            return Err(CarError::InvalidHeader(
+                "trailing data after header CBOR map".into(),
+            ));
+        }
 
         let entries = match val {
             Value::Map(entries) => entries,
@@ -194,14 +201,15 @@ fn read_varint<R: Read>(reader: &mut R) -> Result<u64, CarError> {
     }
 }
 
-/// Read a varint from a reader; returns Ok(None) on clean EOF at first byte.
+/// Read an unsigned LEB128 varint from a reader; returns Ok(None) on clean EOF
+/// at the first byte.
 ///
-/// Reads up to 10 bytes at once into a stack buffer to minimize `Read` trait
-/// calls, then parses the varint from the buffer. Puts back unconsumed bytes
-/// by seeking (for seekable readers) or accepting the limitation that we
-/// consume at most 10 extra bytes for non-seekable streams. In practice,
-/// CAR files are almost always read from `&[u8]` or `BufReader<File>` where
-/// short reads aren't an issue.
+/// Enforces the multiformats unsigned-varint rules that CAR/DASL framing
+/// depends on: at most 9 bytes (63 bits), no value above 2^63-1, and canonical
+/// (minimal) encoding — a multi-byte varint whose final group is zero (i.e. the
+/// value would have fit in fewer bytes) is rejected. Reads one byte at a time
+/// so it never consumes beyond the varint's final byte (important for the
+/// streaming block reader, which reads the CID + data immediately after).
 fn read_varint_eof<R: Read>(reader: &mut R) -> Result<Option<u64>, CarError> {
     // Fast path: try to read the first byte. If EOF, return None.
     let mut buf = [0u8; 1];
@@ -214,15 +222,17 @@ fn read_varint_eof<R: Read>(reader: &mut R) -> Result<Option<u64>, CarError> {
 
     let first = buf[0];
     if first & 0x80 == 0 {
-        // Single-byte varint (most common case for block sizes < 128)
+        // Single-byte varint (most common case for block sizes < 128).
         return Ok(Some(first as u64));
     }
 
-    // Multi-byte varint — continue reading one byte at a time
+    // Multi-byte varint — continue reading one byte at a time.
     let mut value: u64 = (first & 0x7F) as u64;
     let mut shift = 7u32;
 
-    for _ in 1..10 {
+    // The first byte was a continuation byte; allow at most 8 more (9 total =
+    // 63 bits per the unsigned-varint spec).
+    for _ in 1..9 {
         match reader.read(&mut buf) {
             Ok(0) => return Err(CarError::InvalidBlock("truncated varint".into())),
             Ok(_) => {}
@@ -233,16 +243,26 @@ fn read_varint_eof<R: Read>(reader: &mut R) -> Result<Option<u64>, CarError> {
         }
 
         let byte = buf[0];
+
+        // On the 9th byte (shift == 56) only the low 7 bits are valid, and the
+        // value must not exceed 2^63-1; reject overflow rather than silently
+        // discarding high bits.
+        if shift >= 63 && (byte & 0x7F) > 1 {
+            return Err(CarError::InvalidBlock("varint overflow".into()));
+        }
+
         value |= ((byte & 0x7F) as u64) << shift;
 
         if byte & 0x80 == 0 {
+            // Terminal byte. Reject a non-minimal encoding: a zero terminal
+            // group means the value could have been encoded in fewer bytes.
+            if byte == 0 {
+                return Err(CarError::InvalidBlock("non-minimal varint encoding".into()));
+            }
             return Ok(Some(value));
         }
 
         shift += 7;
-        if shift >= 64 {
-            return Err(CarError::InvalidBlock("varint too long".into()));
-        }
     }
 
     Err(CarError::InvalidBlock("varint too long".into()))
