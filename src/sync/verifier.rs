@@ -992,7 +992,7 @@ impl Verifier {
         if chain.is_none() {
             return Ok(None);
         }
-        if self.is_legacy_shape(raw, chain) {
+        if is_legacy_shape(raw, chain) {
             self.stats.legacy_commits.fetch_add(1, Ordering::Relaxed);
             if self.options.legacy_commit_policy == LegacyCommitPolicy::Reject {
                 return Err(VerifierError::LegacyCommit {
@@ -1005,13 +1005,6 @@ impl Verifier {
             return Ok(None);
         }
         invert_decoded_commit(raw, inner, store).map(Some)
-    }
-
-    fn is_legacy_shape(&self, raw: &RawCommit, chain: Option<&ChainState>) -> bool {
-        chain.is_some()
-            && raw.prev_data.is_none()
-            && !raw.ops.is_empty()
-            && raw.ops.iter().all(|op| op.prev.is_none())
     }
 
     fn check_chain(
@@ -1388,6 +1381,23 @@ fn is_car_root_mismatch(err: &VerifierError) -> bool {
     )
 }
 
+/// Sync-1.0 shape: envelope prevData absent and no *update/delete* op carries
+/// op.prev. A create op never has a prev, so it carries no legacy signal —
+/// matching atmos's `isLegacyCommit`, which only inspects update/delete ops.
+/// (A 1.1 producer that sets op.prev on an update/delete but omits prevData is
+/// a chain break, not legacy.) Returns false on first sighting (no chain) and
+/// for empty-ops commits (let them surface as a chain break).
+fn is_legacy_shape(raw: &RawCommit, chain: Option<&ChainState>) -> bool {
+    chain.is_some()
+        && raw.prev_data.is_none()
+        && !raw.ops.is_empty()
+        && raw
+            .ops
+            .iter()
+            .filter(|op| op.action == "update" || op.action == "delete")
+            .all(|op| op.prev.is_none())
+}
+
 fn is_rev_replay(did: &Did, rev: Tid, chain: Option<&ChainState>) -> Result<bool, VerifierError> {
     let Some(chain) = chain else {
         return Ok(false);
@@ -1457,4 +1467,101 @@ fn lock_stripe(did: &Did) -> usize {
     let mut hasher = DefaultHasher::new();
     did.hash(&mut hasher);
     (hasher.finish() as usize) % VERIFIER_LOCK_STRIPES
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::sync::RawRepoOp;
+
+    fn did() -> Did {
+        Did::try_from("did:plc:7iza6de2dwap2sbkpav7c6c6").expect("valid did")
+    }
+
+    fn chain() -> ChainState {
+        ChainState {
+            rev: "3aaaaaaaaaaaa".to_owned(),
+            data: Cid::compute(crate::cbor::Codec::Drisl, b"chain-data"),
+        }
+    }
+
+    fn op(action: &str, prev: Option<Cid>) -> RawRepoOp {
+        RawRepoOp {
+            action: action.to_owned(),
+            path: "app.bsky.feed.post/3jqfcqzm3fo2j".to_owned(),
+            cid: Some(Cid::compute(crate::cbor::Codec::Drisl, b"record")),
+            prev,
+        }
+    }
+
+    fn raw_commit(ops: Vec<RawRepoOp>, prev_data: Option<Cid>) -> RawCommit {
+        RawCommit {
+            repo: did(),
+            rev: Tid::new(1_700_000_000_000_000, 0),
+            seq: 1,
+            time: "2024-01-01T00:00:00.000Z".to_owned(),
+            since: None,
+            commit: Cid::compute(crate::cbor::Codec::Drisl, b"commit"),
+            blocks: Vec::new(),
+            ops,
+            blobs: Vec::new(),
+            prev_data,
+            too_big: false,
+            rebase: false,
+        }
+    }
+
+    #[test]
+    fn legacy_shape_requires_prior_chain() {
+        // First sighting (no chain) is never legacy, even with the 1.0 shape.
+        let raw = raw_commit(vec![op("create", None)], None);
+        assert!(!is_legacy_shape(&raw, None));
+    }
+
+    #[test]
+    fn legacy_shape_ignores_create_op_prev() {
+        // L15: a create op carrying a (spurious) prev must not defeat legacy
+        // detection — atmos only inspects update/delete ops. With no envelope
+        // prevData this is still a 1.0-shape commit.
+        let some_prev = Some(Cid::compute(crate::cbor::Codec::Drisl, b"prev"));
+        let raw = raw_commit(vec![op("create", some_prev)], None);
+        let state = chain();
+        assert!(
+            is_legacy_shape(&raw, Some(&state)),
+            "create.prev must be ignored for legacy detection"
+        );
+    }
+
+    #[test]
+    fn legacy_shape_false_when_update_op_has_prev() {
+        // An update op with op.prev set signals a 1.1 producer; a missing
+        // prevData is then a chain break, not a legacy commit.
+        let some_prev = Some(Cid::compute(crate::cbor::Codec::Drisl, b"prev"));
+        let raw = raw_commit(vec![op("update", some_prev)], None);
+        let state = chain();
+        assert!(!is_legacy_shape(&raw, Some(&state)));
+    }
+
+    #[test]
+    fn legacy_shape_true_for_update_without_prev() {
+        let raw = raw_commit(vec![op("update", None)], None);
+        let state = chain();
+        assert!(is_legacy_shape(&raw, Some(&state)));
+    }
+
+    #[test]
+    fn legacy_shape_false_when_prev_data_present() {
+        let prev_data = Some(Cid::compute(crate::cbor::Codec::Drisl, b"prevdata"));
+        let raw = raw_commit(vec![op("update", None)], prev_data);
+        let state = chain();
+        assert!(!is_legacy_shape(&raw, Some(&state)));
+    }
+
+    #[test]
+    fn legacy_shape_false_for_empty_ops() {
+        let raw = raw_commit(Vec::new(), None);
+        let state = chain();
+        assert!(!is_legacy_shape(&raw, Some(&state)));
+    }
 }

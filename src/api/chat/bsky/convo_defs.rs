@@ -6861,14 +6861,14 @@ impl<'de> serde::Deserialize<'de> for ConvoDefsMessageInputEmbedUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let inner: crate::api::app::bsky::EmbedRecord =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedRecord(Box::new(
                     inner,
                 )))
             }
-            "chat.bsky.embed.joinLink" => {
+            "chat.bsky.embed.joinLink" | "chat.bsky.embed.joinLink#main" => {
                 let inner: crate::api::chat::bsky::EmbedJoinLink =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedJoinLink(Box::new(
@@ -6942,14 +6942,14 @@ impl ConvoDefsMessageInputEmbedUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.record" => {
+            "app.bsky.embed.record" | "app.bsky.embed.record#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedRecord::decode_cbor(&mut dec)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedRecord(Box::new(
                     inner,
                 )))
             }
-            "chat.bsky.embed.joinLink" => {
+            "chat.bsky.embed.joinLink" | "chat.bsky.embed.joinLink#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::chat::bsky::EmbedJoinLink::decode_cbor(&mut dec)?;
                 Ok(ConvoDefsMessageInputEmbedUnion::EmbedJoinLink(Box::new(

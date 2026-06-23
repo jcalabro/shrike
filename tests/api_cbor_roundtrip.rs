@@ -320,3 +320,61 @@ fn repo_op_nullable_cid_encodes_null_and_roundtrips() {
     assert!(json["cid"].is_null(), "cid must be JSON null");
     assert!(json.get("prev").is_none(), "prev must be omitted in JSON");
 }
+
+#[test]
+fn union_accepts_explicit_hash_main_type_alias() {
+    // L27: a main-def union variant must accept both the conformant bare NSID
+    // `$type` and the non-conformant explicit `nsid#main` form on deserialize
+    // (matching the TS reference, which registers both). app.bsky.embed.images
+    // is a main def used in EmbedRecordWithMediaMediaUnion.
+    use shrike::api::app::bsky::EmbedRecordWithMediaMediaUnion as U;
+
+    let bare = serde_json::json!({
+        "$type": "app.bsky.embed.images",
+        "images": [],
+    });
+    let explicit = serde_json::json!({
+        "$type": "app.bsky.embed.images#main",
+        "images": [],
+    });
+
+    let from_bare: U = serde_json::from_value(bare).unwrap();
+    let from_explicit: U = serde_json::from_value(explicit).unwrap();
+
+    assert!(
+        matches!(from_bare, U::EmbedImages(_)),
+        "bare NSID must map to EmbedImages"
+    );
+    assert!(
+        matches!(from_explicit, U::EmbedImages(_)),
+        "explicit #main must map to EmbedImages, not Unknown"
+    );
+
+    // And re-serialization must always emit the bare NSID, never `#main`.
+    let reserialized = serde_json::to_value(&from_explicit).unwrap();
+    assert_eq!(
+        reserialized["$type"], "app.bsky.embed.images",
+        "serializer must emit the bare NSID"
+    );
+}
+
+#[test]
+fn union_cbor_accepts_explicit_hash_main_type_alias() {
+    // L27 (CBOR path): the same alias acceptance must hold for decode_cbor.
+    use shrike::api::app::bsky::EmbedRecordWithMediaMediaUnion as U;
+    use shrike::cbor::{Value, encode_value};
+
+    // { "$type": "app.bsky.embed.images#main", "images": [] }. encode_value
+    // canonicalizes key order, producing valid DRISL.
+    let value = Value::Map(vec![
+        ("$type", Value::Text("app.bsky.embed.images#main")),
+        ("images", Value::Array(Vec::new())),
+    ]);
+    let buf = encode_value(&value).unwrap();
+
+    let decoded = U::from_cbor(&buf).unwrap();
+    assert!(
+        matches!(decoded, U::EmbedImages(_)),
+        "explicit #main must decode to EmbedImages over CBOR"
+    );
+}

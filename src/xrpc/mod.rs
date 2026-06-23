@@ -25,9 +25,11 @@
 mod auth;
 mod client;
 mod error;
+mod ratelimit;
 mod retry;
 
 pub use auth::AuthInfo;
 pub use client::Client;
 pub use error::Error;
+pub use ratelimit::RateLimit;
 pub use retry::RetryPolicy;

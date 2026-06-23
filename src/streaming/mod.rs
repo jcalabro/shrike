@@ -47,6 +47,15 @@ pub enum StreamError {
     WebSocket(String),
     #[error("unknown event type: {0}")]
     UnknownType(String),
+    /// A relay-originated error frame (`op == -1`). Carries the structured
+    /// `error` name and optional human-readable `message` so a persistent
+    /// upstream failure (e.g. `FutureCursor`, `ConsumerTooSlow`) surfaces to the
+    /// consumer instead of being silently skipped into a reconnect loop.
+    #[error("relay error frame: {error}{}", .message.as_ref().map(|m| format!(": {m}")).unwrap_or_default())]
+    RelayError {
+        error: String,
+        message: Option<String>,
+    },
     #[cfg(feature = "sync")]
     #[error("verifier error: {0}")]
     Verifier(#[source] Box<crate::sync::VerifierError>),
@@ -96,9 +105,15 @@ pub fn parse_firehose_frame(data: &[u8]) -> Result<Event, StreamError> {
 
     let (op, type_tag) = extract_frame_header(header)?;
 
-    // op=-1 is an error frame; skip it (yield as Unknown).
+    // op=-1 is an error frame. Decode its body `{error, message}` and surface
+    // the structured error name/message rather than dropping it (which would
+    // turn a persistent relay error into a silent reconnect loop).
     if op == -1 {
-        return Err(StreamError::UnknownType("error frame".into()));
+        let body = dec
+            .decode()
+            .map_err(|e| StreamError::ParseCbor(format!("error frame body: {e}")))?;
+        let (error, message) = extract_error_frame_body(body);
+        return Err(StreamError::RelayError { error, message });
     }
     if op != 1 {
         // Unknown op codes are forward-compat: surface as a skippable
@@ -220,6 +235,28 @@ fn extract_frame_header(header: crate::cbor::Value<'_>) -> Result<(i64, String),
     let op = op.ok_or_else(|| StreamError::ParseCbor("missing op in frame header".into()))?;
     let t = t.ok_or_else(|| StreamError::ParseCbor("missing t in frame header".into()))?;
     Ok((op, t))
+}
+
+/// Extract the `{error, message?}` body of an `op == -1` error frame. A
+/// missing/non-text `error` defaults to `"Unknown"` (matching the TS reference
+/// `ErrorFrame.fromError`); `message` is optional.
+fn extract_error_frame_body(body: crate::cbor::Value<'_>) -> (String, Option<String>) {
+    use crate::cbor::Value;
+
+    let Value::Map(entries) = body else {
+        return ("Unknown".to_owned(), None);
+    };
+
+    let mut error: Option<String> = None;
+    let mut message: Option<String> = None;
+    for (key, val) in entries {
+        match (key, val) {
+            ("error", Value::Text(s)) => error = Some(s.to_owned()),
+            ("message", Value::Text(s)) => message = Some(s.to_owned()),
+            _ => {}
+        }
+    }
+    (error.unwrap_or_else(|| "Unknown".to_owned()), message)
 }
 
 type Fields<'a> = Vec<(&'a str, crate::cbor::Value<'a>)>;
@@ -775,6 +812,61 @@ mod tests {
         match parse_firehose_frame(&frame) {
             Err(StreamError::UnknownType(_)) => {}
             other => panic!("unknown op must be UnknownType (skippable), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_error_frame_surfaces_name_and_message() {
+        // L21: an op=-1 error frame must surface the relay's structured error
+        // name and message as a RelayError, not be silently skipped.
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        // Header {op:-1, t:"#error"}.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#error").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_i64(-1).unwrap();
+        // Body {error:"FutureCursor", message:"cursor in the future"}.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("error").unwrap();
+        enc.encode_text("FutureCursor").unwrap();
+        enc.encode_text("message").unwrap();
+        enc.encode_text("cursor in the future").unwrap();
+
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::RelayError { error, message }) => {
+                assert_eq!(error, "FutureCursor");
+                assert_eq!(message.as_deref(), Some("cursor in the future"));
+            }
+            other => panic!("error frame must be RelayError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_error_frame_without_message_defaults_error_name() {
+        // L21: a message-less error frame still surfaces the error name; a
+        // missing error name defaults to "Unknown".
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#error").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_i64(-1).unwrap();
+        // Body with only an error name, no message.
+        enc.encode_map_header(1).unwrap();
+        enc.encode_text("error").unwrap();
+        enc.encode_text("ConsumerTooSlow").unwrap();
+
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::RelayError { error, message }) => {
+                assert_eq!(error, "ConsumerTooSlow");
+                assert_eq!(message, None);
+            }
+            other => panic!("error frame must be RelayError, got {other:?}"),
         }
     }
 

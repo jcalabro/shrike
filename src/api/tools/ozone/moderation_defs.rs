@@ -6026,7 +6026,7 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsModEventViewSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsModEventViewSubjectUnion::RepoStrongRef(
@@ -6129,7 +6129,7 @@ impl ModerationDefsModEventViewSubjectUnion {
                     Box::new(inner),
                 ))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsModEventViewSubjectUnion::RepoStrongRef(
@@ -11535,7 +11535,7 @@ impl<'de> serde::Deserialize<'de> for ModerationDefsSubjectStatusViewSubjectUnio
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::AdminDefsRepoRef(Box::new(inner)))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let inner: crate::api::com::atproto::RepoStrongRef =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::RepoStrongRef(
@@ -11638,7 +11638,7 @@ impl ModerationDefsSubjectStatusViewSubjectUnion {
                 let inner = crate::api::com::atproto::AdminDefsRepoRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::AdminDefsRepoRef(Box::new(inner)))
             }
-            "com.atproto.repo.strongRef" => {
+            "com.atproto.repo.strongRef" | "com.atproto.repo.strongRef#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?;
                 Ok(ModerationDefsSubjectStatusViewSubjectUnion::RepoStrongRef(

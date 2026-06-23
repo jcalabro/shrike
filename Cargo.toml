@@ -183,6 +183,10 @@ name = "oauth_integration"
 required-features = ["oauth"]
 
 [[test]]
+name = "identity_integration"
+required-features = ["identity"]
+
+[[test]]
 name = "sync_1_1_parser"
 required-features = ["sync", "streaming"]
 

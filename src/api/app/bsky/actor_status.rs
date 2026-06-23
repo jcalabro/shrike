@@ -76,7 +76,7 @@ impl<'de> serde::Deserialize<'de> for ActorStatusEmbedUnion {
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(ActorStatusEmbedUnion::EmbedExternal(Box::new(inner)))
@@ -147,7 +147,7 @@ impl ActorStatusEmbedUnion {
             })
             .unwrap_or_default();
         match type_str {
-            "app.bsky.embed.external" => {
+            "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedExternal::decode_cbor(&mut dec)?;
                 Ok(ActorStatusEmbedUnion::EmbedExternal(Box::new(inner)))

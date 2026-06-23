@@ -160,16 +160,21 @@ pub fn gen_union_cbor(
     // Gather variant info.
     let mut variant_names = Vec::new();
     let mut type_ids = Vec::new();
+    let mut type_id_aliases: Vec<Option<String>> = Vec::new();
     let mut qualified_types = Vec::new();
 
     for ref_str in refs {
         let variant_name = gen_union::variant_short_name(&ctx.schema.id, ref_str);
         let (target_nsid, def_name) = shrike::lexicon::split_ref(&ctx.schema.id, ref_str);
-        let type_id = if def_name == "main" {
+        let is_main = def_name == "main";
+        let type_id = if is_main {
             target_nsid.clone()
         } else {
             format!("{target_nsid}#{def_name}")
         };
+        // Accept the non-conformant explicit `nsid#main` form as an alias for a
+        // main def (matching the TS reference); always emit the bare NSID.
+        let type_id_alias = is_main.then(|| format!("{target_nsid}#main"));
         let resolved = crate::resolver::resolve_ref(ctx.cfg, &ctx.schema.id, ref_str, ctx.schemas)?;
         let qualified = if resolved.nsid == ctx.schema.id {
             resolved.type_name.clone()
@@ -178,6 +183,7 @@ pub fn gen_union_cbor(
         };
         variant_names.push(variant_name);
         type_ids.push(type_id);
+        type_id_aliases.push(type_id_alias);
         qualified_types.push(qualified);
     }
 
@@ -286,7 +292,14 @@ pub fn gen_union_cbor(
     for (i, v) in variant_names.iter().enumerate() {
         let type_id = &type_ids[i];
         let qualified = &qualified_types[i];
-        writeln!(out, "            {type_id:?} => {{").ok();
+        match &type_id_aliases[i] {
+            Some(alias) => {
+                writeln!(out, "            {type_id:?} | {alias:?} => {{").ok();
+            }
+            None => {
+                writeln!(out, "            {type_id:?} => {{").ok();
+            }
+        }
         writeln!(
             out,
             "                let mut dec = crate::cbor::Decoder::new(raw);"
