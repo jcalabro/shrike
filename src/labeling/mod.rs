@@ -25,17 +25,27 @@ pub enum LabelError {
 }
 
 /// A moderation label asserting something about a piece of content.
+///
+/// The signed/encoded CBOR form matches the `com.atproto.label.defs#label`
+/// lexicon and the reference implementations: the `ver` field (1) is included,
+/// `neg` is omitted when false, and `cid` is a text string (lexicon
+/// `string`/`format:cid`), not a tag-42 CID link.
 #[derive(Debug, Clone)]
 pub struct Label {
+    /// Label format version. The current value is 1; use [`Label::new`] to get
+    /// the default. `None` is treated as "absent" on encode.
+    pub ver: Option<i64>,
     /// DID of the labeler that issued this label.
     pub src: Did,
     /// AT URI or DID of the labeled content.
     pub uri: String,
-    /// Optional CID targeting a specific version of the content.
+    /// Optional CID targeting a specific version of the content. Encoded as a
+    /// CBOR text string (the lexicon type is `string`/`format:cid`).
     pub cid: Option<Cid>,
     /// Label value (e.g., "spam", "nudity", "graphic-media").
     pub val: String,
-    /// If true, this negates (removes) a previously applied label.
+    /// If true, this negates (removes) a previously applied label. When false,
+    /// the `neg` key is omitted from the signed/encoded CBOR.
     pub neg: bool,
     /// Timestamp when the label was created.
     pub cts: Datetime,
@@ -45,30 +55,68 @@ pub struct Label {
     pub sig: Option<Vec<u8>>,
 }
 
+/// Current AT Protocol label format version.
+pub const LABEL_VERSION: i64 = 1;
+
+impl Label {
+    /// Construct a positive label with the current version (`ver = 1`), no CID,
+    /// no expiration, and no signature.
+    pub fn new(src: Did, uri: String, val: String, cts: Datetime) -> Self {
+        Label {
+            ver: Some(LABEL_VERSION),
+            src,
+            uri,
+            cid: None,
+            val,
+            neg: false,
+            cts,
+            exp: None,
+            sig: None,
+        }
+    }
+}
+
 /// Encode label fields (except sig) to DRISL bytes for signing.
 ///
-/// All field name keys are 3 characters long, so they sort alphabetically:
-/// cid, cts, exp, neg, src, uri, val
+/// All field-name keys are 3 characters long, so canonical CBOR order is
+/// alphabetical: `cid, cts, exp, neg, src, uri, val, ver`. Per the lexicon and
+/// the reference implementations: `cid` is a text string, `neg` is omitted when
+/// false, and `ver` (the label format version) is included.
 pub fn unsigned_label_bytes(label: &Label) -> Result<Vec<u8>, LabelError> {
+    encode_label_fields(label, false)
+}
+
+/// Shared encoder for both the unsigned (signing) and full (with-sig) forms.
+fn encode_label_fields(label: &Label, include_sig: bool) -> Result<Vec<u8>, LabelError> {
     let mut buf = Vec::new();
     let mut enc = Encoder::new(&mut buf);
 
-    // Count non-None fields (always: src, uri, val, neg, cts; optionally: cid, exp)
-    let mut field_count = 5u64;
+    // Canonical key order (all 3-char keys, alphabetical):
+    // cid, cts, exp, neg, sig, src, uri, val, ver
+    let mut field_count = 3u64; // cts, src, uri are always present... plus val
+    field_count += 1; // val
     if label.cid.is_some() {
         field_count += 1;
     }
     if label.exp.is_some() {
         field_count += 1;
     }
+    if label.neg {
+        field_count += 1;
+    }
+    if include_sig && label.sig.is_some() {
+        field_count += 1;
+    }
+    if label.ver.is_some() {
+        field_count += 1;
+    }
 
     enc.encode_map_header(field_count)?;
 
-    // Keys sorted alphabetically (all 3 chars, same CBOR encoded length):
-    // cid, cts, exp, neg, src, uri, val
+    // "cid" — text string (lexicon type string/format:cid), NOT a tag-42 CID.
     if let Some(cid) = &label.cid {
         enc.encode_text("cid")?;
-        enc.encode_cid(cid)?;
+        enc.encode_text(&cid.to_string())?;
     }
 
     enc.encode_text("cts")?;
@@ -79,8 +127,19 @@ pub fn unsigned_label_bytes(label: &Label) -> Result<Vec<u8>, LabelError> {
         enc.encode_text(exp.as_str())?;
     }
 
-    enc.encode_text("neg")?;
-    enc.encode_bool(label.neg)?;
+    // "neg" — omitted entirely when false (matches ozone/atmos).
+    if label.neg {
+        enc.encode_text("neg")?;
+        enc.encode_bool(true)?;
+    }
+
+    // "sig" sorts between "neg" and "src".
+    if include_sig
+        && let Some(sig) = &label.sig
+    {
+        enc.encode_text("sig")?;
+        enc.encode_bytes(sig)?;
+    }
 
     enc.encode_text("src")?;
     enc.encode_text(label.src.as_str())?;
@@ -90,6 +149,12 @@ pub fn unsigned_label_bytes(label: &Label) -> Result<Vec<u8>, LabelError> {
 
     enc.encode_text("val")?;
     enc.encode_text(&label.val)?;
+
+    // "ver" sorts last among the 3-char keys.
+    if let Some(ver) = label.ver {
+        enc.encode_text("ver")?;
+        enc.encode_i64(ver)?;
+    }
 
     Ok(buf)
 }
@@ -122,56 +187,9 @@ pub fn verify_label(label: &Label, key: &dyn VerifyingKey) -> Result<(), LabelEr
 /// Encode a complete label (including sig) to DRISL bytes.
 ///
 /// Key ordering (all 3-char keys, alphabetical):
-/// cid, cts, exp, neg, sig, src, uri, val
+/// `cid, cts, exp, neg, sig, src, uri, val, ver`. `neg` is omitted when false.
 pub fn encode_label(label: &Label) -> Result<Vec<u8>, LabelError> {
-    let mut buf = Vec::new();
-    let mut enc = Encoder::new(&mut buf);
-
-    let mut field_count = 5u64;
-    if label.cid.is_some() {
-        field_count += 1;
-    }
-    if label.exp.is_some() {
-        field_count += 1;
-    }
-    if label.sig.is_some() {
-        field_count += 1;
-    }
-
-    enc.encode_map_header(field_count)?;
-
-    if let Some(cid) = &label.cid {
-        enc.encode_text("cid")?;
-        enc.encode_cid(cid)?;
-    }
-
-    enc.encode_text("cts")?;
-    enc.encode_text(label.cts.as_str())?;
-
-    if let Some(exp) = &label.exp {
-        enc.encode_text("exp")?;
-        enc.encode_text(exp.as_str())?;
-    }
-
-    enc.encode_text("neg")?;
-    enc.encode_bool(label.neg)?;
-
-    // "sig" sorts between "neg" and "src" alphabetically
-    if let Some(sig) = &label.sig {
-        enc.encode_text("sig")?;
-        enc.encode_bytes(sig)?;
-    }
-
-    enc.encode_text("src")?;
-    enc.encode_text(label.src.as_str())?;
-
-    enc.encode_text("uri")?;
-    enc.encode_text(&label.uri)?;
-
-    enc.encode_text("val")?;
-    enc.encode_text(&label.val)?;
-
-    Ok(buf)
+    encode_label_fields(label, true)
 }
 
 /// Decode a label from DRISL bytes.
@@ -183,6 +201,7 @@ pub fn decode_label(data: &[u8]) -> Result<Label, LabelError> {
         _ => return Err(LabelError::Invalid("expected CBOR map".into())),
     };
 
+    let mut ver: Option<i64> = None;
     let mut src: Option<String> = None;
     let mut uri: Option<String> = None;
     let mut cid: Option<Cid> = None;
@@ -194,6 +213,11 @@ pub fn decode_label(data: &[u8]) -> Result<Label, LabelError> {
 
     for (key, v) in &entries {
         match *key {
+            "ver" => match v {
+                crate::cbor::Value::Unsigned(n) => ver = Some(*n as i64),
+                crate::cbor::Value::Signed(n) => ver = Some(*n),
+                _ => return Err(LabelError::Invalid("ver must be an integer".into())),
+            },
             "src" => match v {
                 crate::cbor::Value::Text(s) => src = Some((*s).to_owned()),
                 _ => return Err(LabelError::Invalid("src must be a text string".into())),
@@ -202,9 +226,15 @@ pub fn decode_label(data: &[u8]) -> Result<Label, LabelError> {
                 crate::cbor::Value::Text(s) => uri = Some((*s).to_owned()),
                 _ => return Err(LabelError::Invalid("uri must be a text string".into())),
             },
+            // cid is a text string (lexicon string/format:cid), parsed into a Cid.
             "cid" => match v {
-                crate::cbor::Value::Cid(c) => cid = Some(*c),
-                _ => return Err(LabelError::Invalid("cid must be a CID".into())),
+                crate::cbor::Value::Text(s) => {
+                    cid = Some(
+                        s.parse::<Cid>()
+                            .map_err(|e| LabelError::Invalid(format!("invalid cid: {e}")))?,
+                    )
+                }
+                _ => return Err(LabelError::Invalid("cid must be a text string".into())),
             },
             "val" => match v {
                 crate::cbor::Value::Text(s) => val = Some((*s).to_owned()),
@@ -236,7 +266,8 @@ pub fn decode_label(data: &[u8]) -> Result<Label, LabelError> {
 
     let uri = uri.ok_or_else(|| LabelError::Invalid("missing field: uri".into()))?;
     let val = val.ok_or_else(|| LabelError::Invalid("missing field: val".into()))?;
-    let neg = neg.ok_or_else(|| LabelError::Invalid("missing field: neg".into()))?;
+    // `neg` is omitted when false, so a missing key means false (not an error).
+    let neg = neg.unwrap_or(false);
 
     let cts_str = cts.ok_or_else(|| LabelError::Invalid("missing field: cts".into()))?;
     let cts = Datetime::try_from(cts_str.as_str())
@@ -250,6 +281,7 @@ pub fn decode_label(data: &[u8]) -> Result<Label, LabelError> {
         .transpose()?;
 
     Ok(Label {
+        ver,
         src: src_did,
         uri,
         cid,
@@ -273,6 +305,7 @@ mod tests {
 
     fn make_test_label() -> Label {
         Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: None,
@@ -286,6 +319,7 @@ mod tests {
 
     fn make_full_label() -> Label {
         Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: Some(Cid::compute(crate::cbor::Codec::Drisl, b"some-content")),
@@ -305,6 +339,7 @@ mod tests {
     fn sign_and_verify_label() {
         let sk = crate::crypto::P256SigningKey::generate();
         let mut label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: None,
@@ -335,6 +370,83 @@ mod tests {
         assert!(verify_label(&label, sk.public_key()).is_err());
     }
 
+    /// Decode raw CBOR into the (sorted) list of top-level keys present, so
+    /// tests can assert on the exact field set and types in the signed bytes.
+    fn label_keys(bytes: &[u8]) -> Vec<String> {
+        match crate::cbor::decode(bytes).unwrap() {
+            crate::cbor::Value::Map(entries) => {
+                entries.iter().map(|(k, _)| (*k).to_owned()).collect()
+            }
+            _ => panic!("not a map"),
+        }
+    }
+
+    #[test]
+    fn positive_label_unsigned_bytes_have_ver_and_no_neg() {
+        // H15/H16: a positive (neg=false) label must include `ver` and must NOT
+        // include `neg` in the signed bytes, matching ozone/atmos. Otherwise
+        // shrike-signed labels are unverifiable on the network.
+        let label = make_test_label(); // neg=false, ver=Some(1)
+        let bytes = unsigned_label_bytes(&label).unwrap();
+        let keys = label_keys(&bytes);
+        assert!(keys.contains(&"ver".to_string()), "ver must be present");
+        assert!(
+            !keys.contains(&"neg".to_string()),
+            "neg must be omitted when false, got keys {keys:?}"
+        );
+        // ver must be an integer (value 1).
+        match crate::cbor::decode(&bytes).unwrap() {
+            crate::cbor::Value::Map(entries) => {
+                let ver = entries.iter().find(|(k, _)| *k == "ver").unwrap();
+                assert_eq!(ver.1, crate::cbor::Value::Unsigned(1));
+            }
+            _ => panic!("not a map"),
+        }
+    }
+
+    #[test]
+    fn negation_label_includes_neg_true() {
+        // H16: a negation label must include neg:true.
+        let mut label = make_test_label();
+        label.neg = true;
+        let bytes = unsigned_label_bytes(&label).unwrap();
+        match crate::cbor::decode(&bytes).unwrap() {
+            crate::cbor::Value::Map(entries) => {
+                let neg = entries
+                    .iter()
+                    .find(|(k, _)| *k == "neg")
+                    .expect("neg must be present for a negation label");
+                assert_eq!(neg.1, crate::cbor::Value::Bool(true));
+            }
+            _ => panic!("not a map"),
+        }
+    }
+
+    #[test]
+    fn label_cid_encoded_as_text_string() {
+        // H17: `cid` must be a CBOR text string (lexicon string/format:cid), not
+        // a tag-42 CID link. A text-encoded cid must also round-trip on decode.
+        let label = make_full_label(); // has cid = Some(...)
+        let bytes = unsigned_label_bytes(&label).unwrap();
+        match crate::cbor::decode(&bytes).unwrap() {
+            crate::cbor::Value::Map(entries) => {
+                let cid_entry = entries.iter().find(|(k, _)| *k == "cid").unwrap();
+                match &cid_entry.1 {
+                    crate::cbor::Value::Text(s) => {
+                        assert_eq!(*s, label.cid.unwrap().to_string());
+                    }
+                    other => panic!("cid must be a text string, got {other:?}"),
+                }
+            }
+            _ => panic!("not a map"),
+        }
+        // Full encode/decode roundtrip preserves the cid.
+        let encoded = encode_label(&label).unwrap();
+        let decoded = decode_label(&encoded).unwrap();
+        assert_eq!(decoded.cid, label.cid);
+        assert_eq!(decoded.ver, Some(LABEL_VERSION));
+    }
+
     #[test]
     fn encode_decode_roundtrip() {
         let label = make_test_label();
@@ -350,6 +462,7 @@ mod tests {
     #[test]
     fn negation_label() {
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "did:plc:user1234567890123456".into(),
             cid: None,
@@ -369,6 +482,7 @@ mod tests {
     fn label_with_cid() {
         let cid = Cid::compute(crate::cbor::Codec::Drisl, b"test");
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: Some(cid),
@@ -453,6 +567,7 @@ mod tests {
         let exp = Datetime::try_from("2025-01-01T00:00:00Z").unwrap();
         let sig_bytes = vec![0xabu8; 64];
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: Some(cid),
@@ -493,6 +608,7 @@ mod tests {
     fn encode_decode_label_with_only_cid_set() {
         let cid = Cid::compute(crate::cbor::Codec::Raw, b"raw-content");
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: Some(cid),
@@ -513,6 +629,7 @@ mod tests {
     fn encode_decode_label_with_only_exp_set() {
         let exp = Datetime::try_from("2030-06-01T00:00:00Z").unwrap();
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: None,
@@ -540,6 +657,7 @@ mod tests {
         let sig_bytes = (0u8..64).collect::<Vec<u8>>();
 
         let label = Label {
+            ver: Some(LABEL_VERSION),
             src: src.clone(),
             uri: uri.clone(),
             cid: Some(cid),
@@ -597,6 +715,7 @@ mod tests {
     fn full_pipeline_negation_label_sign_encode_decode_verify() {
         let sk = crate::crypto::K256SigningKey::generate();
         let mut label = Label {
+            ver: Some(LABEL_VERSION),
             src: Did::try_from("did:plc:labeler12345678901234").unwrap(),
             uri: "at://did:plc:user1234567890123456/app.bsky.feed.post/abc".into(),
             cid: None,
@@ -731,7 +850,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_label_missing_neg_field_fails() {
+    fn decode_label_missing_neg_field_defaults_false() {
+        // `neg` is omitted from the canonical CBOR when false (matches
+        // ozone/atmos), so a missing `neg` key must decode as false — NOT error.
         let mut buf = Vec::new();
         {
             let mut enc = crate::cbor::Encoder::new(&mut buf);
@@ -746,10 +867,8 @@ mod tests {
             enc.encode_text("val").unwrap();
             enc.encode_text("spam").unwrap();
         }
-        let result = decode_label(&buf);
-        assert!(result.is_err());
-        let err_str = result.unwrap_err().to_string();
-        assert!(err_str.contains("neg") || err_str.contains("missing"));
+        let label = decode_label(&buf).expect("missing neg must default to false");
+        assert!(!label.neg);
     }
 
     #[test]
