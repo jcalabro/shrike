@@ -743,7 +743,7 @@ async fn verify_commit_rejects_outer_inner_did_mismatch() {
 async fn verify_commit_rejects_outer_inner_rev_mismatch() {
     let mut fixture = commit_fixture_create();
     mutate_signed_commit(&mut fixture, |commit| {
-        commit.rev = shrike::syntax::Tid::new(commit.rev.timestamp_micros() + 1, 0);
+        commit.rev = shrike::syntax::Tid::new(commit.rev.timestamp_micros() + 1, 0).unwrap();
     });
     let (verifier, store, _resolver) = verifier_for_keys(
         fixture.raw_commit.repo.clone(),
@@ -1207,7 +1207,7 @@ async fn resync_rejects_rev_regression() {
         vec![fixture.public_key_bytes],
         repo_source,
     );
-    let higher_rev = Tid::new(fixture.raw_commit.rev.timestamp_micros() + 1, 0);
+    let higher_rev = Tid::new(fixture.raw_commit.rev.timestamp_micros() + 1, 0).unwrap();
     store
         .save_chain(
             &fixture.raw_commit.repo,
@@ -1581,7 +1581,7 @@ async fn policy_resync_still_hard_errors_on_car_root_mismatch() {
 async fn commits_for_resyncing_did_are_buffered_and_replayed() {
     let create = commit_fixture_create();
     let mut update = commit_fixture_update();
-    let update_rev = Tid::new(create.raw_commit.rev.timestamp_micros() + 1, 0);
+    let update_rev = Tid::new(create.raw_commit.rev.timestamp_micros() + 1, 0).unwrap();
     mutate_signed_commit(&mut update, |commit| commit.rev = update_rev);
     update.raw_commit.rev = update_rev;
     update.raw_commit.seq = create.raw_commit.seq + 1;
@@ -1636,7 +1636,7 @@ async fn commits_for_resyncing_did_are_buffered_and_replayed() {
 async fn pending_queue_overflow_surfaces_buffer_overflow() {
     let create = commit_fixture_create();
     let mut update = commit_fixture_update();
-    let update_rev = Tid::new(create.raw_commit.rev.timestamp_micros() + 1, 0);
+    let update_rev = Tid::new(create.raw_commit.rev.timestamp_micros() + 1, 0).unwrap();
     mutate_signed_commit(&mut update, |commit| commit.rev = update_rev);
     update.raw_commit.rev = update_rev;
     let repo_source = Arc::new(BlockingRepoSource::new(create.raw_commit.blocks.clone()));

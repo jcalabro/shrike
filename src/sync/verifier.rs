@@ -1498,7 +1498,7 @@ mod tests {
     fn raw_commit(ops: Vec<RawRepoOp>, prev_data: Option<Cid>) -> RawCommit {
         RawCommit {
             repo: did(),
-            rev: Tid::new(1_700_000_000_000_000, 0),
+            rev: Tid::new(1_700_000_000_000_000, 0).unwrap(),
             seq: 1,
             time: "2024-01-01T00:00:00.000Z".to_owned(),
             since: None,

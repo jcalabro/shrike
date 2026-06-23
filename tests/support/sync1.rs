@@ -99,7 +99,7 @@ pub fn commit_fixture_create_for_did(did_str: &str, seq: i64) -> CommitFixture {
     let did = Did::try_from(did_str).unwrap();
     let old_cid = Cid::compute(Codec::Drisl, RECORD_V1);
     let (post_data, mut post_blocks) = tree_root(&[(FIXTURE_PATH, RECORD_V1)]);
-    let rev = Tid::new(1_700_000_000_000_000, 0);
+    let rev = Tid::new(1_700_000_000_000_000, 0).unwrap();
     let signed_commit = push_commit_block(&did, rev, post_data, &mut post_blocks);
     let car = shrike::car::write_all(&[signed_commit.cid], &post_blocks).unwrap();
 
@@ -159,7 +159,7 @@ pub fn commit_chain_for_did(did_str: &str, count: usize) -> Vec<CommitFixture> {
             .collect();
         let (post_data, mut post_blocks) = tree_root(&refs);
 
-        let rev = Tid::new(1_700_000_000_000_000 + i as u64, 0);
+        let rev = Tid::new(1_700_000_000_000_000 + i as u64, 0).unwrap();
         let mut commit = Commit {
             did: did.clone(),
             version: 3,
@@ -222,7 +222,7 @@ pub fn commit_fixture_multi_op_disjoint() -> CommitFixture {
         (FIXTURE_PATH, RECORD_V2),
         ("app.bsky.feed.post/new", b"\xa1\x64text\x67created"),
     ]);
-    let rev = Tid::new(1_700_000_000_000_000, 1);
+    let rev = Tid::new(1_700_000_000_000_000, 1).unwrap();
     let signed_commit = push_commit_block(&did, rev, post_data, &mut post_blocks);
     let car = shrike::car::write_all(&[signed_commit.cid], &post_blocks).unwrap();
 
@@ -372,7 +372,7 @@ fn commit_fixture(action: CommitAction) -> CommitFixture {
         }
     };
 
-    let rev = Tid::new(1_700_000_000_000_000, 0);
+    let rev = Tid::new(1_700_000_000_000_000, 0).unwrap();
     let signed_commit = push_commit_block(&did, rev, post_data, &mut post_blocks);
     let car = shrike::car::write_all(&[signed_commit.cid], &post_blocks).unwrap();
 

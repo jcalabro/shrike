@@ -1411,7 +1411,7 @@ mod tests {
     fn event_seq_extraction() {
         let event = Event::Commit {
             did: crate::syntax::Did::default(),
-            rev: crate::syntax::Tid::new(0, 0),
+            rev: crate::syntax::Tid::new(0, 0).unwrap(),
             seq: 999,
             operations: vec![],
         };

@@ -602,7 +602,7 @@ mod tests {
     fn event_commit_pattern_match() {
         let event = Event::Commit {
             did: Did::try_from("did:plc:test123456789abcdefghij").unwrap(),
-            rev: Tid::new(1_700_000_000_000_000, 0),
+            rev: Tid::new(1_700_000_000_000_000, 0).unwrap(),
             seq: 42,
             operations: vec![Operation::Create {
                 collection: Nsid::try_from("app.bsky.feed.post").unwrap(),

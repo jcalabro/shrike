@@ -101,7 +101,8 @@ async fn subscribe_with_verifier_yields_verified_ops() {
 async fn verifier_error_flushes_partial_batch_before_error() {
     let fixture = commit_fixture_create();
     let mut bad = commit_fixture_update();
-    let bad_rev = shrike::syntax::Tid::new(fixture.raw_commit.rev.timestamp_micros() + 1, 0);
+    let bad_rev =
+        shrike::syntax::Tid::new(fixture.raw_commit.rev.timestamp_micros() + 1, 0).unwrap();
     mutate_signed_commit(&mut bad, |commit| commit.rev = bad_rev);
     bad.raw_commit.rev = bad_rev;
     bad.raw_commit.seq = fixture.raw_commit.seq + 1;

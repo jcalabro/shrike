@@ -206,7 +206,7 @@ mod tests {
         let sk = crate::crypto::P256SigningKey::generate();
         let prev_cid = Cid::compute(Codec::Drisl, b"previous commit data");
         let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
-        let rev = Tid::new(1_700_000_000_000_000, 0);
+        let rev = Tid::new(1_700_000_000_000_000, 0).unwrap();
         let data_cid = Cid::compute(Codec::Drisl, b"mst root");
 
         let mut commit = Commit {
@@ -235,7 +235,7 @@ mod tests {
         let commit = Commit {
             did,
             version: 3,
-            rev: Tid::new(1_700_000_000_000_000, 0),
+            rev: Tid::new(1_700_000_000_000_000, 0).unwrap(),
             prev: None,
             data: Cid::compute(Codec::Drisl, b"mst root"),
             sig: None,
@@ -251,7 +251,7 @@ mod tests {
         // Build a commit whose `prev` field is None.
         let sk = crate::crypto::P256SigningKey::generate();
         let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
-        let rev = Tid::new(1_700_000_000_000_000, 0);
+        let rev = Tid::new(1_700_000_000_000_000, 0).unwrap();
         let data_cid = Cid::compute(Codec::Drisl, b"mst root");
 
         let mut commit = Commit {
@@ -349,7 +349,7 @@ mod tests {
         // Encoding the same commit twice must produce identical bytes.
         let sk = crate::crypto::P256SigningKey::generate();
         let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
-        let rev = Tid::new(1_700_000_000_000_000, 0);
+        let rev = Tid::new(1_700_000_000_000_000, 0).unwrap();
         let data_cid = Cid::compute(Codec::Drisl, b"mst root");
 
         let mut commit = Commit {
@@ -409,7 +409,7 @@ mod tests {
 
         // Tamper the rev.
         let orig_ts = commit.rev.timestamp_micros();
-        commit.rev = Tid::new(orig_ts + 1_000_000, commit.rev.clock_id());
+        commit.rev = Tid::new(orig_ts + 1_000_000, commit.rev.clock_id()).unwrap();
         assert!(
             commit.verify(sk.public_key()).is_err(),
             "tampered rev should fail verification"
@@ -755,7 +755,7 @@ mod tests {
         // correctly even after the sig is populated.
         let sk = crate::crypto::P256SigningKey::generate();
         let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
-        let rev = Tid::new(1_700_000_000_000_000, 7);
+        let rev = Tid::new(1_700_000_000_000_000, 7).unwrap();
         let data_cid = Cid::compute(Codec::Drisl, b"mst root bytes");
 
         let mut commit = Commit {
