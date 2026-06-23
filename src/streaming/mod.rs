@@ -101,13 +101,25 @@ pub fn parse_firehose_frame(data: &[u8]) -> Result<Event, StreamError> {
         return Err(StreamError::UnknownType("error frame".into()));
     }
     if op != 1 {
-        return Err(StreamError::ParseCbor(format!("unknown frame op: {op}")));
+        // Unknown op codes are forward-compat: surface as a skippable
+        // UnknownType (the consumer continues) rather than a fatal parse error
+        // that would trigger a reconnect loop.
+        return Err(StreamError::UnknownType(format!("unknown frame op: {op}")));
     }
 
     // Decode the body map.
     let body = dec
         .decode()
         .map_err(|e| StreamError::ParseCbor(format!("body: {e}")))?;
+
+    // A firehose frame is exactly a (header, body) pair; reject trailing bytes
+    // rather than silently ignoring them (matches shrike's strict cbor::decode
+    // no-trailing-data invariant).
+    if !dec.is_empty() {
+        return Err(StreamError::ParseCbor(
+            "trailing data after frame body".into(),
+        ));
+    }
 
     match type_tag.as_str() {
         "#commit" => {
@@ -744,6 +756,39 @@ mod tests {
             }
             _ => panic!("expected Commit"),
         }
+    }
+
+    #[test]
+    fn firehose_unknown_op_is_skippable() {
+        // L20: an unknown op code must surface as UnknownType (which the
+        // consumer skips) rather than a fatal ParseCbor (reconnect loop).
+        use crate::cbor::Encoder;
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        // Header {t:"#weird", op:99}, then an empty body map.
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#weird").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_u64(99).unwrap();
+        enc.encode_map_header(0).unwrap();
+        match parse_firehose_frame(&frame) {
+            Err(StreamError::UnknownType(_)) => {}
+            other => panic!("unknown op must be UnknownType (skippable), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firehose_rejects_trailing_frame_data() {
+        // L24: trailing bytes after the (header, body) pair must be rejected.
+        let data = b"valid record data";
+        let cid = Cid::compute(Codec::Drisl, data);
+        let mut frame = build_commit_frame(&cid, &cid, data);
+        frame.push(0x00); // stray trailing byte
+        assert!(
+            parse_firehose_frame(&frame).is_err(),
+            "trailing data after frame body must be rejected"
+        );
     }
 
     // --- Config / Client construction tests ---

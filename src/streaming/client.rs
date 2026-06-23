@@ -1305,9 +1305,14 @@ fn update_firehose_cursor(cursor: &AtomicI64, batch: &[Event], watermark: &mut i
 }
 
 /// Update the cursor from the last event in a Jetstream batch.
+///
+/// Uses `fetch_max` so the cursor never rewinds, matching the no-rewind
+/// invariant the firehose and parallel paths enforce. An out-of-order or stale
+/// batch can't drag the persisted cursor backwards (which would re-deliver
+/// already-processed events after a reconnect).
 fn update_jetstream_cursor(cursor: &AtomicI64, batch: &[JetstreamEvent]) {
     if let Some(t) = batch.iter().rev().map(jetstream_time_us).find(|&t| t > 0) {
-        cursor.store(t, Ordering::SeqCst);
+        cursor.fetch_max(t, Ordering::SeqCst);
     }
 }
 
@@ -1534,6 +1539,22 @@ mod tests {
         ];
         update_jetstream_cursor(&cursor, &batch);
         assert_eq!(cursor.load(Ordering::SeqCst), 200);
+    }
+
+    #[test]
+    fn update_jetstream_cursor_never_moves_backward() {
+        // L26: a stale/out-of-order batch must not rewind the cursor.
+        let cursor = AtomicI64::new(500);
+        let batch = vec![JetstreamEvent::Identity {
+            did: crate::syntax::Did::default(),
+            time_us: 200,
+        }];
+        update_jetstream_cursor(&cursor, &batch);
+        assert_eq!(
+            cursor.load(Ordering::SeqCst),
+            500,
+            "cursor must not rewind below its current value"
+        );
     }
 
     #[test]
