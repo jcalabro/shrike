@@ -159,7 +159,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_route_returns_404() {
+    async fn unknown_route_returns_xrpc_envelope() {
+        // Unknown NSID must yield the XRPC {error,message} envelope, not an
+        // empty 404 body.
         let server = Server::new();
         let app = server.into_router();
         let response = app
@@ -172,6 +174,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "MethodNotImplemented");
+        assert!(json.get("message").is_some());
+    }
+
+    #[tokio::test]
+    async fn malformed_body_returns_xrpc_envelope() {
+        // A malformed JSON body must produce the XRPC {error,message} envelope,
+        // not axum's default plain-text 422.
+        let server = Server::new()
+            .procedure("com.example.echo", |input: EchoInput, _ctx| async move {
+                Ok(EchoOutput { echoed: input.text })
+            });
+        let app = server.into_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/xrpc/com.example.echo")
+                    .header("content-type", "application/json")
+                    .body(Body::from("not json{"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "InvalidRequest");
+        assert!(json.get("message").is_some());
     }
 
     // --- Server builder: multiple routes ---

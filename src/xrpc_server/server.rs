@@ -1,13 +1,39 @@
 use axum::extract::Query;
-use axum::response::IntoResponse;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::json;
 use std::future::Future;
 
 use crate::xrpc_server::context::RequestContext;
 use crate::xrpc_server::error::ServerError;
+
+/// Build an XRPC-shaped error response (`{"error","message"}`) for an extractor
+/// rejection (malformed params/body), so clients always get the spec envelope
+/// instead of axum's default plain-text body.
+fn invalid_request(message: String) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": "InvalidRequest", "message": message})),
+    )
+        .into_response()
+}
+
+/// Fallback handler for requests to unregistered routes/NSIDs: returns the XRPC
+/// `MethodNotImplemented` envelope instead of an empty 404 body.
+async fn method_not_implemented() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({
+            "error": "MethodNotImplemented",
+            "message": "unknown XRPC method"
+        })),
+    )
+        .into_response()
+}
 
 /// XRPC HTTP server framework built on axum.
 ///
@@ -40,7 +66,7 @@ impl Server {
     /// Create an empty server with no registered handlers.
     pub fn new() -> Self {
         Server {
-            router: Router::new(),
+            router: Router::new().fallback(method_not_implemented),
         }
     }
 
@@ -55,19 +81,25 @@ impl Server {
         let path = format!("/xrpc/{nsid}");
         self.router = self.router.route(
             &path,
-            axum::routing::get(move |Query(params): Query<P>, headers: HeaderMap| {
-                let handler = handler.clone();
-                async move {
-                    let ctx = RequestContext {
-                        auth: None,
-                        headers,
-                    };
-                    match handler(params, ctx).await {
-                        Ok(output) => Json(output).into_response(),
-                        Err(e) => e.into_response(),
+            axum::routing::get(
+                move |params: Result<Query<P>, QueryRejection>, headers: HeaderMap| {
+                    let handler = handler.clone();
+                    async move {
+                        let params = match params {
+                            Ok(Query(p)) => p,
+                            Err(rej) => return invalid_request(rej.body_text()),
+                        };
+                        let ctx = RequestContext {
+                            auth: None,
+                            headers,
+                        };
+                        match handler(params, ctx).await {
+                            Ok(output) => Json(output).into_response(),
+                            Err(e) => e.into_response(),
+                        }
                     }
-                }
-            }),
+                },
+            ),
         );
         self
     }
@@ -83,19 +115,25 @@ impl Server {
         let path = format!("/xrpc/{nsid}");
         self.router = self.router.route(
             &path,
-            axum::routing::post(move |headers: HeaderMap, Json(input): Json<I>| {
-                let handler = handler.clone();
-                async move {
-                    let ctx = RequestContext {
-                        auth: None,
-                        headers,
-                    };
-                    match handler(input, ctx).await {
-                        Ok(output) => Json(output).into_response(),
-                        Err(e) => e.into_response(),
+            axum::routing::post(
+                move |headers: HeaderMap, input: Result<Json<I>, JsonRejection>| {
+                    let handler = handler.clone();
+                    async move {
+                        let input = match input {
+                            Ok(Json(i)) => i,
+                            Err(rej) => return invalid_request(rej.body_text()),
+                        };
+                        let ctx = RequestContext {
+                            auth: None,
+                            headers,
+                        };
+                        match handler(input, ctx).await {
+                            Ok(output) => Json(output).into_response(),
+                            Err(e) => e.into_response(),
+                        }
                     }
-                }
-            }),
+                },
+            ),
         );
         self
     }

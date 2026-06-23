@@ -165,7 +165,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -221,7 +227,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -278,7 +290,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
@@ -345,7 +363,13 @@ impl Client {
         let mut last_err: Option<Error> = None;
         for attempt in 0..=max_retries {
             if attempt > 0 {
-                let delay = self.retry.delay_for_attempt(attempt - 1);
+                // Honor a server-supplied Retry-After (from the previous 429/503)
+                // as a floor over the exponential backoff, with jitter.
+                let retry_after = match &last_err {
+                    Some(Error::RateLimited { retry_after }) => *retry_after,
+                    _ => None,
+                };
+                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
                 tokio::time::sleep(delay).await;
             }
 
