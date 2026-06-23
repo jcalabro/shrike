@@ -135,6 +135,19 @@ impl OAuthClient {
     /// the authorization server, submits a Pushed Authorization Request (PAR),
     /// and returns the URL the user should be redirected to.
     pub async fn authorize(&self, opts: AuthorizeOptions) -> Result<AuthorizeResult, OAuthError> {
+        // 0. The redirect_uri must be one registered in the client metadata.
+        // Fail fast (and defend against an open-redirect via an unregistered
+        // callback) rather than letting the authorization server reject it
+        // later — when redirect_uris is declared.
+        if !self.metadata.redirect_uris.is_empty()
+            && !self.metadata.redirect_uris.contains(&opts.redirect_uri)
+        {
+            return Err(OAuthError::InvalidMetadata(format!(
+                "redirect_uri {:?} is not registered in client metadata",
+                opts.redirect_uri
+            )));
+        }
+
         // 1. Resolve input to a DID and get PDS endpoint.
         let did = self.resolve_input_to_did(&opts.input).await?;
         let directory = Directory::new();
@@ -329,17 +342,22 @@ impl OAuthClient {
         )
         .await?;
 
-        // 5. Verify issuer by resolving the DID fresh (unless skipped for testing).
+        // 5. Verify issuer by resolving the DID fresh (unless skipped for
+        // testing), and bind the token set's audience to the resolved PDS.
+        let mut token_set = token_set;
         if !self.skip_issuer_verification {
             let sub_did = Did::try_from(token_set.sub.as_str())
                 .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
             let directory = Directory::new();
             let identity = directory.lookup_did(&sub_did).await?;
-            let pds_url = identity.pds_endpoint().ok_or_else(|| {
-                OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
-            })?;
+            let pds_url = identity
+                .pds_endpoint()
+                .ok_or_else(|| {
+                    OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
+                })?
+                .to_owned();
 
-            let pr_meta = metadata::fetch_protected_resource_metadata(pds_url).await?;
+            let pr_meta = metadata::fetch_protected_resource_metadata(&pds_url).await?;
             let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
                 OAuthError::IssuerVerification(
                     "no authorization servers in resource metadata".into(),
@@ -362,6 +380,13 @@ impl OAuthClient {
                     auth_state.issuer, actual_issuer
                 )));
             }
+
+            // The AT Protocol token response has no `aud` field, so without
+            // this the audience would default to the AS issuer and the
+            // authenticated client would send every XRPC request to the
+            // authorization server instead of the user's PDS. Bind aud to the
+            // verified PDS (matches atmos/TS).
+            token_set.aud = pds_url;
         }
 
         // 6. Delete any existing session for this user, then store the new one.

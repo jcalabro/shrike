@@ -847,3 +847,23 @@ async fn callback_handles_dpop_nonce_retry() {
     let s = mock_state.lock().await;
     assert_eq!(s.token_call_count, 2);
 }
+
+#[tokio::test]
+async fn authorize_rejects_unregistered_redirect_uri() {
+    // L18: a redirect_uri not present in the client metadata must be rejected
+    // up front (before any network call), guarding against open-redirect via
+    // an unregistered callback.
+    let client = make_client("https://example.com");
+    let result = client
+        .authorize(AuthorizeOptions {
+            input: "alice.test".into(),
+            redirect_uri: "https://evil.example/callback".into(),
+            scope: None,
+            state: None,
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "unregistered redirect_uri must be rejected"
+    );
+}
