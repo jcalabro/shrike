@@ -134,9 +134,7 @@ fn encode_label_fields(label: &Label, include_sig: bool) -> Result<Vec<u8>, Labe
     }
 
     // "sig" sorts between "neg" and "src".
-    if include_sig
-        && let Some(sig) = &label.sig
-    {
+    if include_sig && let Some(sig) = &label.sig {
         enc.encode_text("sig")?;
         enc.encode_bytes(sig)?;
     }

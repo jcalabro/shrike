@@ -476,14 +476,14 @@ mod tests {
         // fail. This locks in the H1 fix and any future divergence.
         let inputs: &[&[u8]] = &[
             &[0x00],
-            &[0x8a, 0x01, 0x02],             // truncated array
-            &[0xaa, 0x61, 0x61, 0x01],       // truncated map
-            &[0x83, 0x01, 0x02, 0x03],       // valid array
-            &[0xa1, 0x61, 0x61, 0x01],       // valid map
+            &[0x8a, 0x01, 0x02],       // truncated array
+            &[0xaa, 0x61, 0x61, 0x01], // truncated map
+            &[0x83, 0x01, 0x02, 0x03], // valid array
+            &[0xa1, 0x61, 0x61, 0x01], // valid map
             &[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], // huge array len
-            &[0x82, 0x80, 0x80],             // nested empty arrays
-            &[0x5f],                         // indefinite bytes
-            &[],                             // empty
+            &[0x82, 0x80, 0x80],       // nested empty arrays
+            &[0x5f],                   // indefinite bytes
+            &[],                       // empty
         ];
         for input in inputs {
             let std_res = crate::cbor::decode(input);

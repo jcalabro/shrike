@@ -113,8 +113,7 @@ fn gen_cbor_impl_inner(
     for json_name in &field_names {
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
-        let is_nullable =
-            required.contains(json_name_str) && nullable.contains(json_name_str);
+        let is_nullable = required.contains(json_name_str) && nullable.contains(json_name_str);
         let is_required = required.contains(json_name_str) && !nullable.contains(json_name_str);
 
         let rust_field = util::rust_field_name(json_name_str);
@@ -351,7 +350,10 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     // A nullable field's key is ALWAYS present (null when None), so it counts
     // toward the fixed map size like a required field. Only plain-optional
     // fields are conditionally counted.
-    let always_present_count = cbor_fields.iter().filter(|f| f.required || f.nullable).count();
+    let always_present_count = cbor_fields
+        .iter()
+        .filter(|f| f.required || f.nullable)
+        .count();
     let optional_fields: Vec<&&CborField> = cbor_fields
         .iter()
         .filter(|f| !f.required && !f.nullable)
@@ -364,7 +366,11 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     if optional_fields.is_empty() {
         writeln!(out, "            let count = {always_present_count}u64;").ok();
     } else {
-        writeln!(out, "            let mut count = {always_present_count}u64;").ok();
+        writeln!(
+            out,
+            "            let mut count = {always_present_count}u64;"
+        )
+        .ok();
         for f in &optional_fields {
             let check = option_check(f);
             writeln!(out, "            if {check} {{ count += 1; }}").ok();
@@ -397,7 +403,11 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             writeln!(out, "                Some(val) => {{").ok();
             gen_encode_value(out, &f.kind, "val", "                    ", true);
             writeln!(out, "                }}").ok();
-            writeln!(out, "                None => {{ crate::cbor::Encoder::new(&mut *buf).encode_null()?; }}").ok();
+            writeln!(
+                out,
+                "                None => {{ crate::cbor::Encoder::new(&mut *buf).encode_null()?; }}"
+            )
+            .ok();
             writeln!(out, "            }}").ok();
         } else {
             let check = option_check(f);
@@ -1022,7 +1032,11 @@ fn gen_decode_single(
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::Bytes => {
-            writeln!(out, "{indent}if let crate::cbor::Value::Bytes(b) = value {{").ok();
+            writeln!(
+                out,
+                "{indent}if let crate::cbor::Value::Bytes(b) = value {{"
+            )
+            .ok();
             writeln!(
                 out,
                 "{indent}    {assign_pre}crate::api::Bytes(b.to_vec()){assign_post}"

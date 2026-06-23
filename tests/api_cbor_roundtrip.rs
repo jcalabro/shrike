@@ -161,7 +161,10 @@ fn feed_post_minimal_roundtrip() {
     let cbor = post.to_cbor().unwrap();
     // The encoded record must carry a $type discriminator equal to the NSID.
     if let shrike::cbor::Value::Map(entries) = shrike::cbor::decode(&cbor).unwrap() {
-        let ty = entries.iter().find(|(k, _)| *k == "$type").expect("$type present");
+        let ty = entries
+            .iter()
+            .find(|(k, _)| *k == "$type")
+            .expect("$type present");
         assert_eq!(ty.1, shrike::cbor::Value::Text("app.bsky.feed.post"));
     } else {
         panic!("expected map");

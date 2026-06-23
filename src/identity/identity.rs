@@ -281,10 +281,7 @@ mod tests {
             Some("#atproto")
         );
         // Fully-qualified id for a DIFFERENT did must not match.
-        assert_eq!(
-            normalize_fragment("did:plc:other#atproto", did),
-            None
-        );
+        assert_eq!(normalize_fragment("did:plc:other#atproto", did), None);
         // No fragment.
         assert_eq!(normalize_fragment(did, did), None);
         assert_eq!(normalize_fragment("#", did), None);
