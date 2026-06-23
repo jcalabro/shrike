@@ -2,6 +2,7 @@ use crate::syntax::Did;
 
 use crate::identity::DidDocument;
 use crate::identity::IdentityError;
+use crate::outbound::AddressPolicy;
 
 /// Resolve a `did:web` DID to its DID document.
 ///
@@ -9,9 +10,16 @@ use crate::identity::IdentityError;
 /// `did:web:example.com` → `https://example.com/.well-known/did.json`.
 /// Path-based did:web (`did:web:example.com:path:to`) and embedded ports
 /// (`did:web:example.com%3A3000`) are **rejected**, matching atproto/atmos.
+///
+/// Under [`AddressPolicy::DenyLocal`] a `did:web` whose host is a local/private
+/// IP literal (e.g. `did:web:127.0.0.1`) is rejected before any fetch — hyper
+/// skips the connect-time DNS filter for literal-IP hosts, so this guard is
+/// what closes that bypass. Hostname hosts that resolve inward are caught by
+/// the client's filtering resolver instead.
 pub async fn resolve_did_web(
     did: &Did,
     http: &reqwest::Client,
+    policy: AddressPolicy,
 ) -> Result<DidDocument, IdentityError> {
     let identifier = did.identifier();
 
@@ -22,6 +30,13 @@ pub async fn resolve_did_web(
     if identifier.contains(':') {
         return Err(IdentityError::NotFound(format!(
             "path-based or ported did:web is not supported: {did}"
+        )));
+    }
+
+    if crate::outbound::host_is_blocked_literal_ip(identifier, policy) {
+        return Err(IdentityError::NotFound(format!(
+            "refusing to resolve did:web at local/private address {identifier} \
+             (use AddressPolicy::AllowLocal to permit): {did}"
         )));
     }
 
@@ -46,7 +61,9 @@ mod tests {
         // Path-based did:web must be rejected before any network call.
         let did = Did::try_from("did:web:example.com:user:alice").unwrap();
         let http = reqwest::Client::new();
-        let err = resolve_did_web(&did, &http).await.unwrap_err();
+        let err = resolve_did_web(&did, &http, AddressPolicy::DenyLocal)
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, IdentityError::NotFound(_)),
             "path-based did:web must be rejected, got {err:?}"
@@ -58,7 +75,49 @@ mod tests {
         // did:web:example.com:3000 (a port reinterpreted as a path) must reject.
         let did = Did::try_from("did:web:example.com:3000").unwrap();
         let http = reqwest::Client::new();
-        let err = resolve_did_web(&did, &http).await.unwrap_err();
+        let err = resolve_did_web(&did, &http, AddressPolicy::DenyLocal)
+            .await
+            .unwrap_err();
         assert!(matches!(err, IdentityError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_local_ip_literal_did_web_under_deny() {
+        // H11 follow-up: did:web at a loopback/metadata IP literal must be
+        // refused before any fetch (the resolver filter is bypassed for
+        // literal IPs).
+        for s in [
+            "did:web:127.0.0.1",
+            "did:web:169.254.169.254",
+            "did:web:10.0.0.1",
+        ] {
+            let did = Did::try_from(s).unwrap();
+            let http = reqwest::Client::new();
+            let err = resolve_did_web(&did, &http, AddressPolicy::DenyLocal)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, IdentityError::NotFound(_)),
+                "{s} must be refused under DenyLocal, got {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_local_permits_local_ip_literal_past_guard() {
+        // Under AllowLocal the literal-IP guard is a no-op; the call proceeds to
+        // the network and fails for an ordinary connection reason (nothing
+        // listening), NOT the pre-flight refusal. We assert it is not the guard
+        // by checking the error message does not mention the refusal text.
+        let did = Did::try_from("did:web:127.0.0.1").unwrap();
+        let http = crate::outbound::hardened_client(AddressPolicy::AllowLocal);
+        let err = resolve_did_web(&did, &http, AddressPolicy::AllowLocal)
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            !msg.contains("refusing to resolve"),
+            "AllowLocal must not pre-reject the literal IP, got {msg}"
+        );
     }
 }

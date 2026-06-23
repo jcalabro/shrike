@@ -174,7 +174,7 @@ mod tests {
     async fn well_known_errors_on_unreachable_host_no_panic() {
         // The well-known helper must surface a clean error (not panic) when the
         // host is unreachable.
-        let http = crate::outbound::hardened_client();
+        let http = crate::outbound::hardened_client(crate::outbound::AddressPolicy::DenyLocal);
         let handle = Handle::try_from("definitely-not-a-real-host.invalid").unwrap();
         assert!(resolve_handle_well_known(&handle, &http).await.is_err());
     }

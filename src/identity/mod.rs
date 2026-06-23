@@ -16,12 +16,22 @@
 //! match the requested DID, and `did:web` is restricted to hostname form (no
 //! path/port).
 //!
-//! These mitigations do **not** filter the initial resolved IP: a `did:web` or
-//! handle host that resolves directly to a loopback/RFC1918/link-local address
-//! (or via DNS rebinding) is still reachable. Deployments that resolve
-//! untrusted identities should restrict egress at the network layer. IP-range
-//! filtering may be offered as an opt-in in a future revision (default-deny
-//! private ranges, with an explicit allow for localhost/self-hosted setups).
+//! By default these mitigations are paired with **connect-time address
+//! filtering** ([`AddressPolicy::DenyLocal`]): a `did:web` or handle host that
+//! resolves to a loopback/RFC1918/CGNAT/link-local/ULA address — statically or
+//! via DNS rebinding — is refused, and a `did:web` host that is itself a local
+//! IP literal is rejected before any fetch. Deployments that legitimately
+//! resolve identities on localhost or a private network (local dev, a
+//! self-hosted PDS) opt out per [`Directory`] via
+//! [`Directory::with_address_policy`] / [`Directory::with_plc_url_and_policy`]
+//! and [`AddressPolicy::AllowLocal`].
+//!
+//! Address filtering still cannot defend against a malicious recursive DNS
+//! server that returns a globally-routable address fronting an internal host,
+//! so deployments resolving fully untrusted identities should *also* restrict
+//! egress at the network layer. The PLC directory client is **not** address
+//! filtered: its endpoint is operator-configured (the DID travels in the URL
+//! path, not the host), so it is treated as trusted.
 
 pub mod did_web;
 pub mod directory;
@@ -30,6 +40,7 @@ pub mod handle;
 pub mod identity;
 pub mod plc;
 
+pub use crate::outbound::AddressPolicy;
 pub use directory::Directory;
 pub use handle::resolve_handle;
 pub use identity::{DidDocument, Identity, Service, ServiceEndpoint, VerificationMethod};

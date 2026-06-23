@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::crypto::P256SigningKey;
-use crate::identity::Directory;
+use crate::identity::{AddressPolicy, Directory};
 use crate::syntax::Did;
 
 use crate::oauth::OAuthError;
@@ -26,6 +26,12 @@ pub struct OAuthClientConfig {
     /// When true, the callback will not resolve the DID to verify the issuer
     /// matches the authorization server. Defaults to `false`.
     pub skip_issuer_verification: bool,
+    /// Connect-time address policy for handle/DID resolution and the token/PAR
+    /// endpoints reached during the flow. Defaults to
+    /// [`AddressPolicy::DenyLocal`] (refuse local/private targets as an SSRF
+    /// guard); set [`AddressPolicy::AllowLocal`] for local dev or self-hosted
+    /// infrastructure on a private network.
+    pub address_policy: AddressPolicy,
 }
 
 /// Main OAuth client that orchestrates the full AT Protocol OAuth flow.
@@ -46,6 +52,7 @@ pub struct OAuthClientConfig {
 ///     state_store: Box::new(MemoryStateStore::new()),
 ///     signing_key: None,
 ///     skip_issuer_verification: false,
+///     address_policy: Default::default(),
 /// });
 ///
 /// let result = client.authorize(AuthorizeOptions {
@@ -66,6 +73,7 @@ pub struct OAuthClient {
     http: reqwest::Client,
     nonces: Arc<NonceStore>,
     skip_issuer_verification: bool,
+    address_policy: AddressPolicy,
     /// Per-DID refresh mutex to prevent concurrent refresh of single-use tokens.
     refresh_locks: tokio::sync::Mutex<std::collections::HashMap<String, ()>>,
 }
@@ -122,12 +130,14 @@ impl OAuthClient {
             sessions: config.session_store,
             states: config.state_store,
             auth,
-            // Hardened: no redirects (SSRF on handle/DID resolution) + timeouts.
+            // Hardened: no redirects (SSRF on handle/DID resolution) + timeouts
+            // + connect-time address filtering per the configured policy.
             // OAuth token/PAR/revocation endpoints are not expected to redirect,
             // matching the metadata client and atproto's redirect: 'error'.
-            http: crate::outbound::hardened_client(),
+            http: crate::outbound::hardened_client(config.address_policy),
             nonces: Arc::new(NonceStore::new()),
             skip_issuer_verification: config.skip_issuer_verification,
+            address_policy: config.address_policy,
             refresh_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -153,7 +163,7 @@ impl OAuthClient {
 
         // 1. Resolve input to a DID and get PDS endpoint.
         let did = self.resolve_input_to_did(&opts.input).await?;
-        let directory = Directory::new();
+        let directory = Directory::with_address_policy(self.address_policy);
         let identity = directory.lookup_did(&did).await?;
         let pds_url = identity
             .pds_endpoint()
@@ -415,7 +425,7 @@ impl OAuthClient {
     ) -> Result<String, OAuthError> {
         let sub_did = Did::try_from(sub)
             .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
-        let directory = Directory::new();
+        let directory = Directory::with_address_policy(self.address_policy);
         let identity = directory.lookup_did(&sub_did).await?;
         let pds_url = identity
             .pds_endpoint()
@@ -643,6 +653,7 @@ mod tests {
             state_store: Box::new(MemoryStateStore::new()),
             signing_key: None,
             skip_issuer_verification: false,
+            address_policy: Default::default(),
         };
 
         let client = OAuthClient::new(config);
@@ -662,6 +673,7 @@ mod tests {
             state_store: Box::new(MemoryStateStore::new()),
             signing_key: Some((key, "key-1".into())),
             skip_issuer_verification: false,
+            address_policy: Default::default(),
         };
 
         let client = OAuthClient::new(config);

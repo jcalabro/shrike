@@ -387,6 +387,9 @@ fn make_client_with_stores(
         state_store,
         signing_key: None,
         skip_issuer_verification: true,
+        // Tests run against a mock server on 127.0.0.1, so local targets must
+        // be permitted (the secure default DenyLocal would refuse them).
+        address_policy: shrike::identity::AddressPolicy::AllowLocal,
     })
 }
 

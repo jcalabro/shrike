@@ -12,6 +12,7 @@ use crate::identity::IdentityError;
 use crate::identity::did_web::resolve_did_web;
 use crate::identity::handle::resolve_handle;
 use crate::identity::plc::PlcClient;
+use crate::outbound::AddressPolicy;
 
 const DEFAULT_TTL: Duration = Duration::from_secs(300);
 const DEFAULT_CAPACITY: usize = 1024;
@@ -28,6 +29,7 @@ struct CacheEntry {
 pub struct Directory {
     plc: PlcClient,
     http: reqwest::Client,
+    address_policy: AddressPolicy,
     cache: Mutex<HashMap<Did, CacheEntry>>,
     generation: AtomicU64,
     ttl: Duration,
@@ -35,16 +37,38 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// Create a Directory using the production PLC endpoint (`https://plc.directory`).
+    /// Create a Directory using the production PLC endpoint
+    /// (`https://plc.directory`) and the default [`AddressPolicy::DenyLocal`]
+    /// SSRF guard on `did:web`/handle resolution.
     pub fn new() -> Self {
         Self::with_plc_url("https://plc.directory")
     }
 
-    /// Create a Directory with a custom PLC directory URL.
+    /// Create a Directory with a custom PLC directory URL and the default
+    /// [`AddressPolicy::DenyLocal`] guard.
     pub fn with_plc_url(plc_url: &str) -> Self {
+        Self::with_plc_url_and_policy(plc_url, AddressPolicy::default())
+    }
+
+    /// Create a Directory with the production PLC endpoint and an explicit
+    /// [`AddressPolicy`]. Pass [`AddressPolicy::AllowLocal`] to permit
+    /// `did:web`/handle resolution against localhost or private networks (local
+    /// dev, self-hosted infrastructure); otherwise such targets are refused as
+    /// an SSRF guard.
+    pub fn with_address_policy(policy: AddressPolicy) -> Self {
+        Self::with_plc_url_and_policy("https://plc.directory", policy)
+    }
+
+    /// Create a Directory with a custom PLC directory URL and an explicit
+    /// [`AddressPolicy`] for `did:web`/handle resolution.
+    ///
+    /// The PLC client is unaffected by `policy`: its endpoint is
+    /// operator-configured and treated as trusted.
+    pub fn with_plc_url_and_policy(plc_url: &str, policy: AddressPolicy) -> Self {
         Directory {
             plc: PlcClient::new(plc_url),
-            http: crate::outbound::hardened_client(),
+            http: crate::outbound::hardened_client(policy),
+            address_policy: policy,
             cache: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
             ttl: DEFAULT_TTL,
@@ -104,7 +128,7 @@ impl Directory {
         // Resolve via the appropriate method.
         let doc = match did.method() {
             "plc" => self.plc.resolve(did).await?,
-            "web" => resolve_did_web(did, &self.http).await?,
+            "web" => resolve_did_web(did, &self.http, self.address_policy).await?,
             method => {
                 return Err(IdentityError::NotFound(format!(
                     "unsupported DID method: {method}"
