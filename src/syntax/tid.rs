@@ -12,8 +12,9 @@ const ALPHABET: &[u8; 32] = b"234567abcdefghijklmnopqrstuvwxyz";
 
 /// A Timestamp Identifier (TID) — a 64-bit value encoded as 13 base32-sort characters.
 ///
-/// Layout:
-/// - Bits 63–10: microsecond timestamp (54 bits, high bit always clear)
+/// Layout (big-endian u64, top bit always 0):
+/// - Bit 63:     always 0 (reserved; keeps TIDs sortable as unsigned)
+/// - Bits 62–10: microsecond timestamp (53 bits)
 /// - Bits 9–0:   clock ID (10 bits)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Tid(u64);

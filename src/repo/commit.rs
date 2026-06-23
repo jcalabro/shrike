@@ -72,8 +72,19 @@ impl Commit {
     }
 
     /// Encode the full commit (including sig) to DRISL bytes.
+    ///
+    /// Errors if the commit is unsigned: fabricating an all-zero signature
+    /// would round-trip back through [`Commit::from_cbor`] as a *present*
+    /// (but bogus) signature, silently promoting an unsigned commit into a
+    /// structurally-signed one. Sign the commit first (or use
+    /// [`Commit::unsigned_bytes`] for the to-be-signed bytes).
     #[inline]
     pub fn to_cbor(&self) -> Result<Vec<u8>, RepoError> {
+        if self.sig.is_none() {
+            return Err(RepoError::Commit(
+                "cannot encode an unsigned commit with to_cbor; sign it first".into(),
+            ));
+        }
         let mut buf = Vec::with_capacity(256);
         let mut enc = Encoder::new(&mut buf);
         let keys: &[&str] = &["did", "rev", "sig", "data", "prev", "version"];

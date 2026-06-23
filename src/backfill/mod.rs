@@ -1,11 +1,20 @@
 //! AT Protocol concurrent repo backfill engine.
 //!
-//! # Overview
+//! # Status
 //!
-//! [`BackfillEngine`] downloads all repositories from a relay or PDS
-//! concurrently.
+//! **Work in progress.** The supporting pieces — configuration, the
+//! [`Checkpoint`] trait for crash-recovery, Fisher-Yates batch
+//! [shuffling](shuffle_batch), and cancellation — are implemented and tested,
+//! but [`BackfillEngine::run`] is currently a skeleton: it loads the checkpoint,
+//! waits for cancellation, and returns zero stats. Repo iteration
+//! (`list_repos` pagination + worker dispatch) is not yet wired up, so a `run`
+//! does not actually download repositories. The scaffolding is in place so the
+//! download loop can be dropped in without changing the public API.
 //!
-//! Key features:
+//! # Planned design
+//!
+//! [`BackfillEngine`] will download all repositories from a relay or PDS
+//! concurrently, with:
 //! - Cursor-based pagination with crash-recovery via the [`Checkpoint`] trait.
 //! - Fisher-Yates batch shuffling to distribute load across PDS hosts.
 //! - Configurable worker concurrency and batch size.

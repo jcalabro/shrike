@@ -80,15 +80,19 @@ impl BackfillEngine {
         let start = tokio::time::Instant::now();
 
         // Load cursor from checkpoint so a restarted run continues where it left off.
-        let _cursor = self.checkpoint.load().await?;
+        let cursor = self.checkpoint.load().await?;
 
         // Placeholder: wait for cancellation. The full implementation would
-        // paginate through repos, shuffle each batch, and dispatch to workers.
+        // paginate through repos, shuffle each batch, and dispatch to workers,
+        // advancing `cursor` as pages complete.
         cancel.cancelled().await;
 
-        // On cancel, persist the cursor so the next run can resume.
-        // (cursor is empty here since no pages were fetched in the skeleton)
-        self.checkpoint.save("").await?;
+        // Persist only a non-empty cursor. The skeleton fetches no pages, so
+        // `cursor` is whatever we loaded; never overwrite a previously
+        // persisted resume point with an empty string.
+        if let Some(cursor) = cursor.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+            self.checkpoint.save(cursor).await?;
+        }
 
         Ok(BackfillStats {
             repos_downloaded: 0,
@@ -116,6 +120,58 @@ pub fn shuffle_batch<T>(batch: &mut [T]) {
 )]
 mod tests {
     use super::*;
+
+    /// A checkpoint that returns a preloaded cursor and records every save.
+    struct RecordingCheckpoint {
+        preload: Option<String>,
+        saves: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl crate::backfill::Checkpoint for RecordingCheckpoint {
+        fn save(
+            &self,
+            cursor: &str,
+        ) -> crate::backfill::checkpoint::BoxFuture<'_, Result<(), BackfillError>> {
+            let saves = std::sync::Arc::clone(&self.saves);
+            let cursor = cursor.to_string();
+            Box::pin(async move {
+                saves.lock().unwrap().push(cursor);
+                Ok(())
+            })
+        }
+        fn load(
+            &self,
+        ) -> crate::backfill::checkpoint::BoxFuture<'_, Result<Option<String>, BackfillError>>
+        {
+            let preload = self.preload.clone();
+            Box::pin(async move { Ok(preload) })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_does_not_clobber_existing_checkpoint() {
+        // L29: the skeleton run() must not overwrite a previously-persisted
+        // resume cursor with an empty string on cancel.
+        let saves = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let engine = BackfillEngine::new(BackfillConfig {
+            sync_host: "https://bsky.network".into(),
+            checkpoint: Some(Box::new(RecordingCheckpoint {
+                preload: Some("page-42".into()),
+                saves: std::sync::Arc::clone(&saves),
+            })),
+            ..Default::default()
+        });
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        engine.run(cancel).await.unwrap();
+        // No empty cursor was persisted (the only acceptable save is the
+        // preloaded non-empty cursor, never "").
+        let recorded = saves.lock().unwrap();
+        assert!(
+            !recorded.iter().any(|c| c.is_empty()),
+            "run() must not save an empty cursor, got {recorded:?}"
+        );
+    }
 
     #[tokio::test]
     async fn engine_respects_cancellation() {

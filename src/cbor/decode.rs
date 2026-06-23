@@ -532,6 +532,82 @@ mod tests {
         assert!(crate::cbor::decode(&[0x01, 0x02]).is_err());
     }
 
+    // --- Additional spec-mandated rejection tests (L1) ---
+
+    #[test]
+    fn reject_empty_input() {
+        assert!(crate::cbor::decode(&[]).is_err());
+    }
+
+    #[test]
+    fn reject_invalid_utf8_text() {
+        // major 3 (text), len 2, then bytes 0xFF 0xFE (not valid UTF-8).
+        assert!(crate::cbor::decode(&[0x62, 0xFF, 0xFE]).is_err());
+    }
+
+    #[test]
+    fn reject_reserved_additional_info() {
+        // additional info 28, 29, 30 are reserved across major types.
+        for major in [0x00u8, 0x20, 0x40, 0x60] {
+            for ai in [28u8, 29, 30] {
+                assert!(
+                    crate::cbor::decode(&[major | ai]).is_err(),
+                    "major {major:#x} ai {ai} must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reject_tag42_non_bytestring() {
+        // tag 42 (0xd8 0x2a) wrapping an integer instead of a bytestring.
+        assert!(crate::cbor::decode(&[0xd8, 0x2a, 0x01]).is_err());
+    }
+
+    #[test]
+    fn reject_tag42_bad_multibase_prefix() {
+        // tag 42 + bytestring of 37 bytes whose leading byte is 0x01 (must be
+        // 0x00 multibase prefix).
+        let mut buf = vec![0xd8, 0x2a, 0x58, 0x25, 0x01];
+        buf.extend_from_slice(&[0u8; 36]);
+        assert!(crate::cbor::decode(&buf).is_err());
+    }
+
+    #[test]
+    fn map_key_order_boundary_23_24_bytes() {
+        // A 23-byte key sorts before a 24-byte key (the latter needs a 2-byte
+        // header), so {<23-byte>:0, <24-byte>:0} is canonical and must decode;
+        // the reverse order must be rejected.
+        let k23 = "a".repeat(23);
+        let k24 = "a".repeat(24);
+        let canonical = {
+            let mut enc = Vec::new();
+            let mut e = crate::cbor::Encoder::new(&mut enc);
+            e.encode_map_header(2).unwrap();
+            e.encode_text(&k23).unwrap();
+            e.encode_u64(0).unwrap();
+            e.encode_text(&k24).unwrap();
+            e.encode_u64(0).unwrap();
+            enc
+        };
+        assert!(crate::cbor::decode(&canonical).is_ok());
+
+        let reversed = {
+            let mut enc = Vec::new();
+            let mut e = crate::cbor::Encoder::new(&mut enc);
+            e.encode_map_header(2).unwrap();
+            e.encode_text(&k24).unwrap();
+            e.encode_u64(0).unwrap();
+            e.encode_text(&k23).unwrap();
+            e.encode_u64(0).unwrap();
+            enc
+        };
+        assert!(
+            crate::cbor::decode(&reversed).is_err(),
+            "longer-then-shorter key order must be rejected"
+        );
+    }
+
     // --- Roundtrip tests ---
 
     #[test]

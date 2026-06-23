@@ -125,8 +125,10 @@ impl fmt::Display for Cid {
 
 // FromStr: strip 'b' prefix, base32lower decode, then from_bytes
 //
-// Uppercases into a stack buffer and decodes into another stack buffer
-// to avoid all heap allocations on the happy path.
+// The canonical AT Protocol/multibase form is `b` + base32 LOWERCASE. We reject
+// any uppercase letters so there is exactly one canonical string per CID
+// (round-trip identity: from_str(s).to_string() == s). Internally we uppercase
+// into a stack buffer because data-encoding's BASE32_NOPAD expects uppercase.
 impl FromStr for Cid {
     type Err = CborError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -136,6 +138,11 @@ impl FromStr for Cid {
         // CID is exactly 36 bytes, base32(36 bytes) = 58 chars
         if rest.len() != CID_BASE32_LEN {
             return Err(CborError::InvalidCid("wrong base32 length".into()));
+        }
+        // Reject any non-lowercase body: only base32-lower is canonical, and
+        // accepting uppercase would let two distinct strings parse to one CID.
+        if rest.bytes().any(|b| b.is_ascii_uppercase()) {
+            return Err(CborError::InvalidCid("CID base32 must be lowercase".into()));
         }
         // Uppercase into stack buffer (BASE32_NOPAD expects uppercase)
         let mut upper = [0u8; CID_BASE32_LEN];
@@ -243,5 +250,21 @@ mod tests {
         let mut bytes = Cid::compute(Codec::Drisl, b"test").to_bytes();
         bytes[2] = 0x13; // not SHA-256
         assert!(Cid::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn cid_reject_uppercase_base32() {
+        // Only base32-lowercase is canonical; an uppercased body must be
+        // rejected so there is exactly one string per CID. (L2)
+        let cid = Cid::compute(Codec::Drisl, b"uppercase test");
+        let lower = cid.to_string();
+        let upper = format!("b{}", lower[1..].to_ascii_uppercase());
+        assert_ne!(lower, upper);
+        assert!(
+            upper.parse::<Cid>().is_err(),
+            "uppercase base32 CID must be rejected"
+        );
+        // And the canonical form round-trips to itself.
+        assert_eq!(lower.parse::<Cid>().unwrap().to_string(), lower);
     }
 }

@@ -228,6 +228,25 @@ mod tests {
     }
 
     #[test]
+    fn to_cbor_rejects_unsigned_commit() {
+        // L6: encoding an unsigned commit must error rather than fabricate an
+        // all-zero signature that would round-trip as a "present" signature.
+        let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
+        let commit = Commit {
+            did,
+            version: 3,
+            rev: Tid::new(1_700_000_000_000_000, 0),
+            prev: None,
+            data: Cid::compute(Codec::Drisl, b"mst root"),
+            sig: None,
+        };
+        assert!(
+            commit.to_cbor().is_err(),
+            "to_cbor on an unsigned commit must error"
+        );
+    }
+
+    #[test]
     fn commit_cbor_roundtrip_with_prev_none() {
         // Build a commit whose `prev` field is None.
         let sk = crate::crypto::P256SigningKey::generate();
