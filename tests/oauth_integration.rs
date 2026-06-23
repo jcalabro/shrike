@@ -39,6 +39,9 @@ struct MockState {
     resource_call_count: u32,
     /// If set, the resource endpoint returns 401 with use_dpop_nonce on first call.
     resource_require_nonce: bool,
+    /// If set, the refresh_token grant returns a different `sub` (to test that
+    /// a refresh changing the subject is rejected).
+    refresh_returns_wrong_sub: bool,
 }
 
 type SharedState = Arc<Mutex<MockState>>;
@@ -150,9 +153,11 @@ async fn token_endpoint(
     let grant_type = params.get("grant_type").map(|s| s.as_str()).unwrap_or("");
 
     // Check if we should force a nonce retry.
+    let wrong_sub;
     {
         let mut s = state.lock().await;
         s.token_call_count += 1;
+        wrong_sub = s.refresh_returns_wrong_sub;
         if s.require_nonce_retry && s.token_call_count == 1 {
             return (
                 StatusCode::BAD_REQUEST,
@@ -231,7 +236,11 @@ async fn token_endpoint(
                 "token_type": "DPoP",
                 "expires_in": 3600,
                 "refresh_token": "test-rt-2",
-                "sub": "did:plc:test123456789abcdefghij",
+                "sub": if wrong_sub {
+                    "did:plc:someoneelse00000000000000"
+                } else {
+                    "did:plc:test123456789abcdefghij"
+                },
                 "scope": "atproto",
                 "iss": base_url
             })),
@@ -865,5 +874,118 @@ async fn authorize_rejects_unregistered_redirect_uri() {
     assert!(
         result.is_err(),
         "unregistered redirect_uri must be rejected"
+    );
+}
+
+/// A token set that is already stale (expired in the past), to force refresh.
+fn make_stale_token_set(base_url: &str) -> TokenSet {
+    TokenSet {
+        expires_at: Some(1), // 1970 → always stale
+        ..make_token_set(base_url)
+    }
+}
+
+/// get_session refreshes a stale session and stores the rotated tokens. (M25)
+#[tokio::test]
+async fn get_session_refreshes_stale_and_rotates_tokens() {
+    let (base_url, mock_state) = start_mock_server().await;
+    let did = "did:plc:test123456789abcdefghij";
+
+    let dpop_key = shrike::crypto::P256SigningKey::generate();
+    let session = Session::from_key_and_tokens(&dpop_key, make_stale_token_set(&base_url));
+    let session_store = MemorySessionStore::new();
+    session_store.set(did, &session).await.unwrap();
+
+    let client = make_client_with_stores(
+        &base_url,
+        Box::new(session_store),
+        Box::new(MemoryStateStore::new()),
+    );
+
+    let refreshed = client.get_session(did).await.unwrap();
+    // Tokens were rotated to the refresh-grant response values.
+    assert_eq!(refreshed.token_set.access_token, "test-at-refreshed");
+    assert_eq!(
+        refreshed.token_set.refresh_token.as_deref(),
+        Some("test-rt-2")
+    );
+    assert_eq!(refreshed.token_set.sub, did);
+
+    // The stored session reflects the rotation (a subsequent fresh get returns it).
+    let again = client.get_session(did).await.unwrap();
+    assert_eq!(again.token_set.access_token, "test-at-refreshed");
+
+    // The token endpoint was hit for the refresh.
+    let s = mock_state.lock().await;
+    assert!(s.token_call_count >= 1, "expected a refresh token call");
+}
+
+/// A refresh that returns a different `sub` is rejected (no cross-account
+/// token binding). (M24)
+#[tokio::test]
+async fn get_session_rejects_refresh_sub_change() {
+    let initial = MockState {
+        refresh_returns_wrong_sub: true,
+        ..Default::default()
+    };
+    let (base_url, _mock_state) = start_mock_server_with_state(initial).await;
+    let did = "did:plc:test123456789abcdefghij";
+
+    let dpop_key = shrike::crypto::P256SigningKey::generate();
+    let session = Session::from_key_and_tokens(&dpop_key, make_stale_token_set(&base_url));
+    let session_store = MemorySessionStore::new();
+    session_store.set(did, &session).await.unwrap();
+
+    let client = make_client_with_stores(
+        &base_url,
+        Box::new(session_store),
+        Box::new(MemoryStateStore::new()),
+    );
+
+    let result = client.get_session(did).await;
+    assert!(
+        result.is_err(),
+        "a refresh returning a different sub must be rejected"
+    );
+}
+
+/// Concurrent get_session calls for one DID coalesce to a single refresh
+/// (single-use refresh tokens must not be spent more than once). (M25)
+#[tokio::test]
+async fn get_session_concurrent_refresh_coalesces() {
+    use std::sync::Arc as StdArc;
+
+    let (base_url, mock_state) = start_mock_server().await;
+    let did = "did:plc:test123456789abcdefghij";
+
+    let dpop_key = shrike::crypto::P256SigningKey::generate();
+    let session = Session::from_key_and_tokens(&dpop_key, make_stale_token_set(&base_url));
+    let session_store = MemorySessionStore::new();
+    session_store.set(did, &session).await.unwrap();
+
+    let client = StdArc::new(make_client_with_stores(
+        &base_url,
+        Box::new(session_store),
+        Box::new(MemoryStateStore::new()),
+    ));
+
+    // Fire several concurrent get_session calls.
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let c = StdArc::clone(&client);
+        let d = did.to_string();
+        handles.push(tokio::spawn(async move { c.get_session(&d).await }));
+    }
+    for h in handles {
+        let r = h.await.unwrap();
+        assert!(r.is_ok(), "concurrent get_session must succeed");
+    }
+
+    // Exactly one refresh should have hit the token endpoint despite 8 callers.
+    let s = mock_state.lock().await;
+    assert_eq!(
+        s.token_call_count, 1,
+        "concurrent refresh must coalesce to a single token call, got {}",
+        s.token_call_count
     );
 }

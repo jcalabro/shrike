@@ -349,55 +349,92 @@ impl OAuthClient {
         // testing), and bind the token set's audience to the resolved PDS.
         let mut token_set = token_set;
         if !self.skip_issuer_verification {
-            let sub_did = Did::try_from(token_set.sub.as_str())
-                .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
-            let directory = Directory::new();
-            let identity = directory.lookup_did(&sub_did).await?;
-            let pds_url = identity
-                .pds_endpoint()
-                .ok_or_else(|| {
-                    OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
-                })?
-                .to_owned();
-
-            let pr_meta = metadata::fetch_protected_resource_metadata(&pds_url).await?;
-            let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
-                OAuthError::IssuerVerification(
-                    "no authorization servers in resource metadata".into(),
-                )
-            })?;
-
-            if *actual_issuer != auth_state.issuer {
-                // Revoke the token before returning error (best-effort).
-                token::revoke_token(
-                    &self.http,
-                    &auth_state.revocation_endpoint,
-                    &token_set.access_token,
-                    self.auth.as_ref(),
-                    &dpop_key,
-                    &self.nonces,
-                )
-                .await;
-                return Err(OAuthError::IssuerVerification(format!(
-                    "AS mismatch: expected {}, got {}",
-                    auth_state.issuer, actual_issuer
-                )));
+            match self
+                .verify_issuer_resolve_pds(&token_set.sub, &auth_state.issuer)
+                .await
+            {
+                Ok(pds_url) => {
+                    // The AT Protocol token response has no `aud` field, so
+                    // without this the audience would default to the AS issuer
+                    // and the authenticated client would send every XRPC request
+                    // to the authorization server instead of the user's PDS.
+                    // Bind aud to the verified PDS (matches atmos/TS).
+                    token_set.aud = pds_url;
+                }
+                Err(e) => {
+                    // Revoke the just-issued token before returning (best-effort),
+                    // matching the reference's exchangeCode error path.
+                    token::revoke_token(
+                        &self.http,
+                        &auth_state.revocation_endpoint,
+                        &token_set.access_token,
+                        self.auth.as_ref(),
+                        &dpop_key,
+                        &self.nonces,
+                    )
+                    .await;
+                    return Err(e);
+                }
             }
-
-            // The AT Protocol token response has no `aud` field, so without
-            // this the audience would default to the AS issuer and the
-            // authenticated client would send every XRPC request to the
-            // authorization server instead of the user's PDS. Bind aud to the
-            // verified PDS (matches atmos/TS).
-            token_set.aud = pds_url;
         }
 
-        // 6. Delete any existing session for this user, then store the new one.
+        // 6. Revoke and delete any existing session for this user (re-auth
+        // supersedes it), then store the new one. Revoking the old token avoids
+        // leaving a live credential behind on re-authorization.
+        if let Ok(Some(old)) = self.sessions.get(&token_set.sub).await
+            && let Ok(old_key) = old.dpop_key()
+        {
+            token::revoke_token(
+                &self.http,
+                &old.token_set.revocation_endpoint,
+                &old.token_set.access_token,
+                self.auth.as_ref(),
+                &old_key,
+                &self.nonces,
+            )
+            .await;
+        }
         let _ = self.sessions.delete(&token_set.sub).await;
         let session = Session::from_key_and_tokens(&dpop_key, token_set);
         self.sessions.set(&session.token_set.sub, &session).await?;
 
         Ok(session)
+    }
+
+    /// Verify that the token's `sub` DID is genuinely controlled by `issuer`,
+    /// and return the user's PDS URL (to be used as the token audience).
+    ///
+    /// Mirrors the reference client's `verifyIssuer`: resolve the sub DID fresh
+    /// (no cache), find its PDS, read that PDS's protected-resource metadata,
+    /// and require its authorization server to equal the issuer we obtained the
+    /// token from. A mismatch means the token must not be trusted for this DID.
+    async fn verify_issuer_resolve_pds(
+        &self,
+        sub: &str,
+        issuer: &str,
+    ) -> Result<String, OAuthError> {
+        let sub_did = Did::try_from(sub)
+            .map_err(|e| OAuthError::Identity(format!("invalid sub DID: {e}")))?;
+        let directory = Directory::new();
+        let identity = directory.lookup_did(&sub_did).await?;
+        let pds_url = identity
+            .pds_endpoint()
+            .ok_or_else(|| {
+                OAuthError::IssuerVerification("no PDS endpoint in DID document".into())
+            })?
+            .to_owned();
+
+        let pr_meta = metadata::fetch_protected_resource_metadata(&pds_url).await?;
+        let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
+            OAuthError::IssuerVerification("no authorization servers in resource metadata".into())
+        })?;
+
+        if actual_issuer != issuer {
+            return Err(OAuthError::IssuerVerification(format!(
+                "AS mismatch: expected {issuer}, got {actual_issuer}"
+            )));
+        }
+        Ok(pds_url)
     }
 
     /// Sign out a user by revoking their token and deleting their session.
@@ -453,7 +490,22 @@ impl OAuthClient {
         }
 
         let dpop_key = session.dpop_key()?;
-        let new_tokens = token::refresh_token(
+
+        // Re-verify the issuer BEFORE refreshing (matches the reference client):
+        // resolve the session's sub DID fresh and confirm its PDS's
+        // authorization server still equals the issuer we hold tokens from. This
+        // both avoids a pointless refresh against a now-mismatched issuer and
+        // yields the PDS to bind as the refreshed token's audience.
+        let verified_pds = if self.skip_issuer_verification {
+            None
+        } else {
+            Some(
+                self.verify_issuer_resolve_pds(&session.token_set.sub, &session.token_set.issuer)
+                    .await?,
+            )
+        };
+
+        let mut new_tokens = token::refresh_token(
             &self.http,
             &session.token_set,
             self.auth.as_ref(),
@@ -461,6 +513,22 @@ impl OAuthClient {
             &self.nonces,
         )
         .await?;
+
+        // The refresh response's `sub` is not trusted to change the account:
+        // keep the original subject (the reference reuses tokenSet.sub). Reject
+        // a refresh that returns a different sub rather than silently binding
+        // another DID's tokens under this key.
+        if new_tokens.sub != session.token_set.sub {
+            return Err(OAuthError::IssuerVerification(format!(
+                "refresh returned a different sub: expected {}, got {}",
+                session.token_set.sub, new_tokens.sub
+            )));
+        }
+        // Bind the audience to the freshly-verified PDS (the AT Proto token
+        // response carries no usable `aud`).
+        if let Some(pds) = verified_pds {
+            new_tokens.aud = pds;
+        }
 
         let new_session = Session::from_key_and_tokens(&dpop_key, new_tokens);
         self.sessions.set(did, &new_session).await?;
