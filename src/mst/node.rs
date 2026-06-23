@@ -7,6 +7,14 @@ use crate::mst::MstError;
 /// Real AT Protocol MST nodes typically have 4-32 entries.
 const MAX_ENTRIES_PER_NODE: usize = 10_000;
 
+/// Maximum MST key length. AT Protocol keys are `<collection-nsid>/<rkey>`,
+/// bounded well under this (NSID <=317, rkey <=512). Bounding the prefix
+/// length at decode time is defense-in-depth: it prevents a `p` of `u64::MAX`
+/// (which would also decode differently on 32-bit via `n as usize`) from
+/// reaching the load path, where it could only be caught by an incidental
+/// `Vec::truncate` no-op. Matches atmos `maxKeyLen`.
+const MAX_KEY_LEN: u64 = 1024;
+
 /// On-disk CBOR representation of an MST node.
 #[derive(Debug, Clone)]
 pub struct NodeData {
@@ -155,7 +163,14 @@ fn decode_entry_data(val: crate::cbor::Value<'_>) -> Result<EntryData, MstError>
                 _ => return Err(MstError::InvalidNode("expected bytes for 'k'".into())),
             },
             "p" => match v {
-                Value::Unsigned(n) => prefix_len = Some(n as usize),
+                Value::Unsigned(n) => {
+                    if n > MAX_KEY_LEN {
+                        return Err(MstError::InvalidNode(format!(
+                            "entry prefix length {n} exceeds max key length {MAX_KEY_LEN}"
+                        )));
+                    }
+                    prefix_len = Some(n as usize);
+                }
                 _ => return Err(MstError::InvalidNode("expected uint for 'p'".into())),
             },
             "t" => match v {
@@ -266,6 +281,37 @@ mod tests {
         assert_eq!(decoded.entries[0].key_suffix, &[0xFF, 0xFE]);
         // The UTF-8 validation happens in populate_node (tree.rs), not here.
         // But we verify the roundtrip preserves invalid bytes faithfully.
+    }
+
+    #[test]
+    fn decode_rejects_prefix_len_overflow() {
+        // Hand-build an entry whose "p" (prefix length) is u64::MAX. Decode must
+        // reject it (bound at MAX_KEY_LEN) rather than carrying it through to a
+        // 32-bit-truncating `n as usize` cast. Mirrors atmos
+        // TestDecodeNodeData_PrefixLenOverflow_Rejected.
+        let cid = Cid::compute(Codec::Drisl, b"v");
+        let mut buf = Vec::new();
+        {
+            let mut enc = crate::cbor::Encoder::new(&mut buf);
+            // map(2): "e" => [ entry ], "l" => null
+            enc.encode_map_header(2).unwrap();
+            enc.encode_text("e").unwrap();
+            enc.encode_array_header(1).unwrap();
+            // entry map(4): "k","p","t","v" in canonical order
+            enc.encode_map_header(4).unwrap();
+            enc.encode_text("k").unwrap();
+            enc.encode_bytes(b"x").unwrap();
+            enc.encode_text("p").unwrap();
+            enc.encode_u64(u64::MAX).unwrap();
+            enc.encode_text("t").unwrap();
+            enc.encode_null().unwrap();
+            enc.encode_text("v").unwrap();
+            enc.encode_cid(&cid).unwrap();
+            enc.encode_text("l").unwrap();
+            enc.encode_null().unwrap();
+        }
+        let result = decode_node_data(&buf);
+        assert!(result.is_err(), "p=u64::MAX must be rejected at decode");
     }
 
     #[test]
