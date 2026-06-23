@@ -46,6 +46,16 @@ impl<'a> Decoder<'a> {
         match major {
             0 => {
                 let n = self.read_argument(additional)?;
+                // AT Protocol integers are signed 64-bit; a CBOR unsigned value
+                // above i64::MAX is out of range. Reject it rather than letting
+                // it round-trip and later wrap to a negative via `n as i64` in
+                // the generated API layer (silent data corruption). Matches the
+                // atmos reference decoder.
+                if n > i64::MAX as u64 {
+                    return Err(CborError::InvalidCbor(
+                        "unsigned integer exceeds i64 range".into(),
+                    ));
+                }
                 Ok(Value::Unsigned(n))
             }
             1 => {
@@ -605,6 +615,26 @@ mod tests {
             err.contains("exceeds maximum"),
             "expected length error, got: {err}"
         );
+    }
+
+    #[test]
+    fn reject_unsigned_over_i64_max() {
+        // 0x1b + 8 bytes: u64 value just above i64::MAX (0x8000000000000000).
+        // AT Protocol integers are signed 64-bit; this must be rejected, not
+        // round-tripped (the generated layer would wrap it negative via `as i64`).
+        let buf = [0x1b, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(crate::cbor::decode(&buf).is_err());
+        // u64::MAX must also be rejected.
+        let buf_max = [0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        assert!(crate::cbor::decode(&buf_max).is_err());
+    }
+
+    #[test]
+    fn accept_unsigned_at_i64_max() {
+        // i64::MAX (0x7fffffffffffffff) is the largest valid integer and must
+        // decode successfully.
+        let buf = [0x1b, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        assert_eq!(decode_one(&buf), Value::Unsigned(i64::MAX as u64));
     }
 
     #[test]

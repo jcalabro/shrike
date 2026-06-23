@@ -87,6 +87,13 @@ impl<'data> Decoder<'data> {
         match major {
             0 => {
                 let n = self.read_argument(additional)?;
+                // See standard decoder: reject unsigned values above i64::MAX
+                // (AT Protocol integers are signed 64-bit).
+                if n > i64::MAX as u64 {
+                    return Err(CborError::InvalidCbor(
+                        "unsigned integer exceeds i64 range".into(),
+                    ));
+                }
                 Ok(BumpValue::Unsigned(n))
             }
             1 => {
@@ -131,8 +138,17 @@ impl<'data> Decoder<'data> {
                         "array length exceeds maximum".into(),
                     ));
                 }
-                let capacity = len_usize.min(self.remaining());
-                let items = bump.alloc_slice_fill_with(capacity, |_| BumpValue::Null);
+                // Every array element occupies at least one input byte, so a
+                // length exceeding the remaining bytes is a truncated/malformed
+                // input — reject it rather than silently truncating the array
+                // (which would diverge from the standard decoder). This also
+                // bounds the allocation below by the input size.
+                if len_usize > self.remaining() {
+                    return Err(CborError::InvalidCbor(
+                        "array length exceeds remaining input".into(),
+                    ));
+                }
+                let items = bump.alloc_slice_fill_with(len_usize, |_| BumpValue::Null);
                 for item in items.iter_mut() {
                     *item = self.decode_bump_inner(bump, depth + 1)?;
                 }
@@ -145,8 +161,15 @@ impl<'data> Decoder<'data> {
                 if len_usize > MAX_COLLECTION_LEN {
                     return Err(CborError::InvalidCbor("map length exceeds maximum".into()));
                 }
-                let capacity = len_usize.min(self.remaining());
-                let entries = bump.alloc_slice_fill_with(capacity, |_| ("", BumpValue::Null));
+                // Every map entry occupies at least two input bytes (1-byte key
+                // header + 1-byte value); a length exceeding the remaining bytes
+                // is truncated/malformed. Reject rather than silently truncate.
+                if len_usize > self.remaining() {
+                    return Err(CborError::InvalidCbor(
+                        "map length exceeds remaining input".into(),
+                    ));
+                }
+                let entries = bump.alloc_slice_fill_with(len_usize, |_| ("", BumpValue::Null));
                 let mut prev_key_bytes: &[u8] = &[];
                 for entry in entries.iter_mut() {
                     // Decode text key inline (same as standard decoder)
@@ -414,5 +437,72 @@ mod tests {
         buf.push(0x00);
         let mut dec = Decoder::new(&buf);
         assert!(dec.decode_bump(&bump).is_err());
+    }
+
+    #[test]
+    fn bump_rejects_array_len_exceeding_input() {
+        // Array header declaring 10 elements, but only 2 follow. The standard
+        // decoder errors with EOF; the bump decoder must NOT silently truncate
+        // to a 2-element array. Regression test for H1 (silent truncation).
+        let bump = Bump::new();
+        let buf = [0x8a, 0x01, 0x02]; // array(10), then 1, 2
+        let mut dec = Decoder::new(&buf);
+        let result = dec.decode_bump(&bump);
+        assert!(
+            result.is_err(),
+            "bump decoder must reject an over-long array, got {result:?}"
+        );
+        // And it must agree with the standard decoder, which also errors.
+        assert!(crate::cbor::decode(&buf).is_err());
+    }
+
+    #[test]
+    fn bump_rejects_map_len_exceeding_input() {
+        // Map header declaring 10 entries, but only one (a:1) follows.
+        let bump = Bump::new();
+        let buf = [0xaa, 0x61, 0x61, 0x01]; // map(10), "a", 1
+        let mut dec = Decoder::new(&buf);
+        assert!(
+            dec.decode_bump(&bump).is_err(),
+            "bump decoder must reject an over-long map"
+        );
+        assert!(crate::cbor::decode(&buf).is_err());
+    }
+
+    #[test]
+    fn bump_and_standard_agree_on_arbitrary_inputs() {
+        // Differential test: for a spread of byte inputs, decode() and
+        // decode_bump() must both succeed (with matching structure) or both
+        // fail. This locks in the H1 fix and any future divergence.
+        let inputs: &[&[u8]] = &[
+            &[0x00],
+            &[0x8a, 0x01, 0x02],             // truncated array
+            &[0xaa, 0x61, 0x61, 0x01],       // truncated map
+            &[0x83, 0x01, 0x02, 0x03],       // valid array
+            &[0xa1, 0x61, 0x61, 0x01],       // valid map
+            &[0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], // huge array len
+            &[0x82, 0x80, 0x80],             // nested empty arrays
+            &[0x5f],                         // indefinite bytes
+            &[],                             // empty
+        ];
+        for input in inputs {
+            let std_res = crate::cbor::decode(input);
+            let bump = Bump::new();
+            let mut dec = Decoder::new(input);
+            let bump_res = dec.decode_bump(&bump).and_then(|v| {
+                if dec.is_empty() {
+                    Ok(v)
+                } else {
+                    Err(CborError::InvalidCbor("trailing data after value".into()))
+                }
+            });
+            assert_eq!(
+                std_res.is_ok(),
+                bump_res.is_ok(),
+                "decode/decode_bump disagree on {input:?}: std={:?} bump_ok={}",
+                std_res.is_ok(),
+                bump_res.is_ok()
+            );
+        }
     }
 }
