@@ -26,6 +26,16 @@ fmt:
 # Run all checks (build + lint + tests + doctests)
 check: build lint test test-docs
 
+# Seed the fuzz corpora with valid, real-shaped inputs (fast; idempotent).
+fuzz-seed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! -d "fuzz" ]]; then
+        echo "error: no fuzz/ directory" >&2
+        exit 1
+    fi
+    (cd fuzz && cargo run --quiet --bin gen_seeds)
+
 # Runs fuzz tests for the given duration (default 30s per target).
 # Targets are ordered by attack surface: network-facing binary parsers first,
 # then user-facing string parsers, then lower-risk targets.
@@ -40,7 +50,8 @@ fuzz DURATION="30":
         echo "error: no fuzz/ directory" >&2
         exit 1
     fi
-    targets=$(cargo +nightly fuzz list)
+    # Exclude gen_seeds (a helper binary, not a fuzz target).
+    targets=$(cargo +nightly fuzz list | grep -v '^gen_seeds$')
     if [[ -z "$targets" ]]; then
         echo "error: no fuzz targets found" >&2
         exit 1
