@@ -163,6 +163,10 @@ name = "api_cbor_roundtrip"
 required-features = ["api"]
 
 [[test]]
+name = "crypto_interop"
+required-features = ["crypto"]
+
+[[test]]
 name = "oauth_integration"
 required-features = ["oauth"]
 

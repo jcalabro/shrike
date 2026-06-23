@@ -104,9 +104,19 @@ impl VerifyingKey for P256VerifyingKey {
     }
 
     fn verify(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError> {
+        use p256::elliptic_curve::scalar::IsHigh;
+
         let digest = Sha256::digest(content);
         let p256_sig = P256Sig::from_bytes(sig.as_bytes().into())
             .map_err(|e| CryptoError::InvalidSignature(e.to_string()))?;
+        // atproto requires the low-S signature variant on both curves. The
+        // p256 crate's verify_prehash does NOT reject high-S, so a malleable
+        // (high-S) signature would otherwise verify. Reject it explicitly.
+        if bool::from(p256_sig.s().is_high()) {
+            return Err(CryptoError::InvalidSignature(
+                "high-S signature rejected (atproto requires low-S)".into(),
+            ));
+        }
         self.inner
             .verify_prehash(&digest, &p256_sig)
             .map_err(|e| CryptoError::InvalidSignature(e.to_string()))
