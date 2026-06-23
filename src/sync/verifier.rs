@@ -467,7 +467,26 @@ impl Verifier {
                 .await;
         }
 
-        let decoded = decode_commit_car(raw).inspect_err(|err| self.count_decode_error(err))?;
+        let decoded = match decode_commit_car(raw) {
+            Ok(decoded) => decoded,
+            Err(err) => {
+                self.count_decode_error(&err);
+                // A CAR-root/announced-commit mismatch is an internally
+                // inconsistent frame, not repo divergence — re-fetching the
+                // same repo would not resolve it, so it stays a hard error.
+                // Every other decode failure (truncated/corrupt CAR, a missing
+                // commit block, a CID mismatch, or a malformed inner commit) is
+                // recoverable by re-fetching the repo, so route it through the
+                // async resync path under the Resync policy. This matches atmos
+                // and shrike's own `verify_sync` behavior.
+                if is_car_root_mismatch(&err) {
+                    return Err(err);
+                }
+                return self
+                    .handle_recoverable_resync(raw, chain.as_ref(), err, allow_async_resync)
+                    .await;
+            }
+        };
 
         let previous_root =
             match self.previous_root(raw, &decoded.inner, &decoded.store, chain.as_ref()) {
@@ -1353,6 +1372,20 @@ impl Verifier {
 enum SignatureAttemptError {
     Identity(VerifierError),
     Invalid(String),
+}
+
+/// True only for the `decode_commit_car` error raised when the CAR's root CID
+/// does not equal the commit CID announced in the frame. That is an internally
+/// inconsistent frame (re-fetching the repo would not fix it), so it must stay
+/// a hard error rather than triggering a resync.
+fn is_car_root_mismatch(err: &VerifierError) -> bool {
+    matches!(
+        err,
+        VerifierError::FieldMismatch {
+            field: "commit",
+            ..
+        }
+    )
 }
 
 fn is_rev_replay(did: &Did, rev: Tid, chain: Option<&ChainState>) -> Result<bool, VerifierError> {

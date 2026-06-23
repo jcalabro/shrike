@@ -1445,6 +1445,139 @@ async fn policy_resync_queues_chain_break_and_emits_resync_event() {
 }
 
 #[tokio::test]
+async fn policy_resync_routes_malformed_car_through_resync() {
+    // M14: a truncated/corrupt commit CAR is a recoverable decode failure —
+    // re-fetching the repo resolves it — so under the Resync policy it must be
+    // queued for async resync rather than returned as a hard error.
+    let fixture = commit_fixture_create();
+    let repo_source = Arc::new(FakeRepoSource::with_car(fixture.raw_commit.blocks.clone()));
+    let (verifier, store, _resolver) = verifier_for_keys_repo_source_and_workers(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        repo_source,
+        1,
+        8,
+    );
+    let mut events = verifier.resync_events();
+    store
+        .save_chain(
+            &fixture.raw_commit.repo,
+            ChainState {
+                rev: "3aaaaaaaaaaaa".to_owned(),
+                data: fixture.record.unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut raw = fixture.raw_commit.clone();
+    raw.blocks = b"not a valid car file".to_vec();
+
+    let result = verifier.verify_commit(&raw).await.unwrap();
+    let event = tokio::time::timeout(TEST_TIMEOUT, events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(result.is_none());
+    assert_eq!(event.did, fixture.raw_commit.repo);
+    assert_eq!(event.ops.len(), 1);
+    assert_eq!(event.ops[0].action, "resync");
+    assert_eq!(verifier.stats().resyncs, 1);
+}
+
+#[tokio::test]
+async fn policy_resync_routes_missing_commit_block_through_resync() {
+    // M14: a CAR whose announced commit block is absent is recoverable — route
+    // it through resync under the Resync policy. The repo source must serve a
+    // CAR signed by the *same* key the resolver knows, so derive the stripped
+    // input from the same fixture whose full CAR feeds the repo source.
+    let fixture = commit_fixture_create();
+    let repo_source = Arc::new(FakeRepoSource::with_car(fixture.raw_commit.blocks.clone()));
+
+    // Build a copy of the frame with the commit block stripped from its CAR.
+    let (roots, blocks) = car::read_all(&fixture.raw_commit.blocks[..]).unwrap();
+    let without_commit: Vec<car::Block> = blocks
+        .into_iter()
+        .filter(|b| b.cid != fixture.raw_commit.commit)
+        .collect();
+    let mut raw = fixture.raw_commit.clone();
+    raw.blocks = car::write_all(&roots, &without_commit).unwrap();
+
+    let (verifier, store, _resolver) = verifier_for_keys_repo_source_and_workers(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        repo_source,
+        1,
+        8,
+    );
+    let mut events = verifier.resync_events();
+    store
+        .save_chain(
+            &fixture.raw_commit.repo,
+            ChainState {
+                rev: "3aaaaaaaaaaaa".to_owned(),
+                data: fixture.record.unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let result = verifier.verify_commit(&raw).await.unwrap();
+    let event = tokio::time::timeout(TEST_TIMEOUT, events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(result.is_none());
+    assert_eq!(event.ops[0].action, "resync");
+    assert_eq!(verifier.stats().resyncs, 1);
+}
+
+#[tokio::test]
+async fn policy_resync_still_hard_errors_on_car_root_mismatch() {
+    // M14: a CAR-root/announced-commit mismatch is an internally inconsistent
+    // frame, NOT repo divergence — re-fetching the same repo would not resolve
+    // it, so it must stay a hard error even under the Resync policy and must not
+    // enqueue a resync.
+    let fixture = commit_fixture_root_mismatch();
+    let repo_source = Arc::new(FakeRepoSource::with_car(fixture.raw_commit.blocks.clone()));
+    let (verifier, store, _resolver) = verifier_for_keys_repo_source_and_workers(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        repo_source,
+        1,
+        8,
+    );
+    let mut events = verifier.resync_events();
+
+    let err = verifier
+        .verify_commit(&fixture.raw_commit)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::FieldMismatch {
+            field: "commit",
+            ..
+        }
+    ));
+    assert_eq!(verifier.stats().resyncs, 0);
+    assert_eq!(verifier.stats().field_mismatches, 1);
+    assert_eq!(
+        store.load_chain(&fixture.raw_commit.repo).await.unwrap(),
+        None
+    );
+    // No resync should have been queued.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), events.recv())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn commits_for_resyncing_did_are_buffered_and_replayed() {
     let create = commit_fixture_create();
     let mut update = commit_fixture_update();
