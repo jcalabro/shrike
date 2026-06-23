@@ -116,6 +116,8 @@ pub enum FieldSchema {
         r#enum: Option<Vec<i64>>,
         #[serde(default)]
         default: Option<i64>,
+        #[serde(default, rename = "const")]
+        const_val: Option<i64>,
         #[serde(default)]
         description: Option<String>,
     },
@@ -123,6 +125,8 @@ pub enum FieldSchema {
     Boolean {
         #[serde(default)]
         default: Option<bool>,
+        #[serde(default, rename = "const")]
+        const_val: Option<bool>,
         #[serde(default)]
         description: Option<String>,
     },
