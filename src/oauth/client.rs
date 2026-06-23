@@ -469,23 +469,22 @@ impl OAuthClient {
 
     /// Resolve an input string to a DID.
     ///
-    /// If the input starts with "did:", parse it directly as a DID.
-    /// Otherwise, try to resolve it as a handle using `.well-known/atproto-did`
-    /// with a fallback to `com.atproto.identity.resolveHandle` on the public API.
+    /// If the input starts with "did:", parse it directly as a DID. Otherwise
+    /// resolve it as a handle via the standard mechanisms (DNS `_atproto` TXT,
+    /// then HTTPS `.well-known/atproto-did`), with a final fallback to the
+    /// public `com.atproto.identity.resolveHandle` API.
+    ///
+    /// Note: this is the *forward* resolution only (input → DID), used to start
+    /// the OAuth flow; the issuer is independently verified later in `callback`.
     async fn resolve_input_to_did(&self, input: &str) -> Result<Did, OAuthError> {
         // Try parsing as a DID first.
         if let Ok(did) = Did::try_from(input) {
             return Ok(did);
         }
 
-        // Try .well-known/atproto-did first (cheapest).
-        let url = format!("https://{}/.well-known/atproto-did", input);
-        if let Ok(resp) = crate::outbound::apply_user_agent(self.http.get(&url))
-            .send()
-            .await
-            && resp.status().is_success()
-            && let Ok(body) = resp.text().await
-            && let Ok(did) = Did::try_from(body.trim())
+        // Resolve as a handle via DNS + HTTPS well-known (shared resolver).
+        if let Ok(handle) = crate::syntax::Handle::try_from(input)
+            && let Ok(did) = crate::identity::resolve_handle(&handle, &self.http).await
         {
             return Ok(did);
         }

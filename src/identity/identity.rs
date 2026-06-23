@@ -10,7 +10,14 @@ use crate::identity::IdentityError;
 pub struct Identity {
     /// The resolved DID.
     pub did: Did,
-    /// Handle extracted from `alsoKnownAs` in the DID document, if present.
+    /// Handle for this identity.
+    ///
+    /// When produced by [`Identity::from_document`] this is the *declared*
+    /// handle from `alsoKnownAs` and is **not** verified — a DID document can
+    /// claim any handle. The [`Directory`](crate::identity::Directory)
+    /// lookups (`lookup_did` / `lookup_handle`) set this to `Some` only after
+    /// bidirectional verification, and to `None` when verification fails. Treat
+    /// `None` as "handle unknown / unverified".
     pub handle: Option<Handle>,
     /// Verification keys from the DID document, keyed by method ID (e.g., "#atproto").
     pub keys: HashMap<String, Box<dyn VerifyingKey>>,
@@ -40,6 +47,15 @@ impl Identity {
     /// Get the atproto signing key.
     pub fn signing_key(&self) -> Option<&dyn VerifyingKey> {
         self.keys.get("#atproto").map(|k| k.as_ref())
+    }
+
+    /// The handle *declared* in the DID document's `alsoKnownAs`, if any.
+    ///
+    /// This is the unverified claim; bidirectional verification is the
+    /// caller's (or the [`Directory`](crate::identity::Directory)'s)
+    /// responsibility. Returns the first valid `at://<handle>` entry.
+    pub fn declared_handle(&self) -> Option<Handle> {
+        self.handle.clone()
     }
 
     /// Build an Identity from a parsed DID document.

@@ -25,11 +25,13 @@
 
 pub mod did_web;
 pub mod directory;
+pub mod handle;
 #[allow(clippy::module_inception)]
 pub mod identity;
 pub mod plc;
 
 pub use directory::Directory;
+pub use handle::resolve_handle;
 pub use identity::{DidDocument, Identity, Service, ServiceEndpoint, VerificationMethod};
 pub use plc::PlcClient;
 
