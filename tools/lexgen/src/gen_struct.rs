@@ -176,6 +176,9 @@ fn gen_struct_body(
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
         let is_required = required.contains(json_name_str) && !nullable.contains(json_name_str);
+        // A required+nullable field is Option<T> but its key must always be
+        // present in JSON (null when None), so it must NOT skip_serializing.
+        let is_nullable = required.contains(json_name_str) && nullable.contains(json_name_str);
 
         let rust_field = util::rust_field_name(json_name_str);
         let (rust_type, field_extras) =
@@ -204,6 +207,13 @@ fn gen_struct_body(
                 "    #[serde(default, skip_serializing_if = \"Vec::is_empty\""
             )
             .ok();
+            if needs_rename {
+                write!(out, ", rename = {json_name_str:?}").ok();
+            }
+            writeln!(out, ")]").ok();
+        } else if is_option && is_nullable {
+            // Nullable: always serialize (null when None), so no skip.
+            write!(out, "    #[serde(default").ok();
             if needs_rename {
                 write!(out, ", rename = {json_name_str:?}").ok();
             }

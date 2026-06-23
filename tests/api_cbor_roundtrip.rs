@@ -276,3 +276,44 @@ fn label_bytes_sig_json_uses_dollar_bytes() {
     let decoded: LabelDefsLabel = serde_json::from_value(json).unwrap();
     assert_eq!(decoded.sig.unwrap().0, vec![0xDE, 0xAD, 0xBE, 0xEF]);
 }
+
+#[test]
+fn repo_op_nullable_cid_encodes_null_and_roundtrips() {
+    // M29 regression: repoOp.cid is required+nullable ("null" on deletes). The
+    // key must always be present (CBOR null when None), and decode must accept
+    // a CBOR null cid as None rather than rejecting it.
+    use shrike::api::com::atproto::SyncSubscribeReposRepoOp;
+
+    let delete_op = SyncSubscribeReposRepoOp {
+        action: "delete".into(),
+        cid: None,
+        path: "app.bsky.feed.post/abc".into(),
+        prev: None,
+        extra: Default::default(),
+        extra_cbor: Vec::new(),
+    };
+    let cbor = delete_op.to_cbor().unwrap();
+    // The `cid` key must be present with a null value.
+    let val = shrike::cbor::decode(&cbor).unwrap();
+    if let shrike::cbor::Value::Map(entries) = val {
+        let cid = entries
+            .iter()
+            .find(|(k, _)| *k == "cid")
+            .expect("cid key must be present even when null");
+        assert_eq!(cid.1, shrike::cbor::Value::Null);
+        // `prev` (plain optional) must be omitted when None.
+        assert!(entries.iter().all(|(k, _)| *k != "prev"));
+    } else {
+        panic!("expected map");
+    }
+    // Decode must accept the null cid as None.
+    let decoded = SyncSubscribeReposRepoOp::from_cbor(&cbor).unwrap();
+    assert!(decoded.cid.is_none());
+    assert_eq!(decoded.action, "delete");
+
+    // JSON: cid present as null, prev omitted.
+    let json = serde_json::to_value(&delete_op).unwrap();
+    assert!(json.get("cid").is_some(), "cid must be present in JSON");
+    assert!(json["cid"].is_null(), "cid must be JSON null");
+    assert!(json.get("prev").is_none(), "prev must be omitted in JSON");
+}

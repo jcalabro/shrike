@@ -17,8 +17,16 @@ struct CborField {
     rust_type: String,
     /// The kind of encoding needed.
     kind: FieldKind,
-    /// Whether this field is required (not optional).
+    /// Whether this field is required (not optional). A `required && nullable`
+    /// field is NOT `required` here (its Rust type is `Option<T>`), but is
+    /// `nullable` — see below.
     required: bool,
+    /// Whether this field is `required` in the lexicon AND `nullable`. Such a
+    /// field is `Option<T>` in Rust but its key must ALWAYS be present in the
+    /// encoded map (CBOR null when `None`), and decode must accept null → None.
+    /// This is distinct from a plain optional field, whose key is omitted when
+    /// absent.
+    nullable: bool,
 }
 
 /// Classification of field types for encoding/decoding dispatch.
@@ -98,12 +106,15 @@ fn gen_cbor_impl_inner(
             rust_type: "String".to_string(),
             kind: FieldKind::Text,
             required: true,
+            nullable: false,
         });
     }
 
     for json_name in &field_names {
         let json_name_str: &str = json_name;
         let field_schema = &obj.properties[json_name_str];
+        let is_nullable =
+            required.contains(json_name_str) && nullable.contains(json_name_str);
         let is_required = required.contains(json_name_str) && !nullable.contains(json_name_str);
 
         let rust_field = util::rust_field_name(json_name_str);
@@ -122,6 +133,7 @@ fn gen_cbor_impl_inner(
             rust_type,
             kind,
             required: is_required,
+            nullable: is_nullable,
         });
     }
 
@@ -336,17 +348,23 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
     // Filter out JSON-only fields.
     let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
 
-    let required_count = cbor_fields.iter().filter(|f| f.required).count();
-    let optional_fields: Vec<&&CborField> = cbor_fields.iter().filter(|f| !f.required).collect();
+    // A nullable field's key is ALWAYS present (null when None), so it counts
+    // toward the fixed map size like a required field. Only plain-optional
+    // fields are conditionally counted.
+    let always_present_count = cbor_fields.iter().filter(|f| f.required || f.nullable).count();
+    let optional_fields: Vec<&&CborField> = cbor_fields
+        .iter()
+        .filter(|f| !f.required && !f.nullable)
+        .collect();
 
     writeln!(out, "        if self.extra_cbor.is_empty() {{").ok();
     writeln!(out, "            // Fast path: no extra fields to merge.").ok();
 
     // Count the map size.
     if optional_fields.is_empty() {
-        writeln!(out, "            let count = {required_count}u64;").ok();
+        writeln!(out, "            let count = {always_present_count}u64;").ok();
     } else {
-        writeln!(out, "            let mut count = {required_count}u64;").ok();
+        writeln!(out, "            let mut count = {always_present_count}u64;").ok();
         for f in &optional_fields {
             let check = option_check(f);
             writeln!(out, "            if {check} {{ count += 1; }}").ok();
@@ -368,6 +386,19 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             )
             .ok();
             gen_encode_field(out, f, "            ");
+        } else if f.nullable {
+            // Always emit the key; value is the field or CBOR null.
+            writeln!(
+                out,
+                "            crate::cbor::Encoder::new(&mut *buf).encode_text({key:?})?;"
+            )
+            .ok();
+            writeln!(out, "            match &self.{} {{", f.rust_field).ok();
+            writeln!(out, "                Some(val) => {{").ok();
+            gen_encode_value(out, &f.kind, "val", "                    ", true);
+            writeln!(out, "                }}").ok();
+            writeln!(out, "                None => {{ crate::cbor::Encoder::new(&mut *buf).encode_null()?; }}").ok();
+            writeln!(out, "            }}").ok();
         } else {
             let check = option_check(f);
             writeln!(out, "            if {check} {{").ok();
@@ -400,6 +431,18 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
             writeln!(out, "            {{").ok();
             writeln!(out, "                let mut vbuf = Vec::new();").ok();
             gen_encode_field_vbuf(out, f, "                ");
+            writeln!(out, "                pairs.push(({key:?}, vbuf));").ok();
+            writeln!(out, "            }}").ok();
+        } else if f.nullable {
+            // Always push a pair; value is the field or CBOR null.
+            writeln!(out, "            {{").ok();
+            writeln!(out, "                let mut vbuf = Vec::new();").ok();
+            writeln!(out, "                match &self.{} {{", f.rust_field).ok();
+            writeln!(out, "                    Some(val) => {{").ok();
+            gen_encode_value_vbuf(out, &f.kind, "val", "                        ", true);
+            writeln!(out, "                    }}").ok();
+            writeln!(out, "                    None => {{ crate::cbor::Encoder::new(&mut vbuf).encode_null()?; }}").ok();
+            writeln!(out, "                }}").ok();
             writeln!(out, "                pairs.push(({key:?}, vbuf));").ok();
             writeln!(out, "            }}").ok();
         } else {
@@ -528,7 +571,19 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
         let key = &f.json_name;
         let clean_var = clean_field_name(&f.rust_field);
         writeln!(out, "                {key:?} => {{").ok();
-        gen_decode_field(out, f, &clean_var, "                    ");
+        if f.nullable {
+            // A nullable field carries either the value or CBOR null; null
+            // leaves the Option as None rather than erroring on type mismatch.
+            writeln!(
+                out,
+                "                    if !matches!(value, crate::cbor::Value::Null) {{"
+            )
+            .ok();
+            gen_decode_field(out, f, &clean_var, "                        ");
+            writeln!(out, "                    }}").ok();
+        } else {
+            gen_decode_field(out, f, &clean_var, "                    ");
+        }
         writeln!(out, "                }}").ok();
     }
 

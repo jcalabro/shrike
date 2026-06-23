@@ -217,7 +217,7 @@ pub struct SyncSubscribeReposCommit {
     /// The stream sequence number of this message.
     pub seq: i64,
     /// The rev of the last emitted commit from this repo (if any).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub since: Option<crate::syntax::Tid>,
     /// Timestamp of when this message was originally broadcast.
     pub time: crate::syntax::Datetime,
@@ -241,10 +241,7 @@ impl SyncSubscribeReposCommit {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 10u64;
-            if self.since.is_some() {
-                count += 1;
-            }
+            let mut count = 11u64;
             if self.prev_data.is_some() {
                 count += 1;
             }
@@ -273,13 +270,14 @@ impl SyncSubscribeReposCommit {
                 })?;
                 crate::cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;
             }
-            if self.since.is_some() {
-                crate::cbor::Encoder::new(&mut *buf).encode_text("since")?;
-                if let Some(ref val) = self.since {
-                    {
-                        let __s = val.to_string();
-                        crate::cbor::Encoder::new(&mut *buf).encode_text(&__s)?;
-                    }
+            crate::cbor::Encoder::new(&mut *buf).encode_text("since")?;
+            match &self.since {
+                Some(val) => {
+                    let __s = val.to_string();
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(&__s)?;
+                }
+                None => {
+                    crate::cbor::Encoder::new(&mut *buf).encode_null()?;
                 }
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("blocks")?;
@@ -348,12 +346,15 @@ impl SyncSubscribeReposCommit {
                 }
                 pairs.push(("blobs", vbuf));
             }
-            if self.since.is_some() {
+            {
                 let mut vbuf = Vec::new();
-                if let Some(ref val) = self.since {
-                    {
+                match &self.since {
+                    Some(val) => {
                         let __s = val.to_string();
                         crate::cbor::Encoder::new(&mut vbuf).encode_text(&__s)?;
+                    }
+                    None => {
+                        crate::cbor::Encoder::new(&mut vbuf).encode_null()?;
                     }
                 }
                 pairs.push(("since", vbuf));
@@ -510,13 +511,17 @@ impl SyncSubscribeReposCommit {
                     }
                 }
                 "since" => {
-                    if let crate::cbor::Value::Text(s) = value {
-                        field_since = Some(
-                            crate::syntax::Tid::try_from(s)
-                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
-                        );
-                    } else {
-                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    if !matches!(value, crate::cbor::Value::Null) {
+                        if let crate::cbor::Value::Text(s) = value {
+                            field_since =
+                                Some(crate::syntax::Tid::try_from(s).map_err(|e| {
+                                    crate::cbor::CborError::InvalidCbor(e.to_string())
+                                })?);
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text".into(),
+                            ));
+                        }
                     }
                 }
                 "blocks" => {
@@ -904,7 +909,7 @@ impl SyncSubscribeReposInfo {
 pub struct SyncSubscribeReposRepoOp {
     pub action: String,
     /// For creates and updates, the new record CID. For deletions, null.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub cid: Option<crate::api::CidLink>,
     pub path: String,
     /// For updates and deletes, the previous record CID (required for inductive firehose). For creations, field should not be defined.
@@ -928,21 +933,21 @@ impl SyncSubscribeReposRepoOp {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 2u64;
-            if self.cid.is_some() {
-                count += 1;
-            }
+            let mut count = 3u64;
             if self.prev.is_some() {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
-            if self.cid.is_some() {
-                crate::cbor::Encoder::new(&mut *buf).encode_text("cid")?;
-                if let Some(ref val) = self.cid {
+            crate::cbor::Encoder::new(&mut *buf).encode_text("cid")?;
+            match &self.cid {
+                Some(val) => {
                     let cid = val.link.parse::<crate::cbor::Cid>().map_err(|e| {
                         crate::cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
                     })?;
                     crate::cbor::Encoder::new(&mut *buf).encode_cid(&cid)?;
+                }
+                None => {
+                    crate::cbor::Encoder::new(&mut *buf).encode_null()?;
                 }
             }
             crate::cbor::Encoder::new(&mut *buf).encode_text("path")?;
@@ -961,13 +966,18 @@ impl SyncSubscribeReposRepoOp {
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
-            if self.cid.is_some() {
+            {
                 let mut vbuf = Vec::new();
-                if let Some(ref val) = self.cid {
-                    let cid = val.link.parse::<crate::cbor::Cid>().map_err(|e| {
-                        crate::cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
-                    })?;
-                    crate::cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;
+                match &self.cid {
+                    Some(val) => {
+                        let cid = val.link.parse::<crate::cbor::Cid>().map_err(|e| {
+                            crate::cbor::CborError::InvalidCbor(format!("invalid CID: {e}"))
+                        })?;
+                        crate::cbor::Encoder::new(&mut vbuf).encode_cid(&cid)?;
+                    }
+                    None => {
+                        crate::cbor::Encoder::new(&mut vbuf).encode_null()?;
+                    }
                 }
                 pairs.push(("cid", vbuf));
             }
@@ -1029,12 +1039,14 @@ impl SyncSubscribeReposRepoOp {
         for (key, value) in entries {
             match key {
                 "cid" => {
-                    if let crate::cbor::Value::Cid(c) = value {
-                        field_cid = Some(crate::api::CidLink {
-                            link: c.to_string(),
-                        });
-                    } else {
-                        return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                    if !matches!(value, crate::cbor::Value::Null) {
+                        if let crate::cbor::Value::Cid(c) = value {
+                            field_cid = Some(crate::api::CidLink {
+                                link: c.to_string(),
+                            });
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                        }
                     }
                 }
                 "path" => {
