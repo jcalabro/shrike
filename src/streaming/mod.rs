@@ -286,6 +286,23 @@ fn parse_commit_blocks(
 
     let mut index = HashMap::with_capacity(blocks.len());
     for block in blocks {
+        // Verify the block content hashes to its declared CID. The CAR reader
+        // does not verify CID-to-content, so without this check a malicious or
+        // buggy relay could ship a block labeled CID X whose bytes hash to Y,
+        // and we would emit those bytes as the authentic record for X — silent
+        // data corruption from untrusted network input. Both atmos (every
+        // Next()) and the atproto TS reference (verifyIncomingCarBlocks) verify
+        // by default.
+        let computed = crate::cbor::Cid::compute(block.cid.codec(), &block.data);
+        if computed != block.cid {
+            return Err(StreamError::ParseCbor(format!(
+                "commit block CID mismatch: declared {}, content hashes to {}",
+                block.cid, computed
+            )));
+        }
+        // A duplicate CID with differing bytes is impossible once the hash
+        // check above passes (same CID ⇒ same content), so last-writer-wins is
+        // safe here; identical re-inserts are harmless.
         index.insert(block.cid.to_string(), block.data);
     }
     Ok(index)
@@ -342,9 +359,15 @@ fn parse_commit_ops(
                     StreamError::ParseCbor(format!("missing cid for {action} op"))
                 })?;
 
-                // Look up record data from the blocks CAR by CID.
+                // Look up record data from the blocks CAR by CID. A create/update
+                // op whose record block is absent from the CAR is malformed —
+                // error rather than silently emitting an empty record.
                 let cid_str = cid.to_string();
-                let record = block_index.get(&cid_str).cloned().unwrap_or_default();
+                let record = block_index.get(&cid_str).cloned().ok_or_else(|| {
+                    StreamError::ParseCbor(format!(
+                        "{action} op references CID {cid_str} absent from commit blocks"
+                    ))
+                })?;
 
                 if action == "create" {
                     event::Operation::Create {
@@ -630,6 +653,96 @@ mod tests {
                 }
             }
             _ => panic!("expected Commit event"),
+        }
+    }
+
+    /// Build a #commit frame whose single create op references `op_cid`, with a
+    /// blocks CAR containing one block `(block_cid, block_data)`. Lets tests
+    /// stage CID/content mismatches and missing blocks.
+    fn build_commit_frame(op_cid: &Cid, block_cid: &Cid, block_data: &[u8]) -> Vec<u8> {
+        use crate::cbor::Encoder;
+        let block = crate::car::Block {
+            cid: *block_cid,
+            data: block_data.to_vec(),
+        };
+        let car_bytes = crate::car::write_all(&[*block_cid], std::slice::from_ref(&block)).unwrap();
+        let mut frame = Vec::new();
+        let mut enc = Encoder::new(&mut frame);
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("t").unwrap();
+        enc.encode_text("#commit").unwrap();
+        enc.encode_text("op").unwrap();
+        enc.encode_u64(1).unwrap();
+        enc.encode_map_header(5).unwrap();
+        enc.encode_text("ops").unwrap();
+        enc.encode_array_header(1).unwrap();
+        enc.encode_map_header(3).unwrap();
+        enc.encode_text("cid").unwrap();
+        enc.encode_cid(op_cid).unwrap();
+        enc.encode_text("path").unwrap();
+        enc.encode_text("app.bsky.feed.post/abc").unwrap();
+        enc.encode_text("action").unwrap();
+        enc.encode_text("create").unwrap();
+        enc.encode_text("rev").unwrap();
+        enc.encode_text("2222222222222").unwrap();
+        enc.encode_text("seq").unwrap();
+        enc.encode_u64(1).unwrap();
+        enc.encode_text("repo").unwrap();
+        enc.encode_text("did:plc:test123456789abcdefghij").unwrap();
+        enc.encode_text("blocks").unwrap();
+        enc.encode_bytes(&car_bytes).unwrap();
+        frame
+    }
+
+    #[test]
+    fn firehose_rejects_forged_block_cid() {
+        // A block labeled with a CID that does NOT hash to its content must be
+        // rejected, not emitted as the authentic record. Regression test for
+        // H5 (firehose block CID verification).
+        let real_data = b"authentic record";
+        let real_cid = Cid::compute(Codec::Drisl, real_data);
+        let forged_data = b"forged record bytes";
+        // Frame claims the block is `real_cid` but ships `forged_data`.
+        let frame = build_commit_frame(&real_cid, &real_cid, forged_data);
+        let result = parse_firehose_frame(&frame);
+        assert!(
+            result.is_err(),
+            "forged block (CID/content mismatch) must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn firehose_rejects_missing_op_block() {
+        // A create op referencing a CID absent from the blocks CAR must error,
+        // not emit an empty record. Regression test for H5.
+        let present_data = b"present block";
+        let present_cid = Cid::compute(Codec::Drisl, present_data);
+        let missing_cid = Cid::compute(Codec::Drisl, b"some other record");
+        // The op references `missing_cid`, but the CAR only contains present_cid.
+        let frame = build_commit_frame(&missing_cid, &present_cid, present_data);
+        let result = parse_firehose_frame(&frame);
+        assert!(
+            result.is_err(),
+            "op referencing an absent block must be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn firehose_accepts_valid_block() {
+        // Positive control: a well-formed frame still parses.
+        let data = b"valid record data";
+        let cid = Cid::compute(Codec::Drisl, data);
+        let frame = build_commit_frame(&cid, &cid, data);
+        let event = parse_firehose_frame(&frame).expect("valid frame must parse");
+        match event {
+            Event::Commit { operations, .. } => {
+                assert_eq!(operations.len(), 1);
+                match &operations[0] {
+                    Operation::Create { record, .. } => assert_eq!(record, data),
+                    _ => panic!("expected Create"),
+                }
+            }
+            _ => panic!("expected Commit"),
         }
     }
 
