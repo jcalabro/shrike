@@ -1,0 +1,60 @@
+[package]
+name = "shrike-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone crate — not part of the shrike workspace (cargo-fuzz convention).
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.shrike]
+path = ".."
+features = ["mst", "cbor", "car", "repo", "crypto"]
+
+[[bin]]
+name = "mst_decode_node_data"
+path = "fuzz_targets/mst_decode_node_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_decode_node_data_roundtrip"
+path = "fuzz_targets/mst_decode_node_data_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_load_and_walk"
+path = "fuzz_targets/mst_load_and_walk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mst_height_for_key"
+path = "fuzz_targets/mst_height_for_key.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cbor_decode"
+path = "fuzz_targets/cbor_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "car_read_all"
+path = "fuzz_targets/car_read_all.rs"
+test = false
+doc = false
+bench = false

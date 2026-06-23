@@ -36,15 +36,18 @@ check: build lint test test-docs
 fuzz DURATION="30":
     #!/usr/bin/env bash
     set -euo pipefail
-    fuzz_dir="crates/shrike/fuzz"
-    if [[ ! -d "$fuzz_dir" ]]; then
-        echo "skip: no fuzz/ dir"
-        exit 0
+    if [[ ! -d "fuzz" ]]; then
+        echo "error: no fuzz/ directory" >&2
+        exit 1
     fi
-    targets=$(cd "$fuzz_dir" && cargo +nightly fuzz list 2>/dev/null || true)
+    targets=$(cargo +nightly fuzz list)
+    if [[ -z "$targets" ]]; then
+        echo "error: no fuzz targets found" >&2
+        exit 1
+    fi
     for t in $targets; do
         echo "=== FUZZ $t ==="
-        (cd "$fuzz_dir" && cargo +nightly fuzz run "$t" -- -max_total_time={{DURATION}})
+        cargo +nightly fuzz run "$t" -- -max_total_time={{DURATION}}
     done
 
 # Fetch lexicons from the atproto repo and regenerate API code
