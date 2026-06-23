@@ -687,30 +687,36 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_commit_prev_cid_chain() {
-        // Simulate two commits where the second references the first as prev.
+    fn commits_always_have_null_prev() {
+        // v3 commits must always carry prev: null (spec: "virtually always
+        // null"; both atmos and TS always emit null). A non-null prev would
+        // change the commit bytes and diverge the commit CID from every other
+        // AT Protocol implementation. Regression test for H6.
         let sk = crate::crypto::P256SigningKey::generate();
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
 
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("first"), EMPTY_MAP).unwrap();
         let commit1 = repo.commit(&sk).unwrap();
+        assert!(commit1.prev.is_none(), "first commit must have null prev");
 
-        // After commit1, the repo's prev_commit is set internally.
         repo.create(&c, &rk("second"), EMPTY_MAP).unwrap();
         let commit2 = repo.commit(&sk).unwrap();
+        assert!(
+            commit2.prev.is_none(),
+            "second commit must also have null prev (v3 spec)"
+        );
 
-        // commit2 should reference commit1 as its prev.
-        assert!(commit2.prev.is_some(), "second commit must have a prev CID");
+        repo.create(&c, &rk("third"), EMPTY_MAP).unwrap();
+        let commit3 = repo.commit(&sk).unwrap();
+        assert!(commit3.prev.is_none(), "third commit must have null prev");
 
-        // Both commits must verify individually.
+        // All commits must verify individually and survive a CBOR roundtrip.
         commit1.verify(sk.public_key()).unwrap();
         commit2.verify(sk.public_key()).unwrap();
-
-        // Roundtrip commit2 through CBOR and verify again.
         let cbor = commit2.to_cbor().unwrap();
         let decoded2 = Commit::from_cbor(&cbor).unwrap();
-        assert!(decoded2.prev.is_some());
+        assert!(decoded2.prev.is_none());
         decoded2.verify(sk.public_key()).unwrap();
     }
 
