@@ -3,6 +3,10 @@ set shell := ["bash", "-cu"]
 # Run the `lint` and `test` commands
 default: lint test
 
+# Start the local nix development environment
+dev:
+    nix --extra-experimental-features "nix-command flakes" develop
+
 # Build everything
 build:
     cargo build --workspace --features full

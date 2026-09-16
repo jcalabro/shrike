@@ -14,17 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.95.0
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
+      - uses: cachix/install-nix-action@v31
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: nix develop --command just fmt
 
       - name: Clippy
-        run: cargo clippy --workspace --features full --tests -- -D warnings
+        run: nix develop --command cargo clippy --workspace --features full --tests -- -D warnings
 
   test:
     name: Test
@@ -32,21 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.95.0
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Install just
-        uses: taiki-e/install-action@just
+      - uses: cachix/install-nix-action@v31
 
       - name: Build
-        run: just build
+        run: nix develop --command just build
 
       - name: Test
-        run: just test
+        run: nix develop --command just test
 
       - name: Test docs
-        run: just test-docs
+        run: nix develop --command just test-docs
