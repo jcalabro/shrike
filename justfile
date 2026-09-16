@@ -1,5 +1,6 @@
 set shell := ["bash", "-cu"]
 
+# Run the `lint` and `test` commands
 default: lint test
 
 # Build everything
