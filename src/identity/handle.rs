@@ -40,6 +40,7 @@ pub async fn resolve_handle(handle: &Handle, http: &reqwest::Client) -> Result<D
 }
 
 /// Resolve via the DNS `_atproto.<handle>` TXT record (`did=<did>`).
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub async fn resolve_handle_dns(handle: &Handle) -> Result<Did, IdentityError> {
     use hickory_resolver::TokioResolver;
 
@@ -72,6 +73,15 @@ pub async fn resolve_handle_dns(handle: &Handle) -> Result<Did, IdentityError> {
 
     Err(IdentityError::NotFound(format!(
         "no did= TXT record at _atproto.{handle}"
+    )))
+}
+
+/// Browser WebAssembly cannot issue DNS TXT queries, so callers transparently
+/// continue to the HTTPS well-known fallback.
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub async fn resolve_handle_dns(handle: &Handle) -> Result<Did, IdentityError> {
+    Err(IdentityError::NotFound(format!(
+        "DNS TXT lookup for {handle} is unavailable in browser WebAssembly"
     )))
 }
 

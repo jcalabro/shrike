@@ -34,10 +34,7 @@ pub fn create_dpop_proof(
     let htu = parsed.to_string();
 
     // 3. Get current unix timestamp for iat
-    let iat = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| OAuthError::Crypto(format!("system time error: {e}")))?
-        .as_secs();
+    let iat = crate::platform::unix_time_secs();
 
     // 4. Build header JSON with JWK
     let pub_bytes = key.public_key().to_bytes();

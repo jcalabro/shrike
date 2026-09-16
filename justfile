@@ -14,6 +14,19 @@ dev:
 build:
     cargo build --workspace --features full
 
+# Build browser-ready WebAssembly plus JavaScript/TypeScript bindings.
+wasm:
+    wasm-pack build wasm --target web --release --out-dir pkg
+    gzip -9 -k -f wasm/pkg/shrike_wasm_bg.wasm
+
+# Type-check the complete browser-safe Shrike feature set.
+wasm-check:
+    cargo check -p shrike-wasm --target wasm32-unknown-unknown
+
+# Run the platform-independent binding tests in wasm-bindgen's Node runner.
+test-wasm:
+    wasm-pack test --node wasm
+
 # Run unit and integration tests
 test:
     cargo test --workspace --features full --lib --bins --tests

@@ -1,13 +1,27 @@
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub(crate) fn apply_user_agent(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     rb.header(reqwest::header::USER_AGENT, crate::USER_AGENT)
 }
 
+// Browsers reject attempts to set User-Agent. The Fetch implementation still
+// supplies the browser's own user agent.
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub(crate) fn apply_user_agent(rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    rb
+}
+
 /// Default total-request timeout for outbound fetches.
-#[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(all(
+    any(feature = "identity", feature = "oauth"),
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
 const OUTBOUND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Default connection-establishment timeout for outbound fetches.
-#[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(all(
+    any(feature = "identity", feature = "oauth"),
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
 const OUTBOUND_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Whether outbound fetches whose target host is influenced by untrusted input
@@ -61,6 +75,7 @@ pub enum AddressPolicy {
 /// not address-scoped — deployments resolving fully untrusted identities should
 /// still restrict egress at the network layer. See the `identity` module docs.
 #[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub(crate) fn hardened_client(policy: AddressPolicy) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -79,6 +94,33 @@ pub(crate) fn hardened_client(policy: AddressPolicy) -> reqwest::Client {
         // fallback drops the resolver, so callers that depend on filtering for
         // SSRF safety also rely on the literal-IP guard at the URL layer.
         .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+/// Build the browser Fetch-backed client. Browser networking is constrained by
+/// CORS and Private Network Access rather than native DNS/socket policy; Fetch
+/// does not expose reqwest's resolver, connect timeout, or redirect policy.
+#[cfg(all(
+    any(feature = "identity", feature = "oauth"),
+    target_family = "wasm",
+    target_os = "unknown"
+))]
+pub(crate) fn hardened_client(_policy: AddressPolicy) -> reqwest::Client {
+    reqwest::Client::new()
+}
+
+#[cfg(all(
+    feature = "oauth",
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
+pub(crate) fn no_redirect_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
+#[cfg(all(feature = "oauth", target_family = "wasm", target_os = "unknown"))]
+pub(crate) fn no_redirect_client() -> Result<reqwest::Client, reqwest::Error> {
+    Ok(reqwest::Client::new())
 }
 
 /// Report whether `host` is a literal IP address in a blocked local/private
@@ -156,10 +198,12 @@ fn is_local_v4(v4: &std::net::Ipv4Addr) -> bool {
 /// hostname pointing inward cannot be connected to. Used only under
 /// [`AddressPolicy::DenyLocal`].
 #[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 #[derive(Debug)]
 struct LocalFilteringResolver;
 
 #[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 impl reqwest::dns::Resolve for LocalFilteringResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_owned();
@@ -194,6 +238,7 @@ impl reqwest::dns::Resolve for LocalFilteringResolver {
 mod tests {
     use super::*;
 
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
     #[test]
     fn apply_user_agent_sets_shrike_user_agent() {
         let request = apply_user_agent(reqwest::Client::new().get("https://example.com"))

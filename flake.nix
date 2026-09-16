@@ -35,6 +35,11 @@
               rustToolchain
               git
               just
+              nodejs
+              binaryen
+              gzip
+              wasm-bindgen-cli
+              wasm-pack
             ] ++ lib.optionals stdenv.hostPlatform.isLinux [
               openssl
               pkg-config

@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use crate::syntax::{Did, Handle};
 use tokio::sync::Mutex;
-use tokio::time::Instant;
 
 use crate::identity::Identity;
 use crate::identity::IdentityError;
@@ -19,7 +18,7 @@ const DEFAULT_CAPACITY: usize = 1024;
 
 struct CacheEntry {
     identity: Arc<Identity>,
-    expires_at: Instant,
+    expires_at_millis: u64,
     generation: u64,
 }
 
@@ -118,7 +117,7 @@ impl Directory {
         {
             let cache = self.cache.lock().await;
             if let Some(entry) = cache.get(did)
-                && entry.expires_at > Instant::now()
+                && entry.expires_at_millis > crate::platform::unix_time_millis()
                 && entry.generation == generation
             {
                 return Ok(Arc::clone(&entry.identity));
@@ -160,7 +159,7 @@ impl Directory {
             // Simple eviction: remove the first expired entry found, or any entry.
             let expired_key = cache
                 .iter()
-                .find(|(_, e)| e.expires_at <= Instant::now())
+                .find(|(_, e)| e.expires_at_millis <= crate::platform::unix_time_millis())
                 .map(|(k, _)| k.clone());
             if let Some(k) = expired_key {
                 cache.remove(&k);
@@ -172,7 +171,8 @@ impl Directory {
             did.clone(),
             CacheEntry {
                 identity: Arc::clone(&identity),
-                expires_at: Instant::now() + self.ttl,
+                expires_at_millis: crate::platform::unix_time_millis()
+                    .saturating_add(u64::try_from(self.ttl.as_millis()).unwrap_or(u64::MAX)),
                 generation,
             },
         );

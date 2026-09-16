@@ -57,10 +57,7 @@ fn jitter(d: Duration) -> Duration {
     }
     // xorshift on a time-derived seed; falls back to no jitter if the clock is
     // unavailable.
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|t| t.subsec_nanos() as u64 ^ (t.as_secs().wrapping_mul(2654435761)))
-        .unwrap_or(0);
+    let seed = crate::platform::unix_time_micros().wrapping_mul(2_654_435_761);
     let mut x = seed | 1;
     x ^= x << 13;
     x ^= x >> 7;

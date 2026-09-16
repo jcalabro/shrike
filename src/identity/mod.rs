@@ -32,6 +32,13 @@
 //! egress at the network layer. The PLC directory client is **not** address
 //! filtered: its endpoint is operator-configured (the DID travels in the URL
 //! path, not the host), so it is treated as trusted.
+//!
+//! In browser WebAssembly, Fetch and the browser's CORS/Private Network Access
+//! policy replace native socket and DNS controls. Browsers do not expose DNS
+//! TXT lookups, custom resolvers, connect timeouts, or reqwest's redirect
+//! policy, so handle resolution uses only the HTTPS well-known fallback and
+//! Fetch controls redirects. Applications should only resolve through origins
+//! whose CORS and redirect behavior they trust.
 
 pub mod did_web;
 pub mod directory;

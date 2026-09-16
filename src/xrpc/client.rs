@@ -196,7 +196,7 @@ impl Client {
                     _ => None,
                 };
                 let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
-                tokio::time::sleep(delay).await;
+                crate::platform::sleep(delay).await;
             }
 
             let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
@@ -259,7 +259,7 @@ impl Client {
                     _ => None,
                 };
                 let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
-                tokio::time::sleep(delay).await;
+                crate::platform::sleep(delay).await;
             }
 
             let rb = self
@@ -323,7 +323,7 @@ impl Client {
                     _ => None,
                 };
                 let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
-                tokio::time::sleep(delay).await;
+                crate::platform::sleep(delay).await;
             }
 
             let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
@@ -397,7 +397,7 @@ impl Client {
                     _ => None,
                 };
                 let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
-                tokio::time::sleep(delay).await;
+                crate::platform::sleep(delay).await;
             }
 
             let rb = self

@@ -38,10 +38,7 @@ impl TokenSet {
         let Some(expires_at) = self.expires_at else {
             return false;
         };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = crate::platform::unix_time_secs();
         // Jitter: 10-40 seconds before expiry, derived from token hash
         // to distribute refresh across clients deterministically.
         let token_hash = self.access_token.as_bytes().first().copied().unwrap_or(0);
@@ -275,13 +272,9 @@ pub fn parse_token_response(
         });
     }
 
-    let expires_at = json["expires_in"].as_u64().map(|expires_in| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0)
-            + expires_in
-    });
+    let expires_at = json["expires_in"]
+        .as_u64()
+        .map(|expires_in| crate::platform::unix_time_secs() + expires_in);
 
     let refresh_token = json["refresh_token"]
         .as_str()

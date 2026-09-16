@@ -77,9 +77,7 @@ pub async fn fetch_protected_resource_metadata(
         pds_url.trim_end_matches('/')
     );
 
-    let no_redirect = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+    let no_redirect = crate::outbound::no_redirect_client()
         .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
 
     let resp = crate::outbound::apply_user_agent(
@@ -116,9 +114,7 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
         issuer.trim_end_matches('/')
     );
 
-    let no_redirect = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
+    let no_redirect = crate::outbound::no_redirect_client()
         .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
 
     let resp = crate::outbound::apply_user_agent(

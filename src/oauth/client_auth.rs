@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use crate::crypto::{P256SigningKey, SigningKey};
 
 use crate::oauth::OAuthError;
@@ -70,10 +68,7 @@ impl ConfidentialClientAuth {
         let jti = base64url_encode(&jti_bytes);
 
         // Timestamps
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|e| OAuthError::Crypto(format!("system time error: {e}")))?;
-        let iat = now.as_secs();
+        let iat = crate::platform::unix_time_secs();
         let exp = iat + 60;
 
         // Payload

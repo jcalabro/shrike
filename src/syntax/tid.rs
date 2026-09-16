@@ -1,7 +1,6 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -216,10 +215,7 @@ impl TidClock {
     pub fn next(&self) -> Tid {
         loop {
             let prev = self.last.load(Ordering::SeqCst);
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64;
+            let now = crate::platform::unix_time_micros();
             let ts = if now > prev { now } else { prev + 1 };
             let ts = ts.min(MAX_TID_MICROS);
             if self

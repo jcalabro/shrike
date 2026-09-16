@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shrike WASM demo</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    body { max-width: 960px; margin: 0 auto; padding: 2rem; background: #0d1117; color: #c9d1d9; }
+    h1, h2 { color: #58a6ff; }
+    h1 { margin-bottom: .25rem; }
+    p { color: #8b949e; }
+    code, select, button { font: inherit; }
+    code { color: #79c0ff; }
+    .controls { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    select, button { padding: .5rem .75rem; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: inherit; }
+    button { cursor: pointer; background: #238636; border-color: #2ea043; }
+    button.stop { background: #da3633; border-color: #f85149; }
+    button:disabled { opacity: .5; cursor: default; }
+    #results, #events { display: grid; gap: .5rem; }
+    .result, .event { padding: .65rem .8rem; border: 1px solid #30363d; border-left: 3px solid #3fb950; border-radius: 6px; background: #161b22; }
+    .result.error { border-left-color: #f85149; }
+    .result pre { margin: .4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #stream-status { color: #8b949e; }
+    #events { height: 320px; margin-top: .75rem; padding: .5rem; overflow-y: auto; background: #010409; border-radius: 6px; }
+    .event { padding: .3rem .5rem; border-left-color: #d2a8ff; font-size: .85rem; overflow-wrap: anywhere; }
+    .event strong { color: #7ee787; }
+    .event .collection { color: #79c0ff; }
+  </style>
+</head>
+<body>
+  <h1>Shrike WASM</h1>
+  <p>A small browser demo. Run <code>just wasm</code>, serve the repository root, then open <code>/wasm/</code>.</p>
+
+  <h2>Live AT Protocol events</h2>
+  <div class="controls">
+    <select id="source" aria-label="Event source">
+      <option value="jetstream">Jetstream</option>
+      <option value="firehose">Firehose</option>
+    </select>
+    <button id="start" disabled>Start</button>
+    <button id="stop" class="stop" disabled>Stop</button>
+    <button id="clear">Clear</button>
+    <span id="stream-status">Loading WASM…</span>
+  </div>
+  <div id="events" aria-live="polite"></div>
+
+  <h2>API smoke test</h2>
+  <div id="results"></div>
+
+  <script type="module">
+    import init, {
+      P256Key,
+      TidClock,
+      XrpcClient,
+      cborDecode,
+      cborEncode,
+      cidForBytes,
+      connectFirehose,
+      connectJetstream,
+      generatePkce,
+      parseAtUri,
+      parseDid,
+      verifyP256,
+    } from "./pkg/shrike_wasm.js";
+
+    const $ = id => document.getElementById(id);
+    const results = $("results");
+    const events = $("events");
+    const source = $("source");
+    const start = $("start");
+    const stop = $("stop");
+    const streamStatus = $("stream-status");
+    let subscription;
+    let eventCount = 0;
+    let startedAt = 0;
+
+    function errorText(error) {
+      return String(error?.message ?? error);
+    }
+
+    function plain(value) {
+      if (value instanceof Map) {
+        return Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]));
+      }
+      if (Array.isArray(value)) return value.map(plain);
+      if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+        return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plain(item)]));
+      }
+      return value;
+    }
+
+    function result(label, value, ok = true) {
+      const row = document.createElement("div");
+      row.className = `result${ok ? "" : " error"}`;
+      const title = document.createElement("strong");
+      const body = document.createElement("pre");
+      title.textContent = label;
+      body.textContent = typeof value === "string" ? value : JSON.stringify(plain(value), null, 2);
+      row.append(title, body);
+      results.append(row);
+    }
+
+    async function test(label, callback) {
+      try {
+        result(label, await callback());
+      } catch (error) {
+        result(label, errorText(error), false);
+      }
+    }
+
+    function updateStreamStatus(message) {
+      if (message) {
+        streamStatus.textContent = message;
+        return;
+      }
+      const seconds = Math.max((Date.now() - startedAt) / 1000, .001);
+      streamStatus.textContent = `${eventCount} events · ${(eventCount / seconds).toFixed(1)}/s`;
+    }
+
+    function addRow(event) {
+      event = plain(event);
+      const rows = event.operations?.map(operation => ({ ...operation, did: event.did })) ?? [event];
+      for (const item of rows) {
+        const row = document.createElement("div");
+        const operation = item.operation ?? item.kind;
+        const collection = item.collection?.split(".").at(-1) ?? "";
+        const preview = item.record?.text ?? item.handle ?? "";
+        row.className = "event";
+
+        const action = document.createElement("strong");
+        action.textContent = operation;
+        const collectionSpan = document.createElement("span");
+        collectionSpan.className = "collection";
+        collectionSpan.textContent = collection;
+        row.append(action, " ", collectionSpan, " ", item.did ?? "");
+        if (preview) row.append(" — ", String(preview).slice(0, 120));
+        events.prepend(row);
+      }
+      while (events.children.length > 120) events.lastElementChild.remove();
+      eventCount += 1;
+      if (eventCount === 1 || eventCount % 25 === 0) updateStreamStatus();
+    }
+
+    function streamError(error) {
+      updateStreamStatus(`Stream error: ${errorText(error)}`);
+    }
+
+    start.addEventListener("click", () => {
+      eventCount = 0;
+      startedAt = Date.now();
+      events.replaceChildren();
+      updateStreamStatus("Connecting…");
+
+      try {
+        const options = { collections: ["app.bsky.feed.post"], batchSize: 25 };
+        subscription = source.value === "jetstream"
+          ? connectJetstream("wss://jetstream1.us-east.bsky.network/subscribe", options, addRow, streamError)
+          : connectFirehose("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos", options, addRow, streamError);
+        source.disabled = true;
+        start.disabled = true;
+        stop.disabled = false;
+      } catch (error) {
+        streamError(error);
+      }
+    });
+
+    stop.addEventListener("click", () => {
+      subscription?.close();
+      subscription = undefined;
+      source.disabled = false;
+      start.disabled = false;
+      stop.disabled = true;
+      updateStreamStatus();
+      streamStatus.textContent += " · stopped";
+    });
+
+    $("clear").addEventListener("click", () => {
+      events.replaceChildren();
+      eventCount = 0;
+      updateStreamStatus(subscription ? "Waiting for events…" : "Ready");
+    });
+
+    window.addEventListener("beforeunload", () => subscription?.close());
+
+    try {
+      await init();
+      start.disabled = false;
+      updateStreamStatus("Ready");
+
+      await test("Syntax", () => ({
+        did: parseDid("did:plc:ewvi7nxzyoun6zhxrhs64oiz"),
+        uri: parseAtUri("at://did:plc:ewvi7nxzyoun6zhxrhs64oiz/app.bsky.feed.post/3jwdwj2ctlk26"),
+        tid: new TidClock(0).next(),
+      }));
+
+      await test("DAG-CBOR", () => {
+        const bytes = cborEncode({ text: "hello from Shrike", answer: 42 });
+        return { bytes: bytes.length, cid: cidForBytes("dag-cbor", bytes), decoded: cborDecode(bytes) };
+      });
+
+      await test("P-256", () => {
+        const key = new P256Key();
+        try {
+          const message = new TextEncoder().encode("hello from Shrike");
+          const signature = key.sign(message);
+          return { didKey: key.didKey(), signatureBytes: signature.length, valid: verifyP256(key.publicKeyBytes(), message, signature) };
+        } finally {
+          key.free();
+        }
+      });
+
+      await test("OAuth PKCE", () => {
+        const pkce = plain(generatePkce());
+        return { method: pkce.method, verifierLength: pkce.verifier.length, challenge: pkce.challenge };
+      });
+
+      await test("Public XRPC", async () => {
+        const client = new XrpcClient("https://public.api.bsky.app");
+        try {
+          const profile = plain(await client.query("app.bsky.actor.getProfile", { actor: "bsky.app" }));
+          return { did: profile.did, handle: profile.handle, displayName: profile.displayName };
+        } finally {
+          client.free();
+        }
+      });
+    } catch (error) {
+      result("WASM initialization", errorText(error), false);
+      updateStreamStatus("Failed to load WASM");
+    }
+  </script>
+</body>
+</html>

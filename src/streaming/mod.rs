@@ -20,6 +20,10 @@
 //! or when an error is encountered — in which case the partial batch is
 //! yielded first, followed by the error.
 
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub mod client;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+#[path = "client_wasm.rs"]
 pub mod client;
 pub mod event;
 pub mod jetstream;

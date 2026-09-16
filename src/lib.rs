@@ -44,6 +44,7 @@
 //! | `labeling` | Label creation, signing, and verification |
 //! | `oauth` | OAuth2 authorization client (DPoP, PKCE, session management) |
 //! | `api` | Generated types for all Bluesky and AT Protocol lexicons |
+//! | `wasm` | Browser-safe client subset (excludes server, sync, and backfill) |
 //! | `full` | Everything above |
 //!
 //! ## Quick start
@@ -67,6 +68,8 @@
 
 /// Default User-Agent sent by Shrike outbound HTTP and WebSocket clients.
 pub const USER_AGENT: &str = concat!("shrike/", env!("CARGO_PKG_VERSION"));
+
+mod platform;
 
 #[cfg(any(feature = "xrpc", feature = "identity", feature = "oauth"))]
 mod outbound;
