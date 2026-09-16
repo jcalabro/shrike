@@ -21,7 +21,7 @@ Integration tests live in `tests/`, shared fixtures in `testdata/`, benchmarks i
 Use `just --list` to discover supported tasks. If Rust tooling is unavailable, enter the pinned Nix environment with `just dev`.
 
 - `just build`: build the workspace with all features.
-- `just test`: run unit and integration tests through `cargo nextest`.
+- `just test`: run unit and integration tests.
 - `just lint`: check formatting and run Clippy with warnings denied.
 - `just check`: run the full build, lint, test, and doctest suite.
 - `just shrike -- <args>`: run the CLI locally.
@@ -38,4 +38,3 @@ Keep our code and documentation minimal and maintainable. Don't pull in new carg
 ## Testing Guidelines
 
 We must test rigorously and in-depth to ensure correctness and robustness (use unit tests, integration tests, end to end tests, fuzz tests, property tests, swarm tests as appropriate for the task at hand). Ensure that happy and sad paths are tested. However, do not add meaningless tests. Add regression tests for every bugfix.
-

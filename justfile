@@ -14,9 +14,9 @@ dev:
 build:
     cargo build --workspace --features full
 
-# Run unit and integration tests (uses nextest for parallel execution)
+# Run unit and integration tests
 test:
-    cargo nextest run --workspace --features full
+    cargo test --workspace --features full --lib --bins --tests
 
 # Run Rust documentation examples
 test-docs:

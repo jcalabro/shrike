@@ -33,7 +33,6 @@
           default = pkgs.mkShell {
             packages = with pkgs; [
               rustToolchain
-              cargo-nextest
               git
               just
             ] ++ lib.optionals stdenv.hostPlatform.isLinux [
