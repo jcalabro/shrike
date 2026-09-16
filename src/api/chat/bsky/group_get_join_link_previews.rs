@@ -11,13 +11,187 @@ pub struct GroupGetJoinLinkPreviewsParams {
 #[serde(rename_all = "camelCase")]
 pub struct GroupGetJoinLinkPreviewsOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub join_link_previews: Vec<crate::api::chat::bsky::GroupDefsJoinLinkPreviewView>,
+    pub join_link_previews: Vec<GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion>,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupGetJoinLinkPreviews — [NOTE: This is under active development and should be considered unstable while this note is here]. Get public information about groups from join links. Invalid or disabled codes are silently omitted from results. Use the 'code' property on the views to correlate with the input codes, not array positions.
+/// GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion is a union type.
+#[derive(Debug, Clone)]
+pub enum GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion {
+    GroupDefsJoinLinkPreviewView(Box<crate::api::chat::bsky::GroupDefsJoinLinkPreviewView>),
+    GroupDefsDisabledJoinLinkPreviewView(
+        Box<crate::api::chat::bsky::GroupDefsDisabledJoinLinkPreviewView>,
+    ),
+    GroupDefsInvalidJoinLinkPreviewView(
+        Box<crate::api::chat::bsky::GroupDefsInvalidJoinLinkPreviewView>,
+    ),
+    Unknown(crate::api::UnknownUnionVariant),
+}
+
+impl serde::Serialize for GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsJoinLinkPreviewView(inner) => {
+                let mut map = serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert("$type".to_string(), serde_json::Value::String("chat.bsky.group.defs#joinLinkPreviewView".to_string()));
+                }
+                map.serialize(serializer)
+            }
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsDisabledJoinLinkPreviewView(inner) => {
+                let mut map = serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert("$type".to_string(), serde_json::Value::String("chat.bsky.group.defs#disabledJoinLinkPreviewView".to_string()));
+                }
+                map.serialize(serializer)
+            }
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsInvalidJoinLinkPreviewView(inner) => {
+                let mut map = serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert("$type".to_string(), serde_json::Value::String("chat.bsky.group.defs#invalidJoinLinkPreviewView".to_string()));
+                }
+                map.serialize(serializer)
+            }
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::Unknown(v) => {
+                if let Some(ref j) = v.json {
+                    j.serialize(serializer)
+                } else {
+                    Err(serde::ser::Error::custom("no JSON data for unknown union variant"))
+                }
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let type_str = value
+            .get("$type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        match type_str {
+            "chat.bsky.group.defs#joinLinkPreviewView" => {
+                let inner: crate::api::chat::bsky::GroupDefsJoinLinkPreviewView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsJoinLinkPreviewView(Box::new(inner)))
+            }
+            "chat.bsky.group.defs#disabledJoinLinkPreviewView" => {
+                let inner: crate::api::chat::bsky::GroupDefsDisabledJoinLinkPreviewView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsDisabledJoinLinkPreviewView(Box::new(inner)))
+            }
+            "chat.bsky.group.defs#invalidJoinLinkPreviewView" => {
+                let inner: crate::api::chat::bsky::GroupDefsInvalidJoinLinkPreviewView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsInvalidJoinLinkPreviewView(Box::new(inner)))
+            }
+            _ => Ok(
+                GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::Unknown(
+                    crate::api::UnknownUnionVariant {
+                        r#type: type_str.to_string(),
+                        json: Some(value),
+                        cbor: None,
+                    },
+                ),
+            ),
+        }
+    }
+}
+
+impl GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        match self {
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsJoinLinkPreviewView(inner) => inner.encode_cbor(buf),
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsDisabledJoinLinkPreviewView(inner) => inner.encode_cbor(buf),
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsInvalidJoinLinkPreviewView(inner) => inner.encode_cbor(buf),
+            GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::Unknown(v) => {
+                if let Some(ref data) = v.cbor {
+                    buf.extend_from_slice(data);
+                    Ok(())
+                } else {
+                    Err(crate::cbor::CborError::InvalidCbor("no CBOR data for unknown union variant".into()))
+                }
+            }
+        }
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        // Save position, decode the value, look for $type key.
+        let start = decoder.position();
+        let val = decoder.decode()?;
+        let end = decoder.position();
+        let raw = &decoder.raw_input()[start..end];
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => {
+                return Err(crate::cbor::CborError::InvalidCbor(
+                    "expected map for union".into(),
+                ));
+            }
+        };
+        let type_str = entries
+            .iter()
+            .find(|(k, _)| *k == "$type")
+            .and_then(|(_, v)| match v {
+                crate::cbor::Value::Text(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap_or_default();
+        match type_str {
+            "chat.bsky.group.defs#joinLinkPreviewView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::GroupDefsJoinLinkPreviewView::decode_cbor(&mut dec)?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsJoinLinkPreviewView(Box::new(inner)))
+            }
+            "chat.bsky.group.defs#disabledJoinLinkPreviewView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::GroupDefsDisabledJoinLinkPreviewView::decode_cbor(
+                        &mut dec,
+                    )?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsDisabledJoinLinkPreviewView(Box::new(inner)))
+            }
+            "chat.bsky.group.defs#invalidJoinLinkPreviewView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner =
+                    crate::api::chat::bsky::GroupDefsInvalidJoinLinkPreviewView::decode_cbor(
+                        &mut dec,
+                    )?;
+                Ok(GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::GroupDefsInvalidJoinLinkPreviewView(Box::new(inner)))
+            }
+            _ => Ok(
+                GroupGetJoinLinkPreviewsOutputJoinLinkPreviewsUnion::Unknown(
+                    crate::api::UnknownUnionVariant {
+                        r#type: type_str.to_string(),
+                        json: None,
+                        cbor: Some(raw.to_vec()),
+                    },
+                ),
+            ),
+        }
+    }
+}
+
+/// GroupGetJoinLinkPreviews — Get public information about groups from join links. The output array matches the input codes one-to-one by position (and each view also carries its 'code'). Disabled codes return a disabledJoinLinkPreviewView, and codes that do not map to a previewable link return an invalidJoinLinkPreviewView.
 pub async fn group_get_join_link_previews(
     client: &crate::xrpc::Client,
     params: &GroupGetJoinLinkPreviewsParams,

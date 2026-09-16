@@ -20,7 +20,7 @@ pub struct GroupRemoveMembersOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupRemoveMembers — [NOTE: This is under active development and should be considered unstable while this note is here]. Removes members from a group. This deletes convo memberships, doesn't just set a status.
+/// GroupRemoveMembers — Removes members from a group. This deletes convo memberships, doesn't just set a status.
 pub async fn group_remove_members(
     client: &crate::xrpc::Client,
     input: &GroupRemoveMembersInput,

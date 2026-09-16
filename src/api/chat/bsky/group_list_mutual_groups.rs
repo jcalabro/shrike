@@ -22,7 +22,7 @@ pub struct GroupListMutualGroupsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupListMutualGroups — [NOTE: This is under active development and should be considered unstable while this note is here]. Returns a page of group conversations that both the requester and the specified actor are members of.
+/// GroupListMutualGroups — Returns a page of group conversations that both the requester and the specified actor are members of.
 pub async fn group_list_mutual_groups(
     client: &crate::xrpc::Client,
     params: &GroupListMutualGroupsParams,

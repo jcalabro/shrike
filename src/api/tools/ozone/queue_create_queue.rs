@@ -11,6 +11,9 @@ pub struct QueueCreateQueueInput {
     pub description: Option<String>,
     /// Display name for the queue (must be unique)
     pub name: String,
+    /// Policy keys to recommend when actioning reports in this queue
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recommended_policies: Vec<String>,
     /// Report reason types (fully qualified NSIDs)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub report_types: Vec<String>,
@@ -31,7 +34,7 @@ pub struct QueueCreateQueueOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// QueueCreateQueue — Create a new moderation queue. Will fail if the queue configuration conflicts with an existing queue.
+/// QueueCreateQueue — Create a new moderation queue. A queue can have optional matching criteria that ozone's queue router will use to match reports. A queue with no criteria must have reports assigned to it manually via (1) `modTool.meta.queueId` in `tools.ozone.moderation.emitEvent` or (2) `tools.ozone.report.reassignQueue`.
 pub async fn queue_create_queue(
     client: &crate::xrpc::Client,
     input: &QueueCreateQueueInput,

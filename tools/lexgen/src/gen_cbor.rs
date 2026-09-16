@@ -51,7 +51,10 @@ enum FieldKind {
     /// Union type with its own encode_cbor/decode_cbor.
     Union,
     /// Vec<T> where T is some inner type.
-    Array(Box<FieldKind>),
+    Array {
+        inner: Box<FieldKind>,
+        inner_type: String,
+    },
     /// serde_json::Value -- skip in CBOR for now.
     JsonValue,
 }
@@ -746,7 +749,9 @@ fn gen_encode_value(out: &mut String, kind: &FieldKind, access: &str, indent: &s
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
             writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
-        FieldKind::Array(inner_kind) => {
+        FieldKind::Array {
+            inner: inner_kind, ..
+        } => {
             if is_ref {
                 writeln!(out, "{indent}crate::cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in {access}.iter() {{").ok();
@@ -809,7 +814,7 @@ fn gen_encode_array_item(out: &mut String, kind: &FieldKind, access: &str, inden
         FieldKind::Bytes => {
             writeln!(out, "{indent}{access}.encode_cbor(buf)?;").ok();
         }
-        FieldKind::Array(inner) => {
+        FieldKind::Array { inner, .. } => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut *buf).encode_array_header({access}.len() as u64)?;").ok();
             writeln!(out, "{indent}for inner_item in {access} {{").ok();
             gen_encode_array_item(out, inner, "inner_item", &format!("{indent}    "));
@@ -910,7 +915,9 @@ fn gen_encode_value_vbuf(
         FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
             writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
-        FieldKind::Array(inner_kind) => {
+        FieldKind::Array {
+            inner: inner_kind, ..
+        } => {
             if is_ref {
                 writeln!(out, "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
                 writeln!(out, "{indent}for item in {access}.iter() {{").ok();
@@ -973,7 +980,7 @@ fn gen_encode_array_item_vbuf(out: &mut String, kind: &FieldKind, access: &str, 
         FieldKind::Bytes => {
             writeln!(out, "{indent}{access}.encode_cbor(&mut vbuf)?;").ok();
         }
-        FieldKind::Array(inner) => {
+        FieldKind::Array { inner, .. } => {
             writeln!(out, "{indent}crate::cbor::Encoder::new(&mut vbuf).encode_array_header({access}.len() as u64)?;").ok();
             writeln!(out, "{indent}for inner_item in {access} {{").ok();
             gen_encode_array_item_vbuf(out, inner, "inner_item", &format!("{indent}    "));
@@ -990,6 +997,13 @@ fn gen_decode_field(out: &mut String, f: &CborField, clean_var: &str, indent: &s
 
     if is_vec {
         gen_decode_vec(out, f, clean_var, indent);
+    } else if let FieldKind::Array { inner, inner_type } = &f.kind {
+        let array_type = f
+            .rust_type
+            .strip_prefix("Option<")
+            .and_then(|ty| ty.strip_suffix('>'))
+            .unwrap_or(&f.rust_type);
+        gen_decode_array_alias(out, inner, inner_type, clean_var, array_type, indent);
     } else if f.rust_type.starts_with("Option<") {
         // Inner type for Option<T>
         let inner_type = &f.rust_type[7..f.rust_type.len() - 1];
@@ -1083,7 +1097,7 @@ fn gen_decode_single(
             )
             .ok();
         }
-        FieldKind::Array(_) => {
+        FieldKind::Array { .. } => {
             // Arrays are handled by gen_decode_vec, shouldn't reach here.
         }
         FieldKind::JsonValue => {}
@@ -1093,9 +1107,14 @@ fn gen_decode_single(
 fn gen_decode_vec(out: &mut String, f: &CborField, var: &str, indent: &str) {
     // Extract inner type from Vec<T>.
     let inner_type = &f.rust_type[4..f.rust_type.len() - 1];
-    let inner_kind = match &f.kind {
-        FieldKind::Array(inner) => inner.as_ref(),
+    let (inner_kind, classified_inner_type) = match &f.kind {
+        FieldKind::Array { inner, inner_type } => (inner.as_ref(), inner_type.as_str()),
         _ => return,
+    };
+    let inner_type = if inner_type.is_empty() {
+        classified_inner_type
+    } else {
+        inner_type
     };
 
     writeln!(
@@ -1107,7 +1126,7 @@ fn gen_decode_vec(out: &mut String, f: &CborField, var: &str, indent: &str) {
     gen_decode_array_item(
         out,
         inner_kind,
-        var,
+        &format!("field_{var}"),
         inner_type,
         &format!("{indent}        "),
     );
@@ -1121,24 +1140,61 @@ fn gen_decode_vec(out: &mut String, f: &CborField, var: &str, indent: &str) {
     writeln!(out, "{indent}}}").ok();
 }
 
+fn gen_decode_array_alias(
+    out: &mut String,
+    inner_kind: &FieldKind,
+    inner_type: &str,
+    var: &str,
+    array_type: &str,
+    indent: &str,
+) {
+    writeln!(
+        out,
+        "{indent}if let crate::cbor::Value::Array(items) = value {{"
+    )
+    .ok();
+    writeln!(
+        out,
+        "{indent}    let mut decoded: {array_type} = Vec::new();"
+    )
+    .ok();
+    writeln!(out, "{indent}    for item in items {{").ok();
+    gen_decode_array_item(
+        out,
+        inner_kind,
+        "decoded",
+        inner_type,
+        &format!("{indent}        "),
+    );
+    writeln!(out, "{indent}    }}").ok();
+    writeln!(out, "{indent}    field_{var} = Some(decoded);").ok();
+    writeln!(out, "{indent}}} else {{").ok();
+    writeln!(
+        out,
+        "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected array\".into()));"
+    )
+    .ok();
+    writeln!(out, "{indent}}}").ok();
+}
+
 fn gen_decode_array_item(
     out: &mut String,
     kind: &FieldKind,
-    var: &str,
+    target: &str,
     inner_type: &str,
     indent: &str,
 ) {
     match kind {
         FieldKind::Text => {
             writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = item {{").ok();
-            writeln!(out, "{indent}    field_{var}.push(s.to_string());").ok();
+            writeln!(out, "{indent}    {target}.push(s.to_string());").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
         FieldKind::SyntaxText(ty) => {
             writeln!(out, "{indent}if let crate::cbor::Value::Text(s) = item {{").ok();
-            writeln!(out, "{indent}    field_{var}.push({ty}::try_from(s).map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
+            writeln!(out, "{indent}    {target}.push({ty}::try_from(s).map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected text in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
@@ -1147,12 +1203,12 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}match item {{").ok();
             writeln!(
                 out,
-                "{indent}    crate::cbor::Value::Unsigned(n) => field_{var}.push(i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?),"
+                "{indent}    crate::cbor::Value::Unsigned(n) => {target}.push(i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor(\"integer out of i64 range\".into()))?),"
             )
             .ok();
             writeln!(
                 out,
-                "{indent}    crate::cbor::Value::Signed(n) => field_{var}.push(n),"
+                "{indent}    crate::cbor::Value::Signed(n) => {target}.push(n),"
             )
             .ok();
             writeln!(out, "{indent}    _ => return Err(crate::cbor::CborError::InvalidCbor(\"expected integer in array\".into())),").ok();
@@ -1160,7 +1216,7 @@ fn gen_decode_array_item(
         }
         FieldKind::Bool => {
             writeln!(out, "{indent}if let crate::cbor::Value::Bool(b) = item {{").ok();
-            writeln!(out, "{indent}    field_{var}.push(b);").ok();
+            writeln!(out, "{indent}    {target}.push(b);").ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected bool in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
@@ -1169,7 +1225,7 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}if let crate::cbor::Value::Cid(c) = item {{").ok();
             writeln!(
                 out,
-                "{indent}    field_{var}.push(crate::api::CidLink {{ link: c.to_string() }});"
+                "{indent}    {target}.push(crate::api::CidLink {{ link: c.to_string() }});"
             )
             .ok();
             writeln!(out, "{indent}}} else {{").ok();
@@ -1185,7 +1241,7 @@ fn gen_decode_array_item(
             .ok();
             writeln!(
                 out,
-                "{indent}field_{var}.push({inner_type}::decode_cbor(&mut dec)?);"
+                "{indent}{target}.push({inner_type}::decode_cbor(&mut dec)?);"
             )
             .ok();
         }
@@ -1193,14 +1249,14 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}if let crate::cbor::Value::Bytes(b) = item {{").ok();
             writeln!(
                 out,
-                "{indent}    field_{var}.push(crate::api::Bytes(b.to_vec()));"
+                "{indent}    {target}.push(crate::api::Bytes(b.to_vec()));"
             )
             .ok();
             writeln!(out, "{indent}}} else {{").ok();
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected byte string in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
-        FieldKind::Array(_) | FieldKind::JsonValue => {}
+        FieldKind::Array { .. } | FieldKind::JsonValue => {}
     }
 }
 
@@ -1233,8 +1289,16 @@ fn classify_field(ctx: &GenContext<'_>, field: &FieldSchema, rust_type: &str) ->
         FieldSchema::Object(_) => FieldKind::JsonValue,
         FieldSchema::Ref { reference, .. } => classify_ref(ctx, reference, rust_type),
         FieldSchema::Array { items, .. } => {
-            let inner = classify_field(ctx, items, rust_type);
-            FieldKind::Array(Box::new(inner))
+            let inner_type = rust_type
+                .strip_prefix("Vec<")
+                .and_then(|ty| ty.strip_suffix('>'))
+                .unwrap_or("serde_json::Value")
+                .to_string();
+            let inner = classify_field(ctx, items, &inner_type);
+            FieldKind::Array {
+                inner: Box::new(inner),
+                inner_type,
+            }
         }
         FieldSchema::Union { .. } => FieldKind::Union,
     }
@@ -1254,6 +1318,46 @@ fn classify_ref(ctx: &GenContext<'_>, reference: &str, _rust_type: &str) -> Fiel
             shrike::lexicon::Def::IntegerDef(_) => FieldKind::Integer,
             shrike::lexicon::Def::BooleanDef(_) => FieldKind::Bool,
             shrike::lexicon::Def::BytesDef(_) => FieldKind::Bytes,
+            shrike::lexicon::Def::ArrayDef(array) => {
+                let alias_name = util::type_name(&target_nsid, def_name);
+                let caller_module = ctx
+                    .cfg
+                    .find_package(&target_nsid)
+                    .map(|package| format!("crate::{}", package.module))
+                    .unwrap_or_default();
+                let target_ctx = GenContext {
+                    schema,
+                    cfg: ctx.cfg,
+                    schemas: ctx.schemas,
+                    caller_module: &caller_module,
+                };
+                let inner_type = match &array.items {
+                    FieldSchema::Union { .. } => format!("{alias_name}Item"),
+                    items => crate::gen_struct::resolve_field_type(
+                        &target_ctx,
+                        &alias_name,
+                        "item",
+                        items,
+                        true,
+                    )
+                    .map(|(ty, _)| ty)
+                    .unwrap_or_else(|_| "serde_json::Value".to_string()),
+                };
+                let inner_type = if target_nsid == ctx.schema.id
+                    || inner_type.starts_with("crate::")
+                    || matches!(
+                        inner_type.as_str(),
+                        "String" | "i64" | "bool" | "serde_json::Value"
+                    ) {
+                    inner_type
+                } else {
+                    format!("{caller_module}::{inner_type}")
+                };
+                FieldKind::Array {
+                    inner: Box::new(classify_field(&target_ctx, &array.items, &inner_type)),
+                    inner_type,
+                }
+            }
             _ => FieldKind::Struct,
         };
     }
@@ -1277,7 +1381,7 @@ fn clean_field_name(name: &str) -> String {
 fn is_json_only(kind: &FieldKind) -> bool {
     match kind {
         FieldKind::JsonValue => true,
-        FieldKind::Array(inner) => is_json_only(inner),
+        FieldKind::Array { inner, .. } => is_json_only(inner),
         _ => false,
     }
 }
@@ -1321,21 +1425,26 @@ fn cbor_header_len(value: u64) -> usize {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, PackageConfig};
     use crate::gen_struct::GenContext;
     use crate::loader;
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
+    fn test_ctx() -> Option<(Config, HashMap<String, shrike::lexicon::Schema>)> {
+        if !Path::new("../../lexicons").is_dir() {
+            return None;
+        }
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
-        (cfg, schemas)
+        Some((cfg, schemas))
     }
 
     #[test]
     fn gen_strong_ref_cbor() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("com.atproto.repo.strongRef").unwrap();
         let ctx = GenContext {
             schema,
@@ -1370,7 +1479,9 @@ mod tests {
 
     #[test]
     fn gen_feed_post_cbor() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.feed.post").unwrap();
         let ctx = GenContext {
             schema,
@@ -1406,5 +1517,70 @@ mod tests {
         // Shorter first
         assert_eq!(cbor_key_cmp("text", "embed"), Ordering::Less);
         assert_eq!(cbor_key_cmp("a", "bb"), Ordering::Less);
+    }
+
+    #[test]
+    fn referenced_array_alias_uses_array_cbor_encoding() {
+        let schema: shrike::lexicon::Schema = serde_json::from_str(
+            r##"{
+                "lexicon": 1,
+                "id": "com.example.arrayAlias",
+                "defs": {
+                    "main": {
+                        "type": "object",
+                        "required": ["items"],
+                        "properties": {
+                            "items": {"type": "ref", "ref": "#items"}
+                        }
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "union", "refs": ["#item"]}
+                    },
+                    "item": {
+                        "type": "object",
+                        "required": ["value"],
+                        "properties": {
+                            "value": {"type": "string"}
+                        }
+                    }
+                }
+            }"##,
+        )
+        .unwrap();
+        let cfg = Config {
+            packages: vec![PackageConfig {
+                prefix: "com.example".to_string(),
+                module: "com::example".to_string(),
+                out_dir: "src/api/com/example".to_string(),
+            }],
+        };
+        let mut schemas = HashMap::new();
+        schemas.insert(schema.id.clone(), schema);
+        let schema = &schemas["com.example.arrayAlias"];
+        let ctx = GenContext {
+            schema,
+            cfg: &cfg,
+            schemas: &schemas,
+            caller_module: "crate::api::com::example",
+        };
+        let shrike::lexicon::Def::Object(object) = &schema.defs["main"] else {
+            panic!("expected object definition");
+        };
+
+        let code = gen_cbor_impl(&ctx, "ArrayAlias", object).unwrap();
+
+        assert!(
+            code.contains("encode_array_header(self.items.len() as u64)"),
+            "code:\n{code}"
+        );
+        assert!(
+            code.contains("ArrayAliasItemsItem::decode_cbor(&mut dec)"),
+            "code:\n{code}"
+        );
+        assert!(
+            code.contains("field_items = Some(decoded)"),
+            "code:\n{code}"
+        );
     }
 }

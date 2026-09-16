@@ -8,6 +8,17 @@
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod actor_content_visibility_declaration;
+pub use actor_content_visibility_declaration::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod actor_defs;
 pub use actor_defs::*;
 
@@ -382,6 +393,17 @@ pub use embed_external::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod embed_gallery;
+pub use embed_gallery::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod embed_get_embed_external_view;
 pub use embed_get_embed_external_view::*;
 
@@ -690,6 +712,17 @@ pub use feed_search_posts::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod feed_search_posts_v2;
+pub use feed_search_posts_v2::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod feed_send_interactions;
 pub use feed_send_interactions::*;
 
@@ -987,8 +1020,30 @@ pub use graph_mute_thread::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod graph_referencelistoptout;
+pub use graph_referencelistoptout::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod graph_search_starter_packs;
 pub use graph_search_starter_packs::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod graph_search_starter_packs_v2;
+pub use graph_search_starter_packs_v2::*;
 
 #[allow(
     clippy::unwrap_used,
@@ -1570,8 +1625,30 @@ pub use unspecced_search_starter_packs_skeleton::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod video_abort_upload;
+pub use video_abort_upload::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod video_defs;
 pub use video_defs::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod video_finish_upload;
+pub use video_finish_upload::*;
 
 #[allow(
     clippy::unwrap_used,
@@ -1594,6 +1671,39 @@ pub use video_get_job_status::*;
 )]
 mod video_get_upload_limits;
 pub use video_get_upload_limits::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod video_get_upload_status;
+pub use video_get_upload_status::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod video_start_upload;
+pub use video_start_upload::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod video_upload_part;
+pub use video_upload_part::*;
 
 #[allow(
     clippy::unwrap_used,

@@ -1377,6 +1377,140 @@ pub const FEED_DEFS_INTERACTION_SEEN: &str = "app.bsky.feed.defs#interactionSeen
 /// User shared the feed item
 pub const FEED_DEFS_INTERACTION_SHARE: &str = "app.bsky.feed.defs#interactionShare";
 
+/// FeedDefsKnownLikers — The post's likers whom you also follow
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedDefsKnownLikers {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actors: Vec<crate::api::app::bsky::ActorDefsProfileViewBasic>,
+    pub count: i64,
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl FeedDefsKnownLikers {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let count = 2u64;
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("count")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_i64(self.count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("actors")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.actors.len() as u64)?;
+            for item in &self.actors {
+                item.encode_cbor(buf)?;
+            }
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_i64(self.count)?;
+                pairs.push(("count", vbuf));
+            }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_array_header(self.actors.len() as u64)?;
+                for item in &self.actors {
+                    item.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("actors", vbuf));
+            }
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut field_count: Option<i64> = None;
+        let mut field_actors: Vec<crate::api::app::bsky::ActorDefsProfileViewBasic> = Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                "count" => match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                },
+                "actors" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_actors.push(
+                                crate::api::app::bsky::ActorDefsProfileViewBasic::decode_cbor(
+                                    &mut dec,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(FeedDefsKnownLikers {
+            count: field_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'count'".into())
+            })?,
+            actors: field_actors,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+}
+
 /// FeedDefsNotFoundPost object from app.bsky.feed.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1534,6 +1668,7 @@ pub struct FeedDefsPostView {
 pub enum FeedDefsPostViewEmbedUnion {
     EmbedImagesView(Box<crate::api::app::bsky::EmbedImagesView>),
     EmbedVideoView(Box<crate::api::app::bsky::EmbedVideoView>),
+    EmbedGalleryView(Box<crate::api::app::bsky::EmbedGalleryView>),
     EmbedExternalView(Box<crate::api::app::bsky::EmbedExternalView>),
     EmbedRecordView(Box<crate::api::app::bsky::EmbedRecordView>),
     EmbedRecordWithMediaView(Box<crate::api::app::bsky::EmbedRecordWithMediaView>),
@@ -1561,6 +1696,17 @@ impl serde::Serialize for FeedDefsPostViewEmbedUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("app.bsky.embed.video#view".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            FeedDefsPostViewEmbedUnion::EmbedGalleryView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("app.bsky.embed.gallery#view".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -1631,6 +1777,13 @@ impl<'de> serde::Deserialize<'de> for FeedDefsPostViewEmbedUnion {
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedDefsPostViewEmbedUnion::EmbedVideoView(Box::new(inner)))
             }
+            "app.bsky.embed.gallery#view" => {
+                let inner: crate::api::app::bsky::EmbedGalleryView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(FeedDefsPostViewEmbedUnion::EmbedGalleryView(Box::new(
+                    inner,
+                )))
+            }
             "app.bsky.embed.external#view" => {
                 let inner: crate::api::app::bsky::EmbedExternalView =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -1672,6 +1825,7 @@ impl FeedDefsPostViewEmbedUnion {
         match self {
             FeedDefsPostViewEmbedUnion::EmbedImagesView(inner) => inner.encode_cbor(buf),
             FeedDefsPostViewEmbedUnion::EmbedVideoView(inner) => inner.encode_cbor(buf),
+            FeedDefsPostViewEmbedUnion::EmbedGalleryView(inner) => inner.encode_cbor(buf),
             FeedDefsPostViewEmbedUnion::EmbedExternalView(inner) => inner.encode_cbor(buf),
             FeedDefsPostViewEmbedUnion::EmbedRecordView(inner) => inner.encode_cbor(buf),
             FeedDefsPostViewEmbedUnion::EmbedRecordWithMediaView(inner) => inner.encode_cbor(buf),
@@ -1729,6 +1883,13 @@ impl FeedDefsPostViewEmbedUnion {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideoView::decode_cbor(&mut dec)?;
                 Ok(FeedDefsPostViewEmbedUnion::EmbedVideoView(Box::new(inner)))
+            }
+            "app.bsky.embed.gallery#view" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::app::bsky::EmbedGalleryView::decode_cbor(&mut dec)?;
+                Ok(FeedDefsPostViewEmbedUnion::EmbedGalleryView(Box::new(
+                    inner,
+                )))
             }
             "app.bsky.embed.external#view" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
@@ -4261,6 +4422,9 @@ pub struct FeedDefsViewerState {
     pub bookmarked: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_disabled: Option<bool>,
+    /// This property is present only in selected cases, as an optimization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub known_likers: Option<FeedDefsKnownLikers>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub like: Option<crate::syntax::AtUri>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4302,6 +4466,9 @@ impl FeedDefsViewerState {
             if self.bookmarked.is_some() {
                 count += 1;
             }
+            if self.known_likers.is_some() {
+                count += 1;
+            }
             if self.thread_muted.is_some() {
                 count += 1;
             }
@@ -4334,6 +4501,12 @@ impl FeedDefsViewerState {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("bookmarked")?;
                 if let Some(ref val) = self.bookmarked {
                     crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
+                }
+            }
+            if self.known_likers.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("knownLikers")?;
+                if let Some(ref val) = self.known_likers {
+                    val.encode_cbor(buf)?;
                 }
             }
             if self.thread_muted.is_some() {
@@ -4384,6 +4557,13 @@ impl FeedDefsViewerState {
                     crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
                 }
                 pairs.push(("bookmarked", vbuf));
+            }
+            if self.known_likers.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.known_likers {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("knownLikers", vbuf));
             }
             if self.thread_muted.is_some() {
                 let mut vbuf = Vec::new();
@@ -4439,6 +4619,7 @@ impl FeedDefsViewerState {
         let mut field_pinned: Option<bool> = None;
         let mut field_repost: Option<crate::syntax::AtUri> = None;
         let mut field_bookmarked: Option<bool> = None;
+        let mut field_known_likers: Option<FeedDefsKnownLikers> = None;
         let mut field_thread_muted: Option<bool> = None;
         let mut field_reply_disabled: Option<bool> = None;
         let mut field_embedding_disabled: Option<bool> = None;
@@ -4480,6 +4661,11 @@ impl FeedDefsViewerState {
                         return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
+                "knownLikers" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_known_likers = Some(FeedDefsKnownLikers::decode_cbor(&mut dec)?);
+                }
                 "threadMuted" => {
                     if let crate::cbor::Value::Bool(b) = value {
                         field_thread_muted = Some(b);
@@ -4513,6 +4699,7 @@ impl FeedDefsViewerState {
             pinned: field_pinned,
             repost: field_repost,
             bookmarked: field_bookmarked,
+            known_likers: field_known_likers,
             thread_muted: field_thread_muted,
             reply_disabled: field_reply_disabled,
             embedding_disabled: field_embedding_disabled,

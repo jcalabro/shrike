@@ -4,12 +4,18 @@
 #[serde(rename_all = "camelCase")]
 pub struct GraphMuteActorInput {
     pub actor: crate::syntax::AtIdentifier,
+    /// Restrict the mute to the account's quote posts. See onlyReposts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_quoteposts: Option<bool>,
+    /// Restrict the mute to the account's reposts. When any 'only' scope is set, just the scoped content is muted; when none are set, the account is fully muted. Repeat calls replace the stored scope rather than adding to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_reposts: Option<bool>,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphMuteActor — Creates a mute relationship for the specified account. Mutes are private in Bluesky. Requires auth.
+/// GraphMuteActor — Creates a mute relationship for the specified account. If a mute already exists for the account, it is updated in place: the stored scope is replaced with the scope in this request. Mutes are private in Bluesky. Requires auth.
 pub async fn graph_mute_actor(
     client: &crate::xrpc::Client,
     input: &GraphMuteActorInput,

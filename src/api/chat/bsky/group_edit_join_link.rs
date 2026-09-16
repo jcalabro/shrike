@@ -22,7 +22,7 @@ pub struct GroupEditJoinLinkOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupEditJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Edits the existing join link settings for the group convo.
+/// GroupEditJoinLink — Edits the existing join link settings for the group convo.
 pub async fn group_edit_join_link(
     client: &crate::xrpc::Client,
     input: &GroupEditJoinLinkInput,

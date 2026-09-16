@@ -112,7 +112,7 @@ impl NotificationDefsActivitySubscription {
     }
 }
 
-/// NotificationDefsChatPreference object from app.bsky.notification.defs.
+/// NotificationDefsChatPreference — Deprecated: use chat.bsky.notification preferences instead. This will only return a default value.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationDefsChatPreference {
@@ -471,6 +471,7 @@ impl NotificationDefsPreference {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationDefsPreferences {
+    /// Deprecated: use chat.bsky.notification preferences instead. This will only return a default value.
     pub chat: NotificationDefsChatPreference,
     pub follow: NotificationDefsFilterablePreference,
     pub like: NotificationDefsFilterablePreference,

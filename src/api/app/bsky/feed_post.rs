@@ -180,6 +180,7 @@ fn default_type_feedpost() -> String {
 pub enum FeedPostEmbedUnion {
     EmbedImages(Box<crate::api::app::bsky::EmbedImages>),
     EmbedVideo(Box<crate::api::app::bsky::EmbedVideo>),
+    EmbedGallery(Box<crate::api::app::bsky::EmbedGallery>),
     EmbedExternal(Box<crate::api::app::bsky::EmbedExternal>),
     EmbedRecord(Box<crate::api::app::bsky::EmbedRecord>),
     EmbedRecordWithMedia(Box<crate::api::app::bsky::EmbedRecordWithMedia>),
@@ -207,6 +208,17 @@ impl serde::Serialize for FeedPostEmbedUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("app.bsky.embed.video".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            FeedPostEmbedUnion::EmbedGallery(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("app.bsky.embed.gallery".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -275,6 +287,11 @@ impl<'de> serde::Deserialize<'de> for FeedPostEmbedUnion {
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(FeedPostEmbedUnion::EmbedVideo(Box::new(inner)))
             }
+            "app.bsky.embed.gallery" | "app.bsky.embed.gallery#main" => {
+                let inner: crate::api::app::bsky::EmbedGallery =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(FeedPostEmbedUnion::EmbedGallery(Box::new(inner)))
+            }
             "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -312,6 +329,7 @@ impl FeedPostEmbedUnion {
         match self {
             FeedPostEmbedUnion::EmbedImages(inner) => inner.encode_cbor(buf),
             FeedPostEmbedUnion::EmbedVideo(inner) => inner.encode_cbor(buf),
+            FeedPostEmbedUnion::EmbedGallery(inner) => inner.encode_cbor(buf),
             FeedPostEmbedUnion::EmbedExternal(inner) => inner.encode_cbor(buf),
             FeedPostEmbedUnion::EmbedRecord(inner) => inner.encode_cbor(buf),
             FeedPostEmbedUnion::EmbedRecordWithMedia(inner) => inner.encode_cbor(buf),
@@ -369,6 +387,11 @@ impl FeedPostEmbedUnion {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideo::decode_cbor(&mut dec)?;
                 Ok(FeedPostEmbedUnion::EmbedVideo(Box::new(inner)))
+            }
+            "app.bsky.embed.gallery" | "app.bsky.embed.gallery#main" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::app::bsky::EmbedGallery::decode_cbor(&mut dec)?;
+                Ok(FeedPostEmbedUnion::EmbedGallery(Box::new(inner)))
             }
             "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);

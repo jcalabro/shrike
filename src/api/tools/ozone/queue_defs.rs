@@ -563,6 +563,9 @@ pub struct QueueDefsQueueView {
     pub id: i64,
     /// Display name of the queue
     pub name: String,
+    /// Policy keys recommended when actioning reports in this queue
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recommended_policies: Vec<String>,
     /// Report reason types this queue accepts (fully qualified NSIDs)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub report_types: Vec<String>,
@@ -590,7 +593,7 @@ impl QueueDefsQueueView {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 9u64;
+            let mut count = 7u64;
             if self.deleted_at.is_some() {
                 count += 1;
             }
@@ -598,6 +601,15 @@ impl QueueDefsQueueView {
                 count += 1;
             }
             if self.description.is_some() {
+                count += 1;
+            }
+            if !self.report_types.is_empty() {
+                count += 1;
+            }
+            if !self.subject_types.is_empty() {
+                count += 1;
+            }
+            if !self.recommended_policies.is_empty() {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
@@ -633,17 +645,29 @@ impl QueueDefsQueueView {
                     crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
                 }
             }
-            crate::cbor::Encoder::new(&mut *buf).encode_text("reportTypes")?;
-            crate::cbor::Encoder::new(&mut *buf)
-                .encode_array_header(self.report_types.len() as u64)?;
-            for item in &self.report_types {
-                crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+            if !self.report_types.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("reportTypes")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.report_types.len() as u64)?;
+                for item in &self.report_types {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
             }
-            crate::cbor::Encoder::new(&mut *buf).encode_text("subjectTypes")?;
-            crate::cbor::Encoder::new(&mut *buf)
-                .encode_array_header(self.subject_types.len() as u64)?;
-            for item in &self.subject_types {
-                crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+            if !self.subject_types.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("subjectTypes")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.subject_types.len() as u64)?;
+                for item in &self.subject_types {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
+            }
+            if !self.recommended_policies.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("recommendedPolicies")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.recommended_policies.len() as u64)?;
+                for item in &self.recommended_policies {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
             }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
@@ -704,7 +728,7 @@ impl QueueDefsQueueView {
                 }
                 pairs.push(("description", vbuf));
             }
-            {
+            if !self.report_types.is_empty() {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf)
                     .encode_array_header(self.report_types.len() as u64)?;
@@ -713,7 +737,7 @@ impl QueueDefsQueueView {
                 }
                 pairs.push(("reportTypes", vbuf));
             }
-            {
+            if !self.subject_types.is_empty() {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf)
                     .encode_array_header(self.subject_types.len() as u64)?;
@@ -721,6 +745,15 @@ impl QueueDefsQueueView {
                     crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
                 }
                 pairs.push(("subjectTypes", vbuf));
+            }
+            if !self.recommended_policies.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_array_header(self.recommended_policies.len() as u64)?;
+                for item in &self.recommended_policies {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
+                }
+                pairs.push(("recommendedPolicies", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -763,6 +796,7 @@ impl QueueDefsQueueView {
         let mut field_description: Option<String> = None;
         let mut field_report_types: Vec<String> = Vec::new();
         let mut field_subject_types: Vec<String> = Vec::new();
+        let mut field_recommended_policies: Vec<String> = Vec::new();
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -888,6 +922,21 @@ impl QueueDefsQueueView {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
+                "recommendedPolicies" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_recommended_policies.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -922,6 +971,7 @@ impl QueueDefsQueueView {
             description: field_description,
             report_types: field_report_types,
             subject_types: field_subject_types,
+            recommended_policies: field_recommended_policies,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })

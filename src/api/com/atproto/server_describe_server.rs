@@ -235,6 +235,9 @@ pub struct ServerDescribeServerOutput {
     /// List of domain suffixes that can be used in account handles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_user_domains: Vec<String>,
+    /// Maximum size of a blob that can be uploaded via com.atproto.repo.uploadBlob, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob_upload_limit: Option<i64>,
     /// Contact information
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<ServerDescribeServerContact>,

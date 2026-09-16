@@ -17,7 +17,7 @@ pub struct ModerationGetConvosOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ModerationGetConvos — [NOTE: This is under active development and should be considered unstable while this note is here]. Gets existing conversations by their IDs, for moderation purposes. Does not require the requester to be a member of the conversations. Unknown IDs are silently omitted from the response.
+/// ModerationGetConvos — Gets existing conversations by their IDs, for moderation purposes. Does not require the requester to be a member of the conversations. Unknown IDs are silently omitted from the response.
 pub async fn moderation_get_convos(
     client: &crate::xrpc::Client,
     params: &ModerationGetConvosParams,

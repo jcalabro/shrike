@@ -57,6 +57,9 @@ pub struct NotificationListNotificationsNotification {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason_subject: Option<crate::syntax::AtUri>,
     pub record: serde_json::Value,
+    /// The starter pack associated with this notification. Present when the notification is for a follow originating from a starter pack.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starter_pack: Option<crate::api::app::bsky::GraphDefsStarterPackViewBasic>,
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -78,6 +81,9 @@ impl NotificationListNotificationsNotification {
             // Fast path: no extra fields to merge.
             let mut count = 6u64;
             if !self.labels.is_empty() {
+                count += 1;
+            }
+            if self.starter_pack.is_some() {
                 count += 1;
             }
             if self.reason_subject.is_some() {
@@ -104,6 +110,12 @@ impl NotificationListNotificationsNotification {
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.reason)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("indexedAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.indexed_at.as_str())?;
+            if self.starter_pack.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("starterPack")?;
+                if let Some(ref val) = self.starter_pack {
+                    val.encode_cbor(buf)?;
+                }
+            }
             if self.reason_subject.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("reasonSubject")?;
                 if let Some(ref val) = self.reason_subject {
@@ -152,6 +164,13 @@ impl NotificationListNotificationsNotification {
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.indexed_at.as_str())?;
                 pairs.push(("indexedAt", vbuf));
             }
+            if self.starter_pack.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.starter_pack {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("starterPack", vbuf));
+            }
             if self.reason_subject.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.reason_subject {
@@ -195,6 +214,8 @@ impl NotificationListNotificationsNotification {
         let mut field_labels: Vec<crate::api::com::atproto::LabelDefsLabel> = Vec::new();
         let mut field_reason: Option<String> = None;
         let mut field_indexed_at: Option<crate::syntax::Datetime> = None;
+        let mut field_starter_pack: Option<crate::api::app::bsky::GraphDefsStarterPackViewBasic> =
+            None;
         let mut field_reason_subject: Option<crate::syntax::AtUri> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -261,6 +282,15 @@ impl NotificationListNotificationsNotification {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "starterPack" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_starter_pack = Some(
+                        crate::api::app::bsky::GraphDefsStarterPackViewBasic::decode_cbor(
+                            &mut dec,
+                        )?,
+                    );
+                }
                 "reasonSubject" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_reason_subject = Some(
@@ -299,6 +329,7 @@ impl NotificationListNotificationsNotification {
             indexed_at: field_indexed_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'indexedAt'".into())
             })?,
+            starter_pack: field_starter_pack,
             reason_subject: field_reason_subject,
             extra: std::collections::HashMap::new(),
             extra_cbor,

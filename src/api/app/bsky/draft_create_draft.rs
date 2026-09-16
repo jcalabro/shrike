@@ -13,7 +13,7 @@ pub struct DraftCreateDraftInput {
 #[serde(rename_all = "camelCase")]
 pub struct DraftCreateDraftOutput {
     /// The ID of the created draft.
-    pub id: String,
+    pub id: crate::syntax::Tid,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,

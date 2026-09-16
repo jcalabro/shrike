@@ -16,7 +16,7 @@ pub struct QueueListQueuesParams {
     /// Filter queues that handle any of these report reason types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub report_types: Vec<String>,
-    /// Filter queues that handle this subject type ('account' or 'record').
+    /// Filter queues that handle this subject type ('account', 'record', 'message', or 'conversation').
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_type: Option<String>,
 }

@@ -107,6 +107,17 @@ pub use moderation_emit_event::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod moderation_get_account_preferences;
+pub use moderation_get_account_preferences::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod moderation_get_account_timeline;
 pub use moderation_get_account_timeline::*;
 
@@ -360,6 +371,17 @@ pub use report_assign_moderator::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod report_close_reports;
+pub use report_close_reports::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod report_create_activity;
 pub use report_create_activity::*;
 
@@ -439,6 +461,17 @@ pub use report_get_report::*;
 )]
 mod report_list_activities;
 pub use report_list_activities::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod report_query_activities;
+pub use report_query_activities::*;
 
 #[allow(
     clippy::unwrap_used,

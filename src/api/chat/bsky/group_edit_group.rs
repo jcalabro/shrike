@@ -19,7 +19,7 @@ pub struct GroupEditGroupOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupEditGroup — [NOTE: This is under active development and should be considered unstable while this note is here]. Edits group settings.
+/// GroupEditGroup — Edits group settings.
 pub async fn group_edit_group(
     client: &crate::xrpc::Client,
     input: &GroupEditGroupInput,

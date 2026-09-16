@@ -18,7 +18,7 @@ pub struct GroupRejectJoinRequestOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupRejectJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Rejects a request to join a group (via join link) the user owns. Action taken by the group owner.
+/// GroupRejectJoinRequest — Rejects a request to join a group (via join link) the user owns. Action taken by the group owner.
 pub async fn group_reject_join_request(
     client: &crate::xrpc::Client,
     input: &GroupRejectJoinRequestInput,

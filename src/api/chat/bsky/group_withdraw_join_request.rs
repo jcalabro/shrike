@@ -17,7 +17,7 @@ pub struct GroupWithdrawJoinRequestOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupWithdrawJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Withdraws a pending request to join a group. Action taken by the prospective member who originally requested to join.
+/// GroupWithdrawJoinRequest — Withdraws a pending request to join a group. Action taken by the prospective member who originally requested to join.
 pub async fn group_withdraw_join_request(
     client: &crate::xrpc::Client,
     input: &GroupWithdrawJoinRequestInput,

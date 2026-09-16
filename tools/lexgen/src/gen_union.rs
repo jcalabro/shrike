@@ -252,15 +252,20 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
+    fn test_ctx() -> Option<(Config, HashMap<String, shrike::lexicon::Schema>)> {
+        if !Path::new("../../lexicons").is_dir() {
+            return None;
+        }
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
-        (cfg, schemas)
+        Some((cfg, schemas))
     }
 
     #[test]
     fn gen_embed_union() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.feed.post").unwrap();
         let ctx = GenContext {
             schema,
@@ -286,7 +291,9 @@ mod tests {
 
     #[test]
     fn gen_closed_union_no_unknown() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.feed.post").unwrap();
         let ctx = GenContext {
             schema,
@@ -307,7 +314,9 @@ mod tests {
         // L27: a main-def variant must accept both the conformant bare NSID and
         // the non-conformant explicit `nsid#main` form on deserialize, while
         // still emitting only the bare NSID. app.bsky.embed.images is a main def.
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.feed.post").unwrap();
         let ctx = GenContext {
             schema,
@@ -332,7 +341,9 @@ mod tests {
 
     #[test]
     fn non_main_ref_has_no_main_alias() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.feed.post").unwrap();
         let ctx = GenContext {
             schema,

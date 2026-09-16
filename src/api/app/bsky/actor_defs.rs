@@ -192,6 +192,9 @@ impl ActorDefsBskyAppProgressGuide {
 pub struct ActorDefsBskyAppStatePref {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_progress_guide: Option<ActorDefsBskyAppProgressGuide>,
+    /// Indicates if the user is participating in the beta features program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_beta_user: Option<bool>,
     /// Storage for NUXs the user has encountered.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub nuxs: Vec<ActorDefsNux>,
@@ -220,6 +223,9 @@ impl ActorDefsBskyAppStatePref {
             if !self.nuxs.is_empty() {
                 count += 1;
             }
+            if self.is_beta_user.is_some() {
+                count += 1;
+            }
             if !self.queued_nudges.is_empty() {
                 count += 1;
             }
@@ -232,6 +238,12 @@ impl ActorDefsBskyAppStatePref {
                 crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.nuxs.len() as u64)?;
                 for item in &self.nuxs {
                     item.encode_cbor(buf)?;
+                }
+            }
+            if self.is_beta_user.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("isBetaUser")?;
+                if let Some(ref val) = self.is_beta_user {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
                 }
             }
             if !self.queued_nudges.is_empty() {
@@ -258,6 +270,13 @@ impl ActorDefsBskyAppStatePref {
                     item.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("nuxs", vbuf));
+            }
+            if self.is_beta_user.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.is_beta_user {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("isBetaUser", vbuf));
             }
             if !self.queued_nudges.is_empty() {
                 let mut vbuf = Vec::new();
@@ -305,6 +324,7 @@ impl ActorDefsBskyAppStatePref {
         };
 
         let mut field_nuxs: Vec<ActorDefsNux> = Vec::new();
+        let mut field_is_beta_user: Option<bool> = None;
         let mut field_queued_nudges: Vec<String> = Vec::new();
         let mut field_active_progress_guide: Option<ActorDefsBskyAppProgressGuide> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
@@ -320,6 +340,13 @@ impl ActorDefsBskyAppStatePref {
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "isBetaUser" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_is_beta_user = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
                 "queuedNudges" => {
@@ -352,6 +379,7 @@ impl ActorDefsBskyAppStatePref {
 
         Ok(ActorDefsBskyAppStatePref {
             nuxs: field_nuxs,
+            is_beta_user: field_is_beta_user,
             queued_nudges: field_queued_nudges,
             active_progress_guide: field_active_progress_guide,
             extra: std::collections::HashMap::new(),
@@ -1022,6 +1050,9 @@ pub struct ActorDefsInterestsPref {
     /// A list of tags which describe the account owner's interests gathered during onboarding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// The timestamp when the account owner last updated their interests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<crate::syntax::Datetime>,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -1040,12 +1071,21 @@ impl ActorDefsInterestsPref {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 1u64;
+            let mut count = 1u64;
+            if self.updated_at.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("tags")?;
             crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.tags.len() as u64)?;
             for item in &self.tags {
                 crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+            }
+            if self.updated_at.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("updatedAt")?;
+                if let Some(ref val) = self.updated_at {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val.as_str())?;
+                }
             }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
@@ -1057,6 +1097,13 @@ impl ActorDefsInterestsPref {
                     crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
                 }
                 pairs.push(("tags", vbuf));
+            }
+            if self.updated_at.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.updated_at {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val.as_str())?;
+                }
+                pairs.push(("updatedAt", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -1088,6 +1135,7 @@ impl ActorDefsInterestsPref {
         };
 
         let mut field_tags: Vec<String> = Vec::new();
+        let mut field_updated_at: Option<crate::syntax::Datetime> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -1107,6 +1155,16 @@ impl ActorDefsInterestsPref {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
+                "updatedAt" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_updated_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -1116,6 +1174,7 @@ impl ActorDefsInterestsPref {
 
         Ok(ActorDefsInterestsPref {
             tags: field_tags,
+            updated_at: field_updated_at,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -6727,10 +6786,17 @@ pub struct ActorDefsViewerState {
     /// This property is present only in selected cases, as an optimization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub known_followers: Option<ActorDefsKnownFollowers>,
+    /// Whether the account is fully muted, directly or via a mutelist. False when the mute is scoped to specific kinds; see mutedOnlyReposts and mutedOnlyQuoteposts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted_by_list: Option<crate::api::app::bsky::GraphDefsListViewBasic>,
+    /// Whether the account's quote posts are muted. Scoped mutes are exclusive with muted: this can be true while muted is false. If muted is true, this will be false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_only_quoteposts: Option<bool>,
+    /// Whether the account's reposts are muted. Scoped mutes are exclusive with muted: this can be true while muted is false. If muted is true, this will be false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_only_reposts: Option<bool>,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -6772,6 +6838,12 @@ impl ActorDefsViewerState {
                 count += 1;
             }
             if self.known_followers.is_some() {
+                count += 1;
+            }
+            if self.muted_only_reposts.is_some() {
+                count += 1;
+            }
+            if self.muted_only_quoteposts.is_some() {
                 count += 1;
             }
             if self.activity_subscription.is_some() {
@@ -6824,6 +6896,18 @@ impl ActorDefsViewerState {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("knownFollowers")?;
                 if let Some(ref val) = self.known_followers {
                     val.encode_cbor(buf)?;
+                }
+            }
+            if self.muted_only_reposts.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("mutedOnlyReposts")?;
+                if let Some(ref val) = self.muted_only_reposts {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
+                }
+            }
+            if self.muted_only_quoteposts.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("mutedOnlyQuoteposts")?;
+                if let Some(ref val) = self.muted_only_quoteposts {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
                 }
             }
             if self.activity_subscription.is_some() {
@@ -6891,6 +6975,20 @@ impl ActorDefsViewerState {
                 }
                 pairs.push(("knownFollowers", vbuf));
             }
+            if self.muted_only_reposts.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.muted_only_reposts {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("mutedOnlyReposts", vbuf));
+            }
+            if self.muted_only_quoteposts.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.muted_only_quoteposts {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("mutedOnlyQuoteposts", vbuf));
+            }
             if self.activity_subscription.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.activity_subscription {
@@ -6936,6 +7034,8 @@ impl ActorDefsViewerState {
         let mut field_blocking_by_list: Option<crate::api::app::bsky::GraphDefsListViewBasic> =
             None;
         let mut field_known_followers: Option<ActorDefsKnownFollowers> = None;
+        let mut field_muted_only_reposts: Option<bool> = None;
+        let mut field_muted_only_quoteposts: Option<bool> = None;
         let mut field_activity_subscription: Option<
             crate::api::app::bsky::NotificationDefsActivitySubscription,
         > = None;
@@ -7006,6 +7106,20 @@ impl ActorDefsViewerState {
                     let mut dec = crate::cbor::Decoder::new(&raw);
                     field_known_followers = Some(ActorDefsKnownFollowers::decode_cbor(&mut dec)?);
                 }
+                "mutedOnlyReposts" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_muted_only_reposts = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "mutedOnlyQuoteposts" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_muted_only_quoteposts = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
                 "activitySubscription" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -7031,6 +7145,8 @@ impl ActorDefsViewerState {
             muted_by_list: field_muted_by_list,
             blocking_by_list: field_blocking_by_list,
             known_followers: field_known_followers,
+            muted_only_reposts: field_muted_only_reposts,
+            muted_only_quoteposts: field_muted_only_quoteposts,
             activity_subscription: field_activity_subscription,
             extra: std::collections::HashMap::new(),
             extra_cbor,

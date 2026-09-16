@@ -9,6 +9,9 @@ pub struct VideoDefsJobStatus {
     pub did: crate::syntax::Did,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// A machine-readable code for why the video processing job failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
     pub job_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -48,6 +51,9 @@ impl VideoDefsJobStatus {
             if self.progress.is_some() {
                 count += 1;
             }
+            if self.failure_code.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("did")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.did.as_str())?;
@@ -77,6 +83,12 @@ impl VideoDefsJobStatus {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("progress")?;
                 if let Some(ref val) = self.progress {
                     crate::cbor::Encoder::new(&mut *buf).encode_i64(*val)?;
+                }
+            }
+            if self.failure_code.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("failureCode")?;
+                if let Some(ref val) = self.failure_code {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
                 }
             }
         } else {
@@ -125,6 +137,13 @@ impl VideoDefsJobStatus {
                 }
                 pairs.push(("progress", vbuf));
             }
+            if self.failure_code.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.failure_code {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("failureCode", vbuf));
+            }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
             }
@@ -161,6 +180,7 @@ impl VideoDefsJobStatus {
         let mut field_state: Option<String> = None;
         let mut field_message: Option<String> = None;
         let mut field_progress: Option<i64> = None;
+        let mut field_failure_code: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -223,6 +243,13 @@ impl VideoDefsJobStatus {
                         ));
                     }
                 },
+                "failureCode" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_failure_code = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -244,6 +271,7 @@ impl VideoDefsJobStatus {
             })?,
             message: field_message,
             progress: field_progress,
+            failure_code: field_failure_code,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })

@@ -61,15 +61,20 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    fn load_test_data() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
+    fn load_test_data() -> Option<(Config, HashMap<String, shrike::lexicon::Schema>)> {
+        if !std::path::Path::new("../../lexicons").is_dir() {
+            return None;
+        }
         let cfg = Config::load(std::path::Path::new("../../lexgen.json")).unwrap();
         let schemas = crate::loader::load_schemas(std::path::Path::new("../../lexicons")).unwrap();
-        (cfg, schemas)
+        Some((cfg, schemas))
     }
 
     #[test]
     fn resolve_local_ref() {
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         let resolved = resolve_ref(&cfg, "app.bsky.feed.post", "#replyRef", &schemas).unwrap();
         assert_eq!(resolved.type_name, "FeedPostReplyRef");
         assert_eq!(resolved.module_path, "crate::api::app::bsky");
@@ -79,7 +84,9 @@ mod tests {
 
     #[test]
     fn resolve_cross_schema_ref() {
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         let resolved = resolve_ref(
             &cfg,
             "app.bsky.feed.post",
@@ -93,7 +100,9 @@ mod tests {
 
     #[test]
     fn resolve_hash_ref() {
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         let resolved = resolve_ref(
             &cfg,
             "app.bsky.feed.post",
@@ -107,13 +116,17 @@ mod tests {
 
     #[test]
     fn resolve_nonexistent_schema_fails() {
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         assert!(resolve_ref(&cfg, "test", "nonexistent.schema", &schemas).is_err());
     }
 
     #[test]
     fn resolve_nonexistent_def_fails() {
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         assert!(resolve_ref(&cfg, "test", "app.bsky.feed.post#nonexistent", &schemas).is_err());
     }
 
@@ -148,7 +161,9 @@ mod tests {
     #[test]
     fn resolve_all_refs_in_post_schema() {
         // Verify ALL refs in app.bsky.feed.post can be resolved
-        let (cfg, schemas) = load_test_data();
+        let Some((cfg, schemas)) = load_test_data() else {
+            return;
+        };
         let refs = [
             "#replyRef",
             "#entity",

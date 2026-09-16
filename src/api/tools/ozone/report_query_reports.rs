@@ -40,7 +40,7 @@ pub struct ReportQueryReportsParams {
     /// Filter by subject DID or AT-URI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-    /// If specified, reports of the given type (account or record) will be returned.
+    /// If specified, reports of the given subject type will be returned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_type: Option<String>,
 }

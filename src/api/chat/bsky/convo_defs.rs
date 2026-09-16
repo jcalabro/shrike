@@ -1071,7 +1071,7 @@ impl ConvoDefsDeletedMessageView {
     }
 }
 
-/// ConvoDefsDirectConvo — [NOTE: This is under active development and should be considered unstable while this note is here].
+/// ConvoDefsDirectConvo object from chat.bsky.convo.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsDirectConvo {
@@ -1145,7 +1145,7 @@ impl ConvoDefsDirectConvo {
     }
 }
 
-/// ConvoDefsGroupConvo — [NOTE: This is under active development and should be considered unstable while this note is here].
+/// ConvoDefsGroupConvo object from chat.bsky.convo.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsGroupConvo {
@@ -1157,6 +1157,8 @@ pub struct ConvoDefsGroupConvo {
     pub join_request_count: Option<i64>,
     /// The lock status of the conversation.
     pub lock_status: ConvoDefsConvoLockStatus,
+    /// Whether the lock status is being forced by a moderation override (account inactivation or convo takedown) rather than the owner's own setting.
+    pub lock_status_moderation_override: bool,
     /// The total number of members in the group conversation.
     pub member_count: i64,
     /// The maximum number of members allowed in the group conversation.
@@ -1184,7 +1186,7 @@ impl ConvoDefsGroupConvo {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let mut count = 5u64;
+            let mut count = 6u64;
             if self.join_link.is_some() {
                 count += 1;
             }
@@ -1223,6 +1225,9 @@ impl ConvoDefsGroupConvo {
                     crate::cbor::Encoder::new(&mut *buf).encode_i64(*val)?;
                 }
             }
+            crate::cbor::Encoder::new(&mut *buf).encode_text("lockStatusModerationOverride")?;
+            crate::cbor::Encoder::new(&mut *buf)
+                .encode_bool(self.lock_status_moderation_override)?;
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -1272,6 +1277,12 @@ impl ConvoDefsGroupConvo {
                 }
                 pairs.push(("unreadJoinRequestCount", vbuf));
             }
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_bool(self.lock_status_moderation_override)?;
+                pairs.push(("lockStatusModerationOverride", vbuf));
+            }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
             }
@@ -1309,6 +1320,7 @@ impl ConvoDefsGroupConvo {
         let mut field_member_limit: Option<i64> = None;
         let mut field_join_request_count: Option<i64> = None;
         let mut field_unread_join_request_count: Option<i64> = None;
+        let mut field_lock_status_moderation_override: Option<bool> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -1404,6 +1416,13 @@ impl ConvoDefsGroupConvo {
                         ));
                     }
                 },
+                "lockStatusModerationOverride" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_lock_status_moderation_override = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -1430,6 +1449,13 @@ impl ConvoDefsGroupConvo {
             })?,
             join_request_count: field_join_request_count,
             unread_join_request_count: field_unread_join_request_count,
+            lock_status_moderation_override: field_lock_status_moderation_override.ok_or_else(
+                || {
+                    crate::cbor::CborError::InvalidCbor(
+                        "missing required field 'lockStatusModerationOverride'".into(),
+                    )
+                },
+            )?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -1548,7 +1574,7 @@ impl ConvoDefsLogAcceptConvo {
     }
 }
 
-/// ConvoDefsLogAddMember — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a member was added to a group convo. The member who was added gets a logBeginConvo (to create the convo) but also a logAddMember (to show the system message as the first message the user sees).
+/// ConvoDefsLogAddMember — Event indicating a member was added to a group convo. The member who was added gets a logBeginConvo (to create the convo) but also a logAddMember (to show the system message as the first message the user sees).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogAddMember {
@@ -2072,7 +2098,7 @@ impl ConvoDefsLogAddReaction {
     }
 }
 
-/// ConvoDefsLogApproveJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join request was approved by the viewer. Only the owner gets this. The approved member gets a logBeginConvo.
+/// ConvoDefsLogApproveJoinRequest — Event indicating a join request was approved by the viewer. Only the owner gets this. The approved member gets a logBeginConvo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogApproveJoinRequest {
@@ -2316,7 +2342,7 @@ impl ConvoDefsLogBeginConvo {
     }
 }
 
-/// ConvoDefsLogCreateJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join link was created for a group convo.
+/// ConvoDefsLogCreateJoinLink — Event indicating a join link was created for a group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogCreateJoinLink {
@@ -3089,7 +3115,7 @@ impl ConvoDefsLogDeleteMessage {
     }
 }
 
-/// ConvoDefsLogDisableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join link was disabled for a group convo.
+/// ConvoDefsLogDisableJoinLink — Event indicating a join link was disabled for a group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogDisableJoinLink {
@@ -3219,7 +3245,7 @@ impl ConvoDefsLogDisableJoinLink {
     }
 }
 
-/// ConvoDefsLogEditGroup — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating info about group convo was edited.
+/// ConvoDefsLogEditGroup — Event indicating info about group convo was edited.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogEditGroup {
@@ -3349,7 +3375,7 @@ impl ConvoDefsLogEditGroup {
     }
 }
 
-/// ConvoDefsLogEditJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a settings about a join link for a group convo were edited.
+/// ConvoDefsLogEditJoinLink — Event indicating a settings about a join link for a group convo were edited.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogEditJoinLink {
@@ -3479,7 +3505,7 @@ impl ConvoDefsLogEditJoinLink {
     }
 }
 
-/// ConvoDefsLogEnableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join link was enabled for a group convo.
+/// ConvoDefsLogEnableJoinLink — Event indicating a join link was enabled for a group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogEnableJoinLink {
@@ -3609,7 +3635,7 @@ impl ConvoDefsLogEnableJoinLink {
     }
 }
 
-/// ConvoDefsLogIncomingJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join request was made to a group the viewer owns. Only the owner gets this.
+/// ConvoDefsLogIncomingJoinRequest — Event indicating a join request was made to a group the viewer owns. Only the owner gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogIncomingJoinRequest {
@@ -3853,7 +3879,7 @@ impl ConvoDefsLogLeaveConvo {
     }
 }
 
-/// ConvoDefsLogLockConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a group convo was locked.
+/// ConvoDefsLogLockConvo — Event indicating a group convo was locked.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogLockConvo {
@@ -4019,7 +4045,7 @@ impl ConvoDefsLogLockConvo {
     }
 }
 
-/// ConvoDefsLogLockConvoPermanently — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a group convo was locked permanently.
+/// ConvoDefsLogLockConvoPermanently — Event indicating a group convo was locked permanently.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogLockConvoPermanently {
@@ -4185,7 +4211,7 @@ impl ConvoDefsLogLockConvoPermanently {
     }
 }
 
-/// ConvoDefsLogMemberJoin — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a member joined a group convo via join link. The member who was added gets a logBeginConvo (to create the convo) but also a logMemberJoin (to show the system message as the first message the user sees).
+/// ConvoDefsLogMemberJoin — Event indicating a member joined a group convo via join link. The member who was added gets a logBeginConvo (to create the convo) but also a logMemberJoin (to show the system message as the first message the user sees).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogMemberJoin {
@@ -4351,7 +4377,7 @@ impl ConvoDefsLogMemberJoin {
     }
 }
 
-/// ConvoDefsLogMemberLeave — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a member voluntarily left a group convo. The member who was removed gets a logLeaveConvo (to leave the convo) but not a logMemberLeave (because they already left, so can't see the system message).
+/// ConvoDefsLogMemberLeave — Event indicating a member voluntarily left a group convo. The member who was removed gets a logLeaveConvo (to leave the convo) but not a logMemberLeave (because they already left, so can't see the system message).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogMemberLeave {
@@ -4629,7 +4655,7 @@ impl ConvoDefsLogMuteConvo {
     }
 }
 
-/// ConvoDefsLogOutgoingJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join request was made by the requester. Only requester actor gets this.
+/// ConvoDefsLogOutgoingJoinRequest — Event indicating a join request was made by the requester. Only requester actor gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogOutgoingJoinRequest {
@@ -4741,7 +4767,7 @@ impl ConvoDefsLogOutgoingJoinRequest {
     }
 }
 
-/// ConvoDefsLogReadConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a convo was read up to a certain message.
+/// ConvoDefsLogReadConvo — Event indicating a convo was read up to a certain message.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogReadConvo {
@@ -5059,7 +5085,7 @@ impl ConvoDefsLogReadConvo {
     }
 }
 
-/// ConvoDefsLogReadJoinRequests — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating the group owner marked join requests as read. Only the owner gets this.
+/// ConvoDefsLogReadJoinRequests — Event indicating the group owner marked join requests as read. Only the owner gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogReadJoinRequests {
@@ -5506,7 +5532,7 @@ impl ConvoDefsLogReadMessage {
     }
 }
 
-/// ConvoDefsLogRejectJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a join request was rejected by the viewer. Only the owner gets this.
+/// ConvoDefsLogRejectJoinRequest — Event indicating a join request was rejected by the viewer. Only the owner gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogRejectJoinRequest {
@@ -5638,7 +5664,7 @@ impl ConvoDefsLogRejectJoinRequest {
     }
 }
 
-/// ConvoDefsLogRemoveMember — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a member was removed from a group convo. The member who was removed gets a logLeaveConvo (to leave the convo) but not a logRemoveMember (because they already left, so can't see the system message).
+/// ConvoDefsLogRemoveMember — Event indicating a member was removed from a group convo. The member who was removed gets a logLeaveConvo (to leave the convo) but not a logRemoveMember (because they already left, so can't see the system message).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogRemoveMember {
@@ -6159,7 +6185,7 @@ impl ConvoDefsLogRemoveReaction {
     }
 }
 
-/// ConvoDefsLogUnlockConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a group convo was unlocked.
+/// ConvoDefsLogUnlockConvo — Event indicating a group convo was unlocked.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogUnlockConvo {
@@ -6437,7 +6463,7 @@ impl ConvoDefsLogUnmuteConvo {
     }
 }
 
-/// ConvoDefsLogWithdrawIncomingJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating a prospective member withdrew their join request. Only the owner gets this.
+/// ConvoDefsLogWithdrawIncomingJoinRequest — Event indicating a prospective member withdrew their join request. Only the owner gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogWithdrawIncomingJoinRequest {
@@ -6569,7 +6595,7 @@ impl ConvoDefsLogWithdrawIncomingJoinRequest {
     }
 }
 
-/// ConvoDefsLogWithdrawOutgoingJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Event indicating the viewer withdrew their own join request. Only requester actor gets this.
+/// ConvoDefsLogWithdrawOutgoingJoinRequest — Event indicating the viewer withdrew their own join request. Only requester actor gets this.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsLogWithdrawOutgoingJoinRequest {
@@ -6789,6 +6815,80 @@ impl ConvoDefsMessageAndReactionView {
     }
 }
 
+/// ConvoDefsMessageBeforeUserJoinedGroupView — Placeholder embedded in place of a reply's parent message when that parent was sent before the viewer joined the group convo. The viewer has no access to that history, so no message data is carried.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvoDefsMessageBeforeUserJoinedGroupView {
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl ConvoDefsMessageBeforeUserJoinedGroupView {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let count = 0u64;
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(ConvoDefsMessageBeforeUserJoinedGroupView {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+}
+
 /// ConvoDefsMessageInput object from chat.bsky.convo.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -6798,6 +6898,9 @@ pub struct ConvoDefsMessageInput {
     /// Annotations of text (mentions, URLs, hashtags, etc)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
+    /// If set, the message this message is replying to. The referenced message must be in the same convo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<ConvoDefsReplyRef>,
     pub text: String,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -6984,6 +7087,9 @@ impl ConvoDefsMessageInput {
             if !self.facets.is_empty() {
                 count += 1;
             }
+            if self.reply_to.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("text")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.text)?;
@@ -6999,6 +7105,12 @@ impl ConvoDefsMessageInput {
                     .encode_array_header(self.facets.len() as u64)?;
                 for item in &self.facets {
                     item.encode_cbor(buf)?;
+                }
+            }
+            if self.reply_to.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("replyTo")?;
+                if let Some(ref val) = self.reply_to {
+                    val.encode_cbor(buf)?;
                 }
             }
         } else {
@@ -7024,6 +7136,13 @@ impl ConvoDefsMessageInput {
                     item.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("facets", vbuf));
+            }
+            if self.reply_to.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.reply_to {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("replyTo", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -7057,6 +7176,7 @@ impl ConvoDefsMessageInput {
         let mut field_text: Option<String> = None;
         let mut field_embed: Option<ConvoDefsMessageInputEmbedUnion> = None;
         let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut field_reply_to: Option<ConvoDefsReplyRef> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -7085,6 +7205,11 @@ impl ConvoDefsMessageInput {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
+                "replyTo" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_reply_to = Some(ConvoDefsReplyRef::decode_cbor(&mut dec)?);
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -7098,6 +7223,7 @@ impl ConvoDefsMessageInput {
             })?,
             embed: field_embed,
             facets: field_facets,
+            reply_to: field_reply_to,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -7251,6 +7377,9 @@ pub struct ConvoDefsMessageView {
     /// Reactions to this message, in ascending order of creation time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<ConvoDefsReactionView>,
+    /// If set, the message this message is replying to. The full view of the referenced message is embedded so the client can render it inline. Only a single level is embedded: the embedded message will not itself have a populated 'replyTo' field even if it was also a reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<ConvoDefsMessageViewReplyToUnion>,
     pub rev: String,
     pub sender: ConvoDefsMessageViewSender,
     pub sent_at: crate::syntax::Datetime,
@@ -7423,6 +7552,201 @@ impl ConvoDefsMessageViewEmbedUnion {
     }
 }
 
+/// If set, the message this message is replying to. The full view of the referenced message is embedded so the client can render it inline. Only a single level is embedded: the embedded message will not itself have a populated 'replyTo' field even if it was also a reply.
+#[derive(Debug, Clone)]
+pub enum ConvoDefsMessageViewReplyToUnion {
+    ConvoDefsMessageView(Box<ConvoDefsMessageView>),
+    ConvoDefsDeletedMessageView(Box<ConvoDefsDeletedMessageView>),
+    ConvoDefsMessageBeforeUserJoinedGroupView(Box<ConvoDefsMessageBeforeUserJoinedGroupView>),
+    Unknown(crate::api::UnknownUnionVariant),
+}
+
+impl serde::Serialize for ConvoDefsMessageViewReplyToUnion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("chat.bsky.convo.defs#messageView".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsDeletedMessageView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#deletedMessageView".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageBeforeUserJoinedGroupView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "chat.bsky.convo.defs#messageBeforeUserJoinedGroupView".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            ConvoDefsMessageViewReplyToUnion::Unknown(v) => {
+                if let Some(ref j) = v.json {
+                    j.serialize(serializer)
+                } else {
+                    Err(serde::ser::Error::custom(
+                        "no JSON data for unknown union variant",
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ConvoDefsMessageViewReplyToUnion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let type_str = value
+            .get("$type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        match type_str {
+            "chat.bsky.convo.defs#messageView" => {
+                let inner: ConvoDefsMessageView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageView(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#deletedMessageView" => {
+                let inner: ConvoDefsDeletedMessageView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(ConvoDefsMessageViewReplyToUnion::ConvoDefsDeletedMessageView(Box::new(inner)))
+            }
+            "chat.bsky.convo.defs#messageBeforeUserJoinedGroupView" => {
+                let inner: ConvoDefsMessageBeforeUserJoinedGroupView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(
+                    ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageBeforeUserJoinedGroupView(
+                        Box::new(inner),
+                    ),
+                )
+            }
+            _ => Ok(ConvoDefsMessageViewReplyToUnion::Unknown(
+                crate::api::UnknownUnionVariant {
+                    r#type: type_str.to_string(),
+                    json: Some(value),
+                    cbor: None,
+                },
+            )),
+        }
+    }
+}
+
+impl ConvoDefsMessageViewReplyToUnion {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        match self {
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageView(inner) => inner.encode_cbor(buf),
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsDeletedMessageView(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageBeforeUserJoinedGroupView(inner) => {
+                inner.encode_cbor(buf)
+            }
+            ConvoDefsMessageViewReplyToUnion::Unknown(v) => {
+                if let Some(ref data) = v.cbor {
+                    buf.extend_from_slice(data);
+                    Ok(())
+                } else {
+                    Err(crate::cbor::CborError::InvalidCbor(
+                        "no CBOR data for unknown union variant".into(),
+                    ))
+                }
+            }
+        }
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        // Save position, decode the value, look for $type key.
+        let start = decoder.position();
+        let val = decoder.decode()?;
+        let end = decoder.position();
+        let raw = &decoder.raw_input()[start..end];
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => {
+                return Err(crate::cbor::CborError::InvalidCbor(
+                    "expected map for union".into(),
+                ));
+            }
+        };
+        let type_str = entries
+            .iter()
+            .find(|(k, _)| *k == "$type")
+            .and_then(|(_, v)| match v {
+                crate::cbor::Value::Text(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap_or_default();
+        match type_str {
+            "chat.bsky.convo.defs#messageView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = ConvoDefsMessageView::decode_cbor(&mut dec)?;
+                Ok(ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageView(
+                    Box::new(inner),
+                ))
+            }
+            "chat.bsky.convo.defs#deletedMessageView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = ConvoDefsDeletedMessageView::decode_cbor(&mut dec)?;
+                Ok(ConvoDefsMessageViewReplyToUnion::ConvoDefsDeletedMessageView(Box::new(inner)))
+            }
+            "chat.bsky.convo.defs#messageBeforeUserJoinedGroupView" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = ConvoDefsMessageBeforeUserJoinedGroupView::decode_cbor(&mut dec)?;
+                Ok(
+                    ConvoDefsMessageViewReplyToUnion::ConvoDefsMessageBeforeUserJoinedGroupView(
+                        Box::new(inner),
+                    ),
+                )
+            }
+            _ => Ok(ConvoDefsMessageViewReplyToUnion::Unknown(
+                crate::api::UnknownUnionVariant {
+                    r#type: type_str.to_string(),
+                    json: None,
+                    cbor: Some(raw.to_vec()),
+                },
+            )),
+        }
+    }
+}
+
 impl ConvoDefsMessageView {
     pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
         let mut buf = Vec::new();
@@ -7438,6 +7762,9 @@ impl ConvoDefsMessageView {
                 count += 1;
             }
             if !self.facets.is_empty() {
+                count += 1;
+            }
+            if self.reply_to.is_some() {
                 count += 1;
             }
             if !self.reactions.is_empty() {
@@ -7468,6 +7795,12 @@ impl ConvoDefsMessageView {
             self.sender.encode_cbor(buf)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("sentAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.sent_at.as_str())?;
+            if self.reply_to.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("replyTo")?;
+                if let Some(ref val) = self.reply_to {
+                    val.encode_cbor(buf)?;
+                }
+            }
             if !self.reactions.is_empty() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("reactions")?;
                 crate::cbor::Encoder::new(&mut *buf)
@@ -7520,6 +7853,13 @@ impl ConvoDefsMessageView {
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.sent_at.as_str())?;
                 pairs.push(("sentAt", vbuf));
             }
+            if self.reply_to.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.reply_to {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("replyTo", vbuf));
+            }
             if !self.reactions.is_empty() {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf)
@@ -7565,6 +7905,7 @@ impl ConvoDefsMessageView {
         let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
         let mut field_sender: Option<ConvoDefsMessageViewSender> = None;
         let mut field_sent_at: Option<crate::syntax::Datetime> = None;
+        let mut field_reply_to: Option<ConvoDefsMessageViewReplyToUnion> = None;
         let mut field_reactions: Vec<ConvoDefsReactionView> = Vec::new();
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -7623,6 +7964,11 @@ impl ConvoDefsMessageView {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "replyTo" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_reply_to = Some(ConvoDefsMessageViewReplyToUnion::decode_cbor(&mut dec)?);
+                }
                 "reactions" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
@@ -7659,6 +8005,7 @@ impl ConvoDefsMessageView {
             sent_at: field_sent_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
             })?,
+            reply_to: field_reply_to,
             reactions: field_reactions,
             extra: std::collections::HashMap::new(),
             extra_cbor,
@@ -7990,7 +8337,100 @@ impl ConvoDefsReactionViewSender {
     }
 }
 
-/// ConvoDefsSystemMessageDataAddMember — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating a user was added to the group convo.
+/// ConvoDefsReplyRef — A reference to another message within the same convo, used to indicate that a message is a reply to it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvoDefsReplyRef {
+    pub message_id: String,
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl ConvoDefsReplyRef {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let count = 1u64;
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("messageId")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text(&self.message_id)?;
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.message_id)?;
+                pairs.push(("messageId", vbuf));
+            }
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut field_message_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                "messageId" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_message_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(ConvoDefsReplyRef {
+            message_id: field_message_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'messageId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+}
+
+/// ConvoDefsSystemMessageDataAddMember — System message indicating a user was added to the group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataAddMember {
@@ -8120,7 +8560,7 @@ impl ConvoDefsSystemMessageDataAddMember {
     }
 }
 
-/// ConvoDefsSystemMessageDataCreateJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group join link was created.
+/// ConvoDefsSystemMessageDataCreateJoinLink — System message indicating the group join link was created.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataCreateJoinLink {
@@ -8194,7 +8634,7 @@ impl ConvoDefsSystemMessageDataCreateJoinLink {
     }
 }
 
-/// ConvoDefsSystemMessageDataDisableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group join link was disabled.
+/// ConvoDefsSystemMessageDataDisableJoinLink — System message indicating the group join link was disabled.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataDisableJoinLink {
@@ -8268,7 +8708,7 @@ impl ConvoDefsSystemMessageDataDisableJoinLink {
     }
 }
 
-/// ConvoDefsSystemMessageDataEditGroup — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group info was edited.
+/// ConvoDefsSystemMessageDataEditGroup — System message indicating the group info was edited.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataEditGroup {
@@ -8398,7 +8838,7 @@ impl ConvoDefsSystemMessageDataEditGroup {
     }
 }
 
-/// ConvoDefsSystemMessageDataEditJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group join link was edited.
+/// ConvoDefsSystemMessageDataEditJoinLink — System message indicating the group join link was edited.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataEditJoinLink {
@@ -8472,7 +8912,7 @@ impl ConvoDefsSystemMessageDataEditJoinLink {
     }
 }
 
-/// ConvoDefsSystemMessageDataEnableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group join link was enabled.
+/// ConvoDefsSystemMessageDataEnableJoinLink — System message indicating the group join link was enabled.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataEnableJoinLink {
@@ -8546,7 +8986,7 @@ impl ConvoDefsSystemMessageDataEnableJoinLink {
     }
 }
 
-/// ConvoDefsSystemMessageDataLockConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group convo was locked.
+/// ConvoDefsSystemMessageDataLockConvo — System message indicating the group convo was locked.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataLockConvo {
@@ -8639,7 +9079,7 @@ impl ConvoDefsSystemMessageDataLockConvo {
     }
 }
 
-/// ConvoDefsSystemMessageDataLockConvoPermanently — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group convo was locked permanently.
+/// ConvoDefsSystemMessageDataLockConvoPermanently — System message indicating the group convo was locked permanently.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataLockConvoPermanently {
@@ -8732,7 +9172,7 @@ impl ConvoDefsSystemMessageDataLockConvoPermanently {
     }
 }
 
-/// ConvoDefsSystemMessageDataMemberJoin — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating a user joined the group convo via join link.
+/// ConvoDefsSystemMessageDataMemberJoin — System message indicating a user joined the group convo via join link.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataMemberJoin {
@@ -8871,7 +9311,7 @@ impl ConvoDefsSystemMessageDataMemberJoin {
     }
 }
 
-/// ConvoDefsSystemMessageDataMemberLeave — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating a user voluntarily left the group convo.
+/// ConvoDefsSystemMessageDataMemberLeave — System message indicating a user voluntarily left the group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataMemberLeave {
@@ -8963,7 +9403,7 @@ impl ConvoDefsSystemMessageDataMemberLeave {
     }
 }
 
-/// ConvoDefsSystemMessageDataRemoveMember — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating a user was removed from the group convo.
+/// ConvoDefsSystemMessageDataRemoveMember — System message indicating a user was removed from the group convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataRemoveMember {
@@ -9073,7 +9513,7 @@ impl ConvoDefsSystemMessageDataRemoveMember {
     }
 }
 
-/// ConvoDefsSystemMessageDataUnlockConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. System message indicating the group convo was unlocked.
+/// ConvoDefsSystemMessageDataUnlockConvo — System message indicating the group convo was unlocked.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageDataUnlockConvo {
@@ -9262,7 +9702,7 @@ impl ConvoDefsSystemMessageReferredUser {
     }
 }
 
-/// ConvoDefsSystemMessageView — [NOTE: This is under active development and should be considered unstable while this note is here].
+/// ConvoDefsSystemMessageView object from chat.bsky.convo.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConvoDefsSystemMessageView {

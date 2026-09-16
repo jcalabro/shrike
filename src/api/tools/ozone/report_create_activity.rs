@@ -5,6 +5,9 @@
 pub struct ReportCreateActivityInput {
     /// The type of activity to record.
     pub activity: ReportCreateActivityInputActivityUnion,
+    /// ID of the report moderation event. Resolves to the report created from that event. Exactly one of reportId or eventId must be provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<i64>,
     /// Optional moderator-only note. Not visible to reporters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub internal_note: Option<String>,
@@ -14,8 +17,9 @@ pub struct ReportCreateActivityInput {
     /// Optional public-facing note, potentially visible to the reporter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_note: Option<String>,
-    /// ID of the report to record activity on
-    pub report_id: i64,
+    /// ID of the report to record activity on. Exactly one of reportId or eventId must be provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_id: Option<i64>,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,

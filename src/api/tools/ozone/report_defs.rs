@@ -1677,6 +1677,9 @@ pub struct ReportDefsReportActivityView {
     /// Optional public note, potentially visible to the reporter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_note: Option<String>,
+    /// Full view of the report this activity belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<ReportDefsReportView>,
     /// ID of the report this activity belongs to
     pub report_id: i64,
     /// Extra fields not defined in the schema (JSON).
@@ -2014,6 +2017,9 @@ impl ReportDefsReportActivityView {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
             let mut count = 6u64;
+            if self.report.is_some() {
+                count += 1;
+            }
             if self.moderator.is_some() {
                 count += 1;
             }
@@ -2026,6 +2032,12 @@ impl ReportDefsReportActivityView {
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("id")?;
             crate::cbor::Encoder::new(&mut *buf).encode_i64(self.id)?;
+            if self.report.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("report")?;
+                if let Some(ref val) = self.report {
+                    val.encode_cbor(buf)?;
+                }
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_text("activity")?;
             self.activity.encode_cbor(buf)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("reportId")?;
@@ -2061,6 +2073,13 @@ impl ReportDefsReportActivityView {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_i64(self.id)?;
                 pairs.push(("id", vbuf));
+            }
+            if self.report.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.report {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("report", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -2138,6 +2157,7 @@ impl ReportDefsReportActivityView {
         };
 
         let mut field_id: Option<i64> = None;
+        let mut field_report: Option<ReportDefsReportView> = None;
         let mut field_activity: Option<ReportDefsReportActivityViewActivityUnion> = None;
         let mut field_report_id: Option<i64> = None;
         let mut field_created_at: Option<crate::syntax::Datetime> = None;
@@ -2165,6 +2185,11 @@ impl ReportDefsReportActivityView {
                         ));
                     }
                 },
+                "report" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_report = Some(ReportDefsReportView::decode_cbor(&mut dec)?);
+                }
                 "activity" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -2247,6 +2272,7 @@ impl ReportDefsReportActivityView {
                 crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
             })?,
             meta: Default::default(),
+            report: field_report,
             activity: field_activity.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'activity'".into())
             })?,
@@ -2444,6 +2470,9 @@ pub struct ReportDefsReportView {
     pub event_id: i64,
     /// Report ID
     pub id: i64,
+    /// Whether this report was emitted by automated tooling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_automated: Option<bool>,
     /// Whether this report is muted. A report is muted if the reporter was muted or the subject was muted at the time the report was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_muted: Option<bool>,
@@ -2513,6 +2542,9 @@ impl ReportDefsReportView {
                 count += 1;
             }
             if self.assignment.is_some() {
+                count += 1;
+            }
+            if self.is_automated.is_some() {
                 count += 1;
             }
             if self.subject_status.is_some() {
@@ -2591,6 +2623,12 @@ impl ReportDefsReportView {
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.report_type)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("reportedBy")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.reported_by.as_str())?;
+            if self.is_automated.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("isAutomated")?;
+                if let Some(ref val) = self.is_automated {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
+                }
+            }
             if self.subject_status.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("subjectStatus")?;
                 if let Some(ref val) = self.subject_status {
@@ -2712,6 +2750,13 @@ impl ReportDefsReportView {
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.reported_by.as_str())?;
                 pairs.push(("reportedBy", vbuf));
             }
+            if self.is_automated.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.is_automated {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("isAutomated", vbuf));
+            }
             if self.subject_status.is_some() {
                 let mut vbuf = Vec::new();
                 if let Some(ref val) = self.subject_status {
@@ -2782,6 +2827,7 @@ impl ReportDefsReportView {
         let mut field_report_type: Option<crate::api::com::atproto::ModerationDefsReasonType> =
             None;
         let mut field_reported_by: Option<crate::syntax::Did> = None;
+        let mut field_is_automated: Option<bool> = None;
         let mut field_subject_status: Option<
             crate::api::tools::ozone::ModerationDefsSubjectStatusView,
         > = None;
@@ -2937,6 +2983,13 @@ impl ReportDefsReportView {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "isAutomated" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_is_automated = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
                 "subjectStatus" => {
                     let raw = crate::cbor::encode_value(&value)?;
                     let mut dec = crate::cbor::Decoder::new(&raw);
@@ -3024,6 +3077,7 @@ impl ReportDefsReportView {
             reported_by: field_reported_by.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'reportedBy'".into())
             })?,
+            is_automated: field_is_automated,
             subject_status: field_subject_status,
             action_event_ids: field_action_event_ids,
             related_report_count: field_related_report_count,

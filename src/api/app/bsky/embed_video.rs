@@ -127,7 +127,7 @@ pub struct EmbedVideo {
     /// A hint to the client about how to present the video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presentation: Option<String>,
-    /// The mp4 video file. May be up to 100mb, formerly limited to 50mb.
+    /// The mp4 video file. May be up to 300mb, formerly limited to 100mb.
     pub video: crate::api::Blob,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]

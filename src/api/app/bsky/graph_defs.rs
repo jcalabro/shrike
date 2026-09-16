@@ -8,6 +8,9 @@ pub const GRAPH_DEFS_CURATELIST: &str = "app.bsky.graph.defs#curatelist";
 #[serde(rename_all = "camelCase")]
 pub struct GraphDefsListItemView {
     pub subject: crate::api::app::bsky::ActorDefsProfileView,
+    /// Set to true when the subject has opted out of appearing in the reference list. Only set when the viewer owns the list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_opted_out: Option<bool>,
     pub uri: crate::syntax::AtUri,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -27,12 +30,21 @@ impl GraphDefsListItemView {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 2u64;
+            let mut count = 2u64;
+            if self.subject_opted_out.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("uri")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.uri.as_str())?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("subject")?;
             self.subject.encode_cbor(buf)?;
+            if self.subject_opted_out.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("subjectOptedOut")?;
+                if let Some(ref val) = self.subject_opted_out {
+                    crate::cbor::Encoder::new(&mut *buf).encode_bool(*val)?;
+                }
+            }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -45,6 +57,13 @@ impl GraphDefsListItemView {
                 let mut vbuf = Vec::new();
                 self.subject.encode_cbor(&mut vbuf)?;
                 pairs.push(("subject", vbuf));
+            }
+            if self.subject_opted_out.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.subject_opted_out {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_bool(*val)?;
+                }
+                pairs.push(("subjectOptedOut", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -77,6 +96,7 @@ impl GraphDefsListItemView {
 
         let mut field_uri: Option<crate::syntax::AtUri> = None;
         let mut field_subject: Option<crate::api::app::bsky::ActorDefsProfileView> = None;
+        let mut field_subject_opted_out: Option<bool> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -98,6 +118,13 @@ impl GraphDefsListItemView {
                         &mut dec,
                     )?);
                 }
+                "subjectOptedOut" => {
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_subject_opted_out = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -112,6 +139,7 @@ impl GraphDefsListItemView {
             subject: field_subject.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
             })?,
+            subject_opted_out: field_subject_opted_out,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })
@@ -817,6 +845,9 @@ pub struct GraphDefsListViewerState {
     pub blocked: Option<crate::syntax::AtUri>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muted: Option<bool>,
+    /// The authenticated viewer's app.bsky.graph.referencelistoptout record URI for this reference list. Only set for reference lists. A client can delete this record to undo the opt-out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_list_opt_out: Option<crate::syntax::AtUri>,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -842,6 +873,9 @@ impl GraphDefsListViewerState {
             if self.blocked.is_some() {
                 count += 1;
             }
+            if self.reference_list_opt_out.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             if self.muted.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("muted")?;
@@ -852,6 +886,12 @@ impl GraphDefsListViewerState {
             if self.blocked.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("blocked")?;
                 if let Some(ref val) = self.blocked {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val.as_str())?;
+                }
+            }
+            if self.reference_list_opt_out.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("referenceListOptOut")?;
+                if let Some(ref val) = self.reference_list_opt_out {
                     crate::cbor::Encoder::new(&mut *buf).encode_text(val.as_str())?;
                 }
             }
@@ -871,6 +911,13 @@ impl GraphDefsListViewerState {
                     crate::cbor::Encoder::new(&mut vbuf).encode_text(val.as_str())?;
                 }
                 pairs.push(("blocked", vbuf));
+            }
+            if self.reference_list_opt_out.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.reference_list_opt_out {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val.as_str())?;
+                }
+                pairs.push(("referenceListOptOut", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -903,6 +950,7 @@ impl GraphDefsListViewerState {
 
         let mut field_muted: Option<bool> = None;
         let mut field_blocked: Option<crate::syntax::AtUri> = None;
+        let mut field_reference_list_opt_out: Option<crate::syntax::AtUri> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -924,6 +972,16 @@ impl GraphDefsListViewerState {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "referenceListOptOut" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_reference_list_opt_out = Some(
+                            crate::syntax::AtUri::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -934,6 +992,7 @@ impl GraphDefsListViewerState {
         Ok(GraphDefsListViewerState {
             muted: field_muted,
             blocked: field_blocked,
+            reference_list_opt_out: field_reference_list_opt_out,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })

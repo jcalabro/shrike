@@ -10,7 +10,7 @@ pub struct ActorDeclaration {
     /// Record type discriminator (`$type`).
     #[serde(rename = "$type", default = "default_type_actordeclaration")]
     pub r#type: String,
-    /// [NOTE: This is under active development and should be considered unstable while this note is here]. Declaration about group chat invitation preferences for the record owner.
+    /// Declaration about group chat invitation preferences for the record owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allow_group_invites: Option<String>,
     pub allow_incoming: String,

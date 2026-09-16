@@ -18,7 +18,7 @@ pub struct ConvoLockConvoOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ConvoLockConvo — [NOTE: This is under active development and should be considered unstable while this note is here]. Locks a group convo so no more content (messages, reactions) can be added to it.
+/// ConvoLockConvo — Locks a group convo so no more content (messages, reactions) can be added to it.
 pub async fn convo_lock_convo(
     client: &crate::xrpc::Client,
     input: &ConvoLockConvoInput,

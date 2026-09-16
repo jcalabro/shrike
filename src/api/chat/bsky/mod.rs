@@ -173,6 +173,17 @@ pub use convo_get_messages::*;
     clippy::enum_variant_names,
     clippy::match_single_binding
 )]
+mod convo_get_unread_counts;
+pub use convo_get_unread_counts::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
 mod convo_leave_convo;
 pub use convo_leave_convo::*;
 
@@ -582,3 +593,36 @@ pub use moderation_subscribe_mod_events::*;
 )]
 mod moderation_update_actor_access;
 pub use moderation_update_actor_access::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod notification_defs;
+pub use notification_defs::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod notification_get_preferences;
+pub use notification_get_preferences::*;
+
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::enum_variant_names,
+    clippy::match_single_binding
+)]
+mod notification_put_preferences;
+pub use notification_put_preferences::*;

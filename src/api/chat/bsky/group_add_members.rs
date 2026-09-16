@@ -22,7 +22,7 @@ pub struct GroupAddMembersOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupAddMembers — [NOTE: This is under active development and should be considered unstable while this note is here]. Adds members to a group. The members are added in 'request' status, so they have to accept it. This creates convo memberships.
+/// GroupAddMembers — Adds members to a group. The members are added in 'request' status, so they have to accept it. This creates convo memberships.
 pub async fn group_add_members(
     client: &crate::xrpc::Client,
     input: &GroupAddMembersInput,

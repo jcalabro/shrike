@@ -18,7 +18,7 @@ pub struct GroupEnableJoinLinkOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupEnableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Re-enables a previously disabled join link for the group convo.
+/// GroupEnableJoinLink — Re-enables a previously disabled join link for the group convo.
 pub async fn group_enable_join_link(
     client: &crate::xrpc::Client,
     input: &GroupEnableJoinLinkInput,

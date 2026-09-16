@@ -849,6 +849,248 @@ impl DraftDefsDraftEmbedExternal {
     }
 }
 
+/// DraftDefsDraftEmbedGallery object from app.bsky.draft.defs.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftDefsDraftEmbedGallery {
+    pub items: DraftDefsDraftEmbedGalleryItems,
+    /// Extra fields not defined in the schema (JSON).
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra fields not defined in the schema (CBOR).
+    #[serde(skip)]
+    pub extra_cbor: Vec<(String, Vec<u8>)>,
+}
+
+impl DraftDefsDraftEmbedGallery {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        if self.extra_cbor.is_empty() {
+            // Fast path: no extra fields to merge.
+            let count = 1u64;
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
+            crate::cbor::Encoder::new(&mut *buf).encode_text("items")?;
+            crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.items.len() as u64)?;
+            for item in &self.items {
+                item.encode_cbor(buf)?;
+            }
+        } else {
+            // Slow path: merge known fields with extra_cbor, sort, encode.
+            let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
+            {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf).encode_array_header(self.items.len() as u64)?;
+                for item in &self.items {
+                    item.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("items", vbuf));
+            }
+            for (k, v) in &self.extra_cbor {
+                pairs.push((k.as_str(), v.clone()));
+            }
+            pairs.sort_by(|a, b| crate::cbor::cbor_key_cmp(a.0, b.0));
+            crate::cbor::Encoder::new(&mut *buf).encode_map_header(pairs.len() as u64)?;
+            for (k, v) in &pairs {
+                crate::cbor::Encoder::new(&mut *buf).encode_text(k)?;
+                buf.extend_from_slice(v);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        let val = decoder.decode()?;
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
+        };
+
+        let mut field_items: Option<DraftDefsDraftEmbedGalleryItems> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        for (key, value) in entries {
+            match key {
+                "items" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        let mut decoded: DraftDefsDraftEmbedGalleryItems = Vec::new();
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            decoded
+                                .push(DraftDefsDraftEmbedGalleryItemsItem::decode_cbor(&mut dec)?);
+                        }
+                        field_items = Some(decoded);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+        }
+
+        Ok(DraftDefsDraftEmbedGallery {
+            items: field_items.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'items'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+}
+
+/// DraftDefsDraftEmbedGalleryItemsItem is a union type.
+#[derive(Debug, Clone)]
+pub enum DraftDefsDraftEmbedGalleryItemsItem {
+    DraftDefsDraftEmbedImage(Box<DraftDefsDraftEmbedImage>),
+    Unknown(crate::api::UnknownUnionVariant),
+}
+
+impl serde::Serialize for DraftDefsDraftEmbedGalleryItemsItem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            DraftDefsDraftEmbedGalleryItemsItem::DraftDefsDraftEmbedImage(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String(
+                            "app.bsky.draft.defs#draftEmbedImage".to_string(),
+                        ),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            DraftDefsDraftEmbedGalleryItemsItem::Unknown(v) => {
+                if let Some(ref j) = v.json {
+                    j.serialize(serializer)
+                } else {
+                    Err(serde::ser::Error::custom(
+                        "no JSON data for unknown union variant",
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DraftDefsDraftEmbedGalleryItemsItem {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let type_str = value
+            .get("$type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        match type_str {
+            "app.bsky.draft.defs#draftEmbedImage" => {
+                let inner: DraftDefsDraftEmbedImage =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(DraftDefsDraftEmbedGalleryItemsItem::DraftDefsDraftEmbedImage(Box::new(inner)))
+            }
+            _ => Ok(DraftDefsDraftEmbedGalleryItemsItem::Unknown(
+                crate::api::UnknownUnionVariant {
+                    r#type: type_str.to_string(),
+                    json: Some(value),
+                    cbor: None,
+                },
+            )),
+        }
+    }
+}
+
+impl DraftDefsDraftEmbedGalleryItemsItem {
+    pub fn to_cbor(&self) -> Result<Vec<u8>, crate::cbor::CborError> {
+        let mut buf = Vec::new();
+        self.encode_cbor(&mut buf)?;
+        Ok(buf)
+    }
+
+    pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
+        match self {
+            DraftDefsDraftEmbedGalleryItemsItem::DraftDefsDraftEmbedImage(inner) => {
+                inner.encode_cbor(buf)
+            }
+            DraftDefsDraftEmbedGalleryItemsItem::Unknown(v) => {
+                if let Some(ref data) = v.cbor {
+                    buf.extend_from_slice(data);
+                    Ok(())
+                } else {
+                    Err(crate::cbor::CborError::InvalidCbor(
+                        "no CBOR data for unknown union variant".into(),
+                    ))
+                }
+            }
+        }
+    }
+
+    pub fn from_cbor(data: &[u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+
+    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
+        // Save position, decode the value, look for $type key.
+        let start = decoder.position();
+        let val = decoder.decode()?;
+        let end = decoder.position();
+        let raw = &decoder.raw_input()[start..end];
+        let entries = match val {
+            crate::cbor::Value::Map(entries) => entries,
+            _ => {
+                return Err(crate::cbor::CborError::InvalidCbor(
+                    "expected map for union".into(),
+                ));
+            }
+        };
+        let type_str = entries
+            .iter()
+            .find(|(k, _)| *k == "$type")
+            .and_then(|(_, v)| match v {
+                crate::cbor::Value::Text(s) => Some(*s),
+                _ => None,
+            })
+            .unwrap_or_default();
+        match type_str {
+            "app.bsky.draft.defs#draftEmbedImage" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = DraftDefsDraftEmbedImage::decode_cbor(&mut dec)?;
+                Ok(DraftDefsDraftEmbedGalleryItemsItem::DraftDefsDraftEmbedImage(Box::new(inner)))
+            }
+            _ => Ok(DraftDefsDraftEmbedGalleryItemsItem::Unknown(
+                crate::api::UnknownUnionVariant {
+                    r#type: type_str.to_string(),
+                    json: None,
+                    cbor: Some(raw.to_vec()),
+                },
+            )),
+        }
+    }
+}
+
+/// The schema-level maxLength of 20 is a future-proof ceiling. Clients should currently enforce a soft limit of 10 items in authoring UIs.
+pub type DraftDefsDraftEmbedGalleryItems = Vec<DraftDefsDraftEmbedGalleryItemsItem>;
+
 /// DraftDefsDraftEmbedImage object from app.bsky.draft.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1313,6 +1555,8 @@ impl DraftDefsDraftEmbedVideo {
 pub struct DraftDefsDraftPost {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embed_externals: Vec<DraftDefsDraftEmbedExternal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_gallery: Option<DraftDefsDraftEmbedGallery>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub embed_images: Vec<DraftDefsDraftEmbedImage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1485,6 +1729,9 @@ impl DraftDefsDraftPost {
             if !self.embed_videos.is_empty() {
                 count += 1;
             }
+            if self.embed_gallery.is_some() {
+                count += 1;
+            }
             if !self.embed_records.is_empty() {
                 count += 1;
             }
@@ -1514,6 +1761,12 @@ impl DraftDefsDraftPost {
                     .encode_array_header(self.embed_videos.len() as u64)?;
                 for item in &self.embed_videos {
                     item.encode_cbor(buf)?;
+                }
+            }
+            if self.embed_gallery.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("embedGallery")?;
+                if let Some(ref val) = self.embed_gallery {
+                    val.encode_cbor(buf)?;
                 }
             }
             if !self.embed_records.is_empty() {
@@ -1564,6 +1817,13 @@ impl DraftDefsDraftPost {
                     item.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("embedVideos", vbuf));
+            }
+            if self.embed_gallery.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.embed_gallery {
+                    val.encode_cbor(&mut vbuf)?;
+                }
+                pairs.push(("embedGallery", vbuf));
             }
             if !self.embed_records.is_empty() {
                 let mut vbuf = Vec::new();
@@ -1616,6 +1876,7 @@ impl DraftDefsDraftPost {
         let mut field_labels: Option<DraftDefsDraftPostLabelsUnion> = None;
         let mut field_embed_images: Vec<DraftDefsDraftEmbedImage> = Vec::new();
         let mut field_embed_videos: Vec<DraftDefsDraftEmbedVideo> = Vec::new();
+        let mut field_embed_gallery: Option<DraftDefsDraftEmbedGallery> = None;
         let mut field_embed_records: Vec<DraftDefsDraftEmbedRecord> = Vec::new();
         let mut field_embed_externals: Vec<DraftDefsDraftEmbedExternal> = Vec::new();
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
@@ -1658,6 +1919,11 @@ impl DraftDefsDraftPost {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
+                "embedGallery" => {
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_embed_gallery = Some(DraftDefsDraftEmbedGallery::decode_cbor(&mut dec)?);
+                }
                 "embedRecords" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
@@ -1696,6 +1962,7 @@ impl DraftDefsDraftPost {
             labels: field_labels,
             embed_images: field_embed_images,
             embed_videos: field_embed_videos,
+            embed_gallery: field_embed_gallery,
             embed_records: field_embed_records,
             embed_externals: field_embed_externals,
             extra: std::collections::HashMap::new(),

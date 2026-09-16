@@ -21,7 +21,7 @@ pub struct GroupRequestJoinOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupRequestJoin — [NOTE: This is under active development and should be considered unstable while this note is here]. Sends a request to join a group (via join link) to the group owner. Action taken by the prospective group member.
+/// GroupRequestJoin — Sends a request to join a group (via join link) to the group owner. Action taken by the prospective group member.
 pub async fn group_request_join(
     client: &crate::xrpc::Client,
     input: &GroupRequestJoinInput,

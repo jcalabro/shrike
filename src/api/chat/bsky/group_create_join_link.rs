@@ -21,7 +21,7 @@ pub struct GroupCreateJoinLinkOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupCreateJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Creates a join link for the group convo.
+/// GroupCreateJoinLink — Creates a join link for the group convo.
 pub async fn group_create_join_link(
     client: &crate::xrpc::Client,
     input: &GroupCreateJoinLinkInput,

@@ -22,7 +22,7 @@ pub struct GroupListJoinRequestsOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupListJoinRequests — [NOTE: This is under active development and should be considered unstable while this note is here]. Lists a page of request to join a group (via join link) the user owns. Shows the data from the owner's point of view.
+/// GroupListJoinRequests — Lists a page of request to join a group (via join link) the user owns. Shows the data from the owner's point of view.
 pub async fn group_list_join_requests(
     client: &crate::xrpc::Client,
     params: &GroupListJoinRequestsParams,

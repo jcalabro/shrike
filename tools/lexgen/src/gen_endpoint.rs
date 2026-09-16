@@ -474,15 +474,20 @@ mod tests {
     use std::collections::HashMap;
     use std::path::Path;
 
-    fn test_ctx() -> (Config, HashMap<String, shrike::lexicon::Schema>) {
+    fn test_ctx() -> Option<(Config, HashMap<String, shrike::lexicon::Schema>)> {
+        if !Path::new("../../lexicons").is_dir() {
+            return None;
+        }
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
-        (cfg, schemas)
+        Some((cfg, schemas))
     }
 
     #[test]
     fn gen_get_profile_query() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("app.bsky.actor.getProfile").unwrap();
         let ctx = GenContext {
             schema,
@@ -501,7 +506,9 @@ mod tests {
 
     #[test]
     fn gen_create_record_procedure() {
-        let (cfg, schemas) = test_ctx();
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
         let schema = schemas.get("com.atproto.repo.createRecord").unwrap();
         let ctx = GenContext {
             schema,

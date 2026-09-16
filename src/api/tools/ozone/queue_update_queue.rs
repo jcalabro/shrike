@@ -14,6 +14,9 @@ pub struct QueueUpdateQueueInput {
     pub name: Option<String>,
     /// ID of the queue to update
     pub queue_id: i64,
+    /// Policy keys to recommend when actioning reports in this queue
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recommended_policies: Vec<String>,
     /// Extra fields not defined in the schema.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -28,7 +31,7 @@ pub struct QueueUpdateQueueOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// QueueUpdateQueue — Update queue properties. Currently only supports updating the name and enabled status to prevent configuration conflicts.
+/// QueueUpdateQueue — Update queue properties.
 pub async fn queue_update_queue(
     client: &crate::xrpc::Client,
     input: &QueueUpdateQueueInput,

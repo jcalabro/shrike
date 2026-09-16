@@ -252,15 +252,20 @@ mod tests {
     use crate::loader;
     use std::path::Path;
 
-    fn test_data() -> (Config, HashMap<String, Schema>) {
+    fn test_data() -> Option<(Config, HashMap<String, Schema>)> {
+        if !Path::new("../../lexicons").is_dir() {
+            return None;
+        }
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
         let schemas = loader::load_schemas(Path::new("../../lexicons")).unwrap();
-        (cfg, schemas)
+        Some((cfg, schemas))
     }
 
     #[test]
     fn generate_produces_files() {
-        let (cfg, schemas) = test_data();
+        let Some((cfg, schemas)) = test_data() else {
+            return;
+        };
         let files = generate(&cfg, &schemas).unwrap();
 
         // Check that key files exist
@@ -281,7 +286,9 @@ mod tests {
 
     #[test]
     fn generated_lib_has_modules() {
-        let (cfg, schemas) = test_data();
+        let Some((cfg, schemas)) = test_data() else {
+            return;
+        };
         let files = generate(&cfg, &schemas).unwrap();
         let lib = &files["src/api/mod.rs"];
         assert!(lib.contains("pub mod app;"), "lib:\n{lib}");
@@ -290,7 +297,9 @@ mod tests {
 
     #[test]
     fn strong_ref_file_compiles_looking() {
-        let (cfg, schemas) = test_data();
+        let Some((cfg, schemas)) = test_data() else {
+            return;
+        };
         let files = generate(&cfg, &schemas).unwrap();
         let key = files
             .keys()

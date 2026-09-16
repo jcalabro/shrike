@@ -696,6 +696,8 @@ impl UnspeccedDefsSkeletonSearchStarterPack {
 pub struct UnspeccedDefsSkeletonTrend {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dids: Vec<crate::syntax::Did>,
     pub display_name: String,
@@ -730,6 +732,9 @@ impl UnspeccedDefsSkeletonTrend {
             if self.category.is_some() {
                 count += 1;
             }
+            if self.description.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("dids")?;
             crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.dids.len() as u64)?;
@@ -756,6 +761,12 @@ impl UnspeccedDefsSkeletonTrend {
             crate::cbor::Encoder::new(&mut *buf).encode_i64(self.post_count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("startedAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.started_at.as_str())?;
+            if self.description.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("description")?;
+                if let Some(ref val) = self.description {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_text("displayName")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.display_name)?;
         } else {
@@ -803,6 +814,13 @@ impl UnspeccedDefsSkeletonTrend {
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.started_at.as_str())?;
                 pairs.push(("startedAt", vbuf));
             }
+            if self.description.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.description {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("description", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.display_name)?;
@@ -844,6 +862,7 @@ impl UnspeccedDefsSkeletonTrend {
         let mut field_category: Option<String> = None;
         let mut field_post_count: Option<i64> = None;
         let mut field_started_at: Option<crate::syntax::Datetime> = None;
+        let mut field_description: Option<String> = None;
         let mut field_display_name: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -919,6 +938,13 @@ impl UnspeccedDefsSkeletonTrend {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "description" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_description = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "displayName" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
@@ -949,6 +975,7 @@ impl UnspeccedDefsSkeletonTrend {
             started_at: field_started_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'startedAt'".into())
             })?,
+            description: field_description,
             display_name: field_display_name.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'displayName'".into())
             })?,
@@ -1211,8 +1238,14 @@ pub struct UnspeccedDefsThreadItemPost {
     pub more_replies: i64,
     /// This is by an account muted by the viewer requesting it.
     pub muted_by_viewer: bool,
-    /// This post is part of a contiguous thread by the OP from the thread root. Many different OP threads can happen in the same thread.
+    /// This post is part of a contiguous thread by the OP from the thread root. Sub-threads by OP deeper in the tree are not considered an OP thread.
     pub op_thread: bool,
+    /// The total number of posts in the contiguous OP thread that this post belongs to. Only present when this post is part of the OP thread (see `opThread`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_thread_post_count: Option<i64>,
+    /// The 1-indexed position of this post within the contiguous OP thread. Only present when this post is part of the OP thread (see `opThread`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_thread_post_index: Option<i64>,
     pub post: crate::api::app::bsky::FeedDefsPostView,
     /// Extra fields not defined in the schema (JSON).
     #[serde(flatten)]
@@ -1232,7 +1265,13 @@ impl UnspeccedDefsThreadItemPost {
     pub fn encode_cbor(&self, buf: &mut Vec<u8>) -> Result<(), crate::cbor::CborError> {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
-            let count = 6u64;
+            let mut count = 6u64;
+            if self.op_thread_post_count.is_some() {
+                count += 1;
+            }
+            if self.op_thread_post_index.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("post")?;
             self.post.encode_cbor(buf)?;
@@ -1244,6 +1283,18 @@ impl UnspeccedDefsThreadItemPost {
             crate::cbor::Encoder::new(&mut *buf).encode_i64(self.more_replies)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("mutedByViewer")?;
             crate::cbor::Encoder::new(&mut *buf).encode_bool(self.muted_by_viewer)?;
+            if self.op_thread_post_count.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("opThreadPostCount")?;
+                if let Some(ref val) = self.op_thread_post_count {
+                    crate::cbor::Encoder::new(&mut *buf).encode_i64(*val)?;
+                }
+            }
+            if self.op_thread_post_index.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("opThreadPostIndex")?;
+                if let Some(ref val) = self.op_thread_post_index {
+                    crate::cbor::Encoder::new(&mut *buf).encode_i64(*val)?;
+                }
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_text("hiddenByThreadgate")?;
             crate::cbor::Encoder::new(&mut *buf).encode_bool(self.hidden_by_threadgate)?;
         } else {
@@ -1273,6 +1324,20 @@ impl UnspeccedDefsThreadItemPost {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_bool(self.muted_by_viewer)?;
                 pairs.push(("mutedByViewer", vbuf));
+            }
+            if self.op_thread_post_count.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.op_thread_post_count {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_i64(*val)?;
+                }
+                pairs.push(("opThreadPostCount", vbuf));
+            }
+            if self.op_thread_post_index.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.op_thread_post_index {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_i64(*val)?;
+                }
+                pairs.push(("opThreadPostIndex", vbuf));
             }
             {
                 let mut vbuf = Vec::new();
@@ -1313,6 +1378,8 @@ impl UnspeccedDefsThreadItemPost {
         let mut field_more_parents: Option<bool> = None;
         let mut field_more_replies: Option<i64> = None;
         let mut field_muted_by_viewer: Option<bool> = None;
+        let mut field_op_thread_post_count: Option<i64> = None;
+        let mut field_op_thread_post_index: Option<i64> = None;
         let mut field_hidden_by_threadgate: Option<bool> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -1361,6 +1428,36 @@ impl UnspeccedDefsThreadItemPost {
                         return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
                     }
                 }
+                "opThreadPostCount" => match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_op_thread_post_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_op_thread_post_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                },
+                "opThreadPostIndex" => match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_op_thread_post_index = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_op_thread_post_index = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                },
                 "hiddenByThreadgate" => {
                     if let crate::cbor::Value::Bool(b) = value {
                         field_hidden_by_threadgate = Some(b);
@@ -1391,6 +1488,8 @@ impl UnspeccedDefsThreadItemPost {
             muted_by_viewer: field_muted_by_viewer.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'mutedByViewer'".into())
             })?,
+            op_thread_post_count: field_op_thread_post_count,
+            op_thread_post_index: field_op_thread_post_index,
             hidden_by_threadgate: field_hidden_by_threadgate.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor(
                     "missing required field 'hiddenByThreadgate'".into(),
@@ -1410,6 +1509,8 @@ pub struct UnspeccedDefsTrendView {
     pub actors: Vec<crate::api::app::bsky::ActorDefsProfileViewBasic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub display_name: String,
     pub link: String,
     pub post_count: i64,
@@ -1442,6 +1543,9 @@ impl UnspeccedDefsTrendView {
             if self.category.is_some() {
                 count += 1;
             }
+            if self.description.is_some() {
+                count += 1;
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("link")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.link)?;
@@ -1468,6 +1572,12 @@ impl UnspeccedDefsTrendView {
             crate::cbor::Encoder::new(&mut *buf).encode_i64(self.post_count)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("startedAt")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(self.started_at.as_str())?;
+            if self.description.is_some() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("description")?;
+                if let Some(ref val) = self.description {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(val)?;
+                }
+            }
             crate::cbor::Encoder::new(&mut *buf).encode_text("displayName")?;
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.display_name)?;
         } else {
@@ -1516,6 +1626,13 @@ impl UnspeccedDefsTrendView {
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(self.started_at.as_str())?;
                 pairs.push(("startedAt", vbuf));
             }
+            if self.description.is_some() {
+                let mut vbuf = Vec::new();
+                if let Some(ref val) = self.description {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(val)?;
+                }
+                pairs.push(("description", vbuf));
+            }
             {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_text(&self.display_name)?;
@@ -1557,6 +1674,7 @@ impl UnspeccedDefsTrendView {
         let mut field_category: Option<String> = None;
         let mut field_post_count: Option<i64> = None;
         let mut field_started_at: Option<crate::syntax::Datetime> = None;
+        let mut field_description: Option<String> = None;
         let mut field_display_name: Option<String> = None;
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -1630,6 +1748,13 @@ impl UnspeccedDefsTrendView {
                         return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
                     }
                 }
+                "description" => {
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_description = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
                 "displayName" => {
                     if let crate::cbor::Value::Text(s) = value {
                         field_display_name = Some(s.to_string());
@@ -1660,6 +1785,7 @@ impl UnspeccedDefsTrendView {
             started_at: field_started_at.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'startedAt'".into())
             })?,
+            description: field_description,
             display_name: field_display_name.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'displayName'".into())
             })?,

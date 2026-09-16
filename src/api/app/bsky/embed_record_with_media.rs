@@ -19,6 +19,7 @@ pub struct EmbedRecordWithMedia {
 pub enum EmbedRecordWithMediaMediaUnion {
     EmbedImages(Box<crate::api::app::bsky::EmbedImages>),
     EmbedVideo(Box<crate::api::app::bsky::EmbedVideo>),
+    EmbedGallery(Box<crate::api::app::bsky::EmbedGallery>),
     EmbedExternal(Box<crate::api::app::bsky::EmbedExternal>),
     Unknown(crate::api::UnknownUnionVariant),
 }
@@ -44,6 +45,17 @@ impl serde::Serialize for EmbedRecordWithMediaMediaUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("app.bsky.embed.video".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            EmbedRecordWithMediaMediaUnion::EmbedGallery(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("app.bsky.embed.gallery".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -90,6 +102,13 @@ impl<'de> serde::Deserialize<'de> for EmbedRecordWithMediaMediaUnion {
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedVideo(Box::new(inner)))
             }
+            "app.bsky.embed.gallery" | "app.bsky.embed.gallery#main" => {
+                let inner: crate::api::app::bsky::EmbedGallery =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(EmbedRecordWithMediaMediaUnion::EmbedGallery(Box::new(
+                    inner,
+                )))
+            }
             "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let inner: crate::api::app::bsky::EmbedExternal =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -119,6 +138,7 @@ impl EmbedRecordWithMediaMediaUnion {
         match self {
             EmbedRecordWithMediaMediaUnion::EmbedImages(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaMediaUnion::EmbedVideo(inner) => inner.encode_cbor(buf),
+            EmbedRecordWithMediaMediaUnion::EmbedGallery(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaMediaUnion::EmbedExternal(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaMediaUnion::Unknown(v) => {
                 if let Some(ref data) = v.cbor {
@@ -174,6 +194,13 @@ impl EmbedRecordWithMediaMediaUnion {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideo::decode_cbor(&mut dec)?;
                 Ok(EmbedRecordWithMediaMediaUnion::EmbedVideo(Box::new(inner)))
+            }
+            "app.bsky.embed.gallery" | "app.bsky.embed.gallery#main" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::app::bsky::EmbedGallery::decode_cbor(&mut dec)?;
+                Ok(EmbedRecordWithMediaMediaUnion::EmbedGallery(Box::new(
+                    inner,
+                )))
             }
             "app.bsky.embed.external" | "app.bsky.embed.external#main" => {
                 let mut dec = crate::cbor::Decoder::new(raw);
@@ -306,6 +333,7 @@ pub struct EmbedRecordWithMediaView {
 pub enum EmbedRecordWithMediaViewMediaUnion {
     EmbedImagesView(Box<crate::api::app::bsky::EmbedImagesView>),
     EmbedVideoView(Box<crate::api::app::bsky::EmbedVideoView>),
+    EmbedGalleryView(Box<crate::api::app::bsky::EmbedGalleryView>),
     EmbedExternalView(Box<crate::api::app::bsky::EmbedExternalView>),
     Unknown(crate::api::UnknownUnionVariant),
 }
@@ -331,6 +359,17 @@ impl serde::Serialize for EmbedRecordWithMediaViewMediaUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("app.bsky.embed.video#view".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            EmbedRecordWithMediaViewMediaUnion::EmbedGalleryView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("app.bsky.embed.gallery#view".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -381,6 +420,13 @@ impl<'de> serde::Deserialize<'de> for EmbedRecordWithMediaViewMediaUnion {
                     Box::new(inner),
                 ))
             }
+            "app.bsky.embed.gallery#view" => {
+                let inner: crate::api::app::bsky::EmbedGalleryView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(EmbedRecordWithMediaViewMediaUnion::EmbedGalleryView(
+                    Box::new(inner),
+                ))
+            }
             "app.bsky.embed.external#view" => {
                 let inner: crate::api::app::bsky::EmbedExternalView =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -410,6 +456,7 @@ impl EmbedRecordWithMediaViewMediaUnion {
         match self {
             EmbedRecordWithMediaViewMediaUnion::EmbedImagesView(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaViewMediaUnion::EmbedVideoView(inner) => inner.encode_cbor(buf),
+            EmbedRecordWithMediaViewMediaUnion::EmbedGalleryView(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaViewMediaUnion::EmbedExternalView(inner) => inner.encode_cbor(buf),
             EmbedRecordWithMediaViewMediaUnion::Unknown(v) => {
                 if let Some(ref data) = v.cbor {
@@ -467,6 +514,13 @@ impl EmbedRecordWithMediaViewMediaUnion {
                 let mut dec = crate::cbor::Decoder::new(raw);
                 let inner = crate::api::app::bsky::EmbedVideoView::decode_cbor(&mut dec)?;
                 Ok(EmbedRecordWithMediaViewMediaUnion::EmbedVideoView(
+                    Box::new(inner),
+                ))
+            }
+            "app.bsky.embed.gallery#view" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::app::bsky::EmbedGalleryView::decode_cbor(&mut dec)?;
+                Ok(EmbedRecordWithMediaViewMediaUnion::EmbedGalleryView(
                     Box::new(inner),
                 ))
             }

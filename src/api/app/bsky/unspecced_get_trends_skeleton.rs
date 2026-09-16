@@ -13,6 +13,9 @@ pub struct UnspeccedGetTrendsSkeletonParams {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnspeccedGetTrendsSkeletonOutput {
+    /// Snowflake for this recommendation, use when submitting recommendation events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rec_id_str: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trends: Vec<crate::api::app::bsky::UnspeccedDefsSkeletonTrend>,
     /// Extra fields not defined in the schema.

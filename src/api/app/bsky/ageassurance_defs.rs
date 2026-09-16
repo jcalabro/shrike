@@ -112,10 +112,16 @@ impl AgeassuranceDefsConfig {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgeassuranceDefsConfigRegion {
+    /// Verification methods permitted in this region in addition to the third-party (KWS) flow, which is always supported. `device` permits using the native on-device age APIs (e.g. Apple Declared Age Range, Google Play Age Signals).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_verification_methods: Vec<String>,
     /// The ISO 3166-1 alpha-2 country code this configuration applies to.
     pub country_code: String,
     /// The minimum age (as a whole integer) required to use Bluesky in this region.
     pub min_access_age: i64,
+    /// The platforms this configuration applies to. If omitted, the configuration applies to all platforms.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
     /// The ISO 3166-2 region code this configuration applies to. If omitted, the configuration applies to the entire country.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region_code: Option<String>,
@@ -402,7 +408,13 @@ impl AgeassuranceDefsConfigRegion {
         if self.extra_cbor.is_empty() {
             // Fast path: no extra fields to merge.
             let mut count = 3u64;
+            if !self.platforms.is_empty() {
+                count += 1;
+            }
             if self.region_code.is_some() {
+                count += 1;
+            }
+            if !self.additional_verification_methods.is_empty() {
                 count += 1;
             }
             crate::cbor::Encoder::new(&mut *buf).encode_map_header(count)?;
@@ -410,6 +422,14 @@ impl AgeassuranceDefsConfigRegion {
             crate::cbor::Encoder::new(&mut *buf).encode_array_header(self.rules.len() as u64)?;
             for item in &self.rules {
                 item.encode_cbor(buf)?;
+            }
+            if !self.platforms.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf).encode_text("platforms")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.platforms.len() as u64)?;
+                for item in &self.platforms {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
             }
             if self.region_code.is_some() {
                 crate::cbor::Encoder::new(&mut *buf).encode_text("regionCode")?;
@@ -421,6 +441,15 @@ impl AgeassuranceDefsConfigRegion {
             crate::cbor::Encoder::new(&mut *buf).encode_text(&self.country_code)?;
             crate::cbor::Encoder::new(&mut *buf).encode_text("minAccessAge")?;
             crate::cbor::Encoder::new(&mut *buf).encode_i64(self.min_access_age)?;
+            if !self.additional_verification_methods.is_empty() {
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_text("additionalVerificationMethods")?;
+                crate::cbor::Encoder::new(&mut *buf)
+                    .encode_array_header(self.additional_verification_methods.len() as u64)?;
+                for item in &self.additional_verification_methods {
+                    crate::cbor::Encoder::new(&mut *buf).encode_text(item)?;
+                }
+            }
         } else {
             // Slow path: merge known fields with extra_cbor, sort, encode.
             let mut pairs: Vec<(&str, Vec<u8>)> = Vec::new();
@@ -431,6 +460,15 @@ impl AgeassuranceDefsConfigRegion {
                     item.encode_cbor(&mut vbuf)?;
                 }
                 pairs.push(("rules", vbuf));
+            }
+            if !self.platforms.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_array_header(self.platforms.len() as u64)?;
+                for item in &self.platforms {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
+                }
+                pairs.push(("platforms", vbuf));
             }
             if self.region_code.is_some() {
                 let mut vbuf = Vec::new();
@@ -448,6 +486,15 @@ impl AgeassuranceDefsConfigRegion {
                 let mut vbuf = Vec::new();
                 crate::cbor::Encoder::new(&mut vbuf).encode_i64(self.min_access_age)?;
                 pairs.push(("minAccessAge", vbuf));
+            }
+            if !self.additional_verification_methods.is_empty() {
+                let mut vbuf = Vec::new();
+                crate::cbor::Encoder::new(&mut vbuf)
+                    .encode_array_header(self.additional_verification_methods.len() as u64)?;
+                for item in &self.additional_verification_methods {
+                    crate::cbor::Encoder::new(&mut vbuf).encode_text(item)?;
+                }
+                pairs.push(("additionalVerificationMethods", vbuf));
             }
             for (k, v) in &self.extra_cbor {
                 pairs.push((k.as_str(), v.clone()));
@@ -479,9 +526,11 @@ impl AgeassuranceDefsConfigRegion {
         };
 
         let mut field_rules: Vec<AgeassuranceDefsConfigRegionRulesUnion> = Vec::new();
+        let mut field_platforms: Vec<String> = Vec::new();
         let mut field_region_code: Option<String> = None;
         let mut field_country_code: Option<String> = None;
         let mut field_min_access_age: Option<i64> = None;
+        let mut field_additional_verification_methods: Vec<String> = Vec::new();
         let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
 
         for (key, value) in entries {
@@ -494,6 +543,21 @@ impl AgeassuranceDefsConfigRegion {
                             field_rules.push(AgeassuranceDefsConfigRegionRulesUnion::decode_cbor(
                                 &mut dec,
                             )?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "platforms" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_platforms.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
@@ -528,6 +592,21 @@ impl AgeassuranceDefsConfigRegion {
                         ));
                     }
                 },
+                "additionalVerificationMethods" => {
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_additional_verification_methods.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
                     extra_cbor.push((key.to_string(), raw));
@@ -537,6 +616,7 @@ impl AgeassuranceDefsConfigRegion {
 
         Ok(AgeassuranceDefsConfigRegion {
             rules: field_rules,
+            platforms: field_platforms,
             region_code: field_region_code,
             country_code: field_country_code.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'countryCode'".into())
@@ -544,6 +624,7 @@ impl AgeassuranceDefsConfigRegion {
             min_access_age: field_min_access_age.ok_or_else(|| {
                 crate::cbor::CborError::InvalidCbor("missing required field 'minAccessAge'".into())
             })?,
+            additional_verification_methods: field_additional_verification_methods,
             extra: std::collections::HashMap::new(),
             extra_cbor,
         })

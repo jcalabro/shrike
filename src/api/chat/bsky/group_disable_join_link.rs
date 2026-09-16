@@ -18,7 +18,7 @@ pub struct GroupDisableJoinLinkOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupDisableJoinLink — [NOTE: This is under active development and should be considered unstable while this note is here]. Disables the active join link for the group convo.
+/// GroupDisableJoinLink — Disables the active join link for the group convo.
 pub async fn group_disable_join_link(
     client: &crate::xrpc::Client,
     input: &GroupDisableJoinLinkInput,

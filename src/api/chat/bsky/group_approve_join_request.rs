@@ -19,7 +19,7 @@ pub struct GroupApproveJoinRequestOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupApproveJoinRequest — [NOTE: This is under active development and should be considered unstable while this note is here]. Approves a request to join a group (via join link) the user owns. Action taken by the group owner.
+/// GroupApproveJoinRequest — Approves a request to join a group (via join link) the user owns. Action taken by the group owner.
 pub async fn group_approve_join_request(
     client: &crate::xrpc::Client,
     input: &GroupApproveJoinRequestInput,

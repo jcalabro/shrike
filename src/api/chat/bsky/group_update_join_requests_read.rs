@@ -17,7 +17,7 @@ pub struct GroupUpdateJoinRequestsReadOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GroupUpdateJoinRequestsRead — [NOTE: This is under active development and should be considered unstable while this note is here]. Marks all join requests as read for the group owner.
+/// GroupUpdateJoinRequestsRead — Marks all join requests as read for the group owner.
 pub async fn group_update_join_requests_read(
     client: &crate::xrpc::Client,
     input: &GroupUpdateJoinRequestsReadInput,

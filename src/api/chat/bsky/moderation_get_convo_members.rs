@@ -22,7 +22,7 @@ pub struct ModerationGetConvoMembersOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// ModerationGetConvoMembers — [NOTE: This is under active development and should be considered unstable while this note is here]. Returns a paginated list of members from a conversation, for moderation purposes. Does not require the requester to be a member of the conversation.
+/// ModerationGetConvoMembers — Returns a paginated list of members from a conversation, for moderation purposes. Does not require the requester to be a member of the conversation.
 pub async fn moderation_get_convo_members(
     client: &crate::xrpc::Client,
     params: &ModerationGetConvoMembersParams,

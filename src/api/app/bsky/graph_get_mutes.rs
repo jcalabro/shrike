@@ -21,7 +21,7 @@ pub struct GraphGetMutesOutput {
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-/// GraphGetMutes — Enumerates accounts that the requesting account (actor) currently has muted. Requires auth.
+/// GraphGetMutes — Enumerates accounts that the requesting account (actor) currently has fully muted. Mutes scoped to specific kinds of content (only reposts, only quote posts) are not included. Responses may contain more items than the requested limit. Requires auth.
 pub async fn graph_get_mutes(
     client: &crate::xrpc::Client,
     params: &GraphGetMutesParams,

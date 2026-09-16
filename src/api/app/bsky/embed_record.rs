@@ -910,6 +910,7 @@ pub struct EmbedRecordViewRecord {
 pub enum EmbedRecordViewRecordEmbedsUnion {
     EmbedImagesView(Box<crate::api::app::bsky::EmbedImagesView>),
     EmbedVideoView(Box<crate::api::app::bsky::EmbedVideoView>),
+    EmbedGalleryView(Box<crate::api::app::bsky::EmbedGalleryView>),
     EmbedExternalView(Box<crate::api::app::bsky::EmbedExternalView>),
     EmbedRecordView(Box<EmbedRecordView>),
     EmbedRecordWithMediaView(Box<crate::api::app::bsky::EmbedRecordWithMediaView>),
@@ -937,6 +938,17 @@ impl serde::Serialize for EmbedRecordViewRecordEmbedsUnion {
                     m.insert(
                         "$type".to_string(),
                         serde_json::Value::String("app.bsky.embed.video#view".to_string()),
+                    );
+                }
+                map.serialize(serializer)
+            }
+            EmbedRecordViewRecordEmbedsUnion::EmbedGalleryView(inner) => {
+                let mut map =
+                    serde_json::to_value(inner.as_ref()).map_err(serde::ser::Error::custom)?;
+                if let serde_json::Value::Object(ref mut m) = map {
+                    m.insert(
+                        "$type".to_string(),
+                        serde_json::Value::String("app.bsky.embed.gallery#view".to_string()),
                     );
                 }
                 map.serialize(serializer)
@@ -1011,6 +1023,13 @@ impl<'de> serde::Deserialize<'de> for EmbedRecordViewRecordEmbedsUnion {
                     inner,
                 )))
             }
+            "app.bsky.embed.gallery#view" => {
+                let inner: crate::api::app::bsky::EmbedGalleryView =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(EmbedRecordViewRecordEmbedsUnion::EmbedGalleryView(
+                    Box::new(inner),
+                ))
+            }
             "app.bsky.embed.external#view" => {
                 let inner: crate::api::app::bsky::EmbedExternalView =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -1054,6 +1073,7 @@ impl EmbedRecordViewRecordEmbedsUnion {
         match self {
             EmbedRecordViewRecordEmbedsUnion::EmbedImagesView(inner) => inner.encode_cbor(buf),
             EmbedRecordViewRecordEmbedsUnion::EmbedVideoView(inner) => inner.encode_cbor(buf),
+            EmbedRecordViewRecordEmbedsUnion::EmbedGalleryView(inner) => inner.encode_cbor(buf),
             EmbedRecordViewRecordEmbedsUnion::EmbedExternalView(inner) => inner.encode_cbor(buf),
             EmbedRecordViewRecordEmbedsUnion::EmbedRecordView(inner) => inner.encode_cbor(buf),
             EmbedRecordViewRecordEmbedsUnion::EmbedRecordWithMediaView(inner) => {
@@ -1117,6 +1137,13 @@ impl EmbedRecordViewRecordEmbedsUnion {
                 Ok(EmbedRecordViewRecordEmbedsUnion::EmbedVideoView(Box::new(
                     inner,
                 )))
+            }
+            "app.bsky.embed.gallery#view" => {
+                let mut dec = crate::cbor::Decoder::new(raw);
+                let inner = crate::api::app::bsky::EmbedGalleryView::decode_cbor(&mut dec)?;
+                Ok(EmbedRecordViewRecordEmbedsUnion::EmbedGalleryView(
+                    Box::new(inner),
+                ))
             }
             "app.bsky.embed.external#view" => {
                 let mut dec = crate::cbor::Decoder::new(raw);

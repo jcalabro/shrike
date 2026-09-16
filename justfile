@@ -66,18 +66,18 @@ fuzz DURATION="30":
         cargo +nightly fuzz run "$t" -- -max_total_time={{DURATION}}
     done
 
-# Fetch lexicons from the atproto repo and regenerate API code
+# Regenerates all API types from the cached lexicon schemas
 lexgen:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    git clone --depth 1 --filter=blob:none --sparse \
-        https://github.com/bluesky-social/atproto.git "$tmp"
-    (cd "$tmp" && git sparse-checkout set lexicons)
-    rm -rf lexicons
-    cp -r "$tmp/lexicons" lexicons
+    test -d lexicons || { echo "lexicon cache is absent; run just update-lexicons" >&2; exit 1; }
     cargo run -p lexgen --bin lexgen -- --lexdir lexicons --config lexgen.json
+
+# Fetches, caches, and generates from the latest upstream lexicons.
+#
+# `lexgen.lock` records the immutable upstream commits used to generate the
+# checked-in API. The bsky repository is authoritative for the app.bsky and
+# chat.bsky namespaces; atproto supplies every other namespace.
+update-lexicons:
+    ./scripts/update-lexicons.sh
 
 # Run benchmarks
 bench:
