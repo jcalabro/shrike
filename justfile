@@ -3,6 +3,9 @@ set shell := ["bash", "-cu"]
 # Run the `lint` and `test` commands
 default: lint test
 
+# Run all checks (build + lint + tests + doctests)
+check: build lint test test-docs
+
 # Start the local nix development environment
 dev:
     nix --extra-experimental-features "nix-command flakes" develop
@@ -27,9 +30,6 @@ lint:
 # Format check
 fmt:
     cargo fmt --all -- --check
-
-# Run all checks (build + lint + tests + doctests)
-check: build lint test test-docs
 
 # Seed the fuzz corpora with valid, real-shaped inputs (fast; idempotent).
 fuzz-seed:
