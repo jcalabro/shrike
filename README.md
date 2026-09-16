@@ -11,6 +11,8 @@ AT Protocol library for Rust. Designed to be correct, fast, robust, and easy to 
 Module links point to the canonical docs.rs pages for the next `shrike` release built with all
 features enabled.
 
+The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `car`. Enable `full` for everything, or disable defaults and pick only what you need.
+
 | Feature | Module | Description |
 |-|-|-|
 | `syntax` | [`shrike::syntax`](https://docs.rs/shrike/latest/shrike/syntax/) | core identifier types (DID, Handle, NSID, AT-URI, TID, RecordKey) |
@@ -30,19 +32,6 @@ features enabled.
 | `oauth` | [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth/) | OAuth 2.0 client with PKCE and DPoP |
 | `api` | [`shrike::api`](https://docs.rs/shrike/latest/shrike/api/) | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
 
-The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `car`.
-Enable `full` for everything, or disable defaults and pick only what you need.
-
-```toml
-[dependencies]
-shrike = { version = "0.1", features = ["full"] }
-```
-
-```toml
-[dependencies]
-shrike = { version = "0.1", default-features = false, features = ["syntax", "xrpc"] }
-```
-
 ## License
 
-Dual-licensed under MIT and Apache 2.0.
+Dual-licensed under MIT and Apache 2.0 at your choosing.
