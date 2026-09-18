@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: revised after author review; dependency selection remains to approve
+Status: reviewed; dependency approval pending
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -12,30 +12,30 @@ Jetstream reference baseline: `58c4d7f7a9130e53b40348ad3d1f7aafed0e4843`
 
 - [x] Read the Jetstream repository documentation, specifications, design notes, lexicons, client package, segment package, and example client.
 - [x] Audit Shrike's existing legacy Jetstream client, XRPC client, DAG-CBOR implementation, lexicon generator, feature layout, native/WASM transports, and CLI.
-- [x] Attempt a bounded production contract check against `jetstream.us-east.bsky.network`; both `planSnapshot` and `getZstdDictionary` reached the edge but returned HTTP 503 on 2026-09-18. No archive data was downloaded and no credential was logged.
+- [x] Probe `jetstream.us-east.bsky.network`. Both `planSnapshot` and `getZstdDictionary` returned HTTP 503 on 2026-09-18. The probe downloaded no archive data and logged no credentials.
 - [x] Confirm package isolation, native/WASM scope, correctness-first delivery, and deferred performance measurement.
-- [x] Confirm that the proxy serving `jetstream.us-east.bsky.network` currently provides the CORS behavior needed by the browser demo; direct/self-hosted deployments still own this requirement until Jetstream gains native CORS support.
+- [x] Confirm that the `jetstream.us-east.bsky.network` proxy supports the browser demo's CORS needs. Direct deployments need equivalent CORS until Jetstream adds it.
 - [x] Select Jiff as the date/time library.
-- [x] Define a risk-driven native/WASM verification strategy with independent oracles, deterministic faults, cross-language fixtures, properties, swarms, fuzzing, acceptance tests, and targeted mutation checks.
+- [x] Define the native/WASM test strategy.
 - [ ] Approve the remaining libraries in [Dependency recommendations](#dependency-recommendations).
 - [ ] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
 - [ ] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
-- [ ] Implement the authenticated planner and robust archive download transports.
+- [ ] Implement the authenticated planner and bounded archive downloads.
 - [ ] Implement proposal-0015 live streaming, optional dictionary zstd, and reconnect behavior.
 - [ ] Implement the ordered archive-to-live engine, batching, cursor semantics, and re-backfill.
 - [ ] Add the `shrike jetstream` example/diagnostic command.
-- [ ] Extend the existing WASM demo with a separate Jetstream v2 binding and live/bounded-replay UI while preserving its legacy Jetstream path.
+- [ ] Add a separate Jetstream v2 binding and live/bounded-replay UI to the WASM demo. Preserve the legacy path.
 - [ ] Complete offline native/WASM integration, property, fault, fuzz, and compile coverage.
 - [ ] Run the opt-in production smoke test, then `just check`.
 - [ ] Document the public API, migration boundary, limitations, and operational guidance.
 
 ## Outcome
 
-Add a Rust client for native and WASM targets that presents one ordered stream of Jetstream v2 events whether they come from sealed archive segments or the live WebSocket. It must support full-network replay, exact filtering, safe cursor persistence, archive-to-live cutover, recovery when a live cursor ages out, and all four durable event kinds.
+Add a native and WASM Rust client that merges sealed archive segments and the live WebSocket into one ordered Jetstream v2 stream. Support full-network replay, exact filters, cursor persistence, archive-to-live cutover, stale-live-cursor recovery, and all four durable event kinds.
 
-The client will be a dedicated `shrike::jetstream` API and implementation. Shrike's existing `streaming::Client::jetstream()` and its types, transport, behavior, and tests remain untouched as the backwards-compatible client for the wire-frozen legacy `/subscribe` endpoint. The new package must not silently redirect, wrap, or share protocol state with it.
+Build this as a separate `shrike::jetstream` package. Leave the legacy `streaming::Client::jetstream()` API, types, transport, behavior, and tests unchanged. Do not redirect, wrap, or share protocol state with it.
 
-Correctness, bounded resource use, recovery guarantees, and native/WASM consistency are release requirements. The architecture must retain clear fast paths—shared record storage, streaming decode, bounded parallelism, and ordered reassembly—but extensive benchmarking, comparative performance analysis, and fine tuning are explicitly deferred until reliable high-speed networking is available.
+Release requires correctness, bounded resources, recovery, and native/WASM parity. Design for shared record storage, streaming decode, bounded parallelism, and ordered reassembly. Defer benchmarks and tuning until reliable high-speed networking is available.
 
 ## Goals
 
@@ -48,7 +48,7 @@ Correctness, bounded resource use, recovery guarantees, and native/WASM consiste
 - Degrade safely from live dictionary compression to uncompressed live streaming.
 - Bound response sizes, decompression, concurrency, retries, memory, and non-advancing recovery loops.
 - Keep all automated tests local and deterministic.
-- Add a CLI client suitable for examples, manual smoke tests, and throughput comparisons with the Go client.
+- Add a CLI for examples, smoke tests, and later Go/Rust comparisons.
 - Ship the same high-level replay semantics on native and browser/JS-hosted WASM, with transport injection for WASM hosts that do not provide browser Web APIs.
 
 ## Non-goals
@@ -64,17 +64,17 @@ Correctness, bounded resource use, recovery guarantees, and native/WASM consiste
 
 ## Research basis
 
-The authoritative contract for this plan is the Jetstream tree at the commit above, especially:
+The Jetstream commit above is the contract for this plan. Key sources:
 
 - `README.md`, `docs/README.md`, `specs/client.md`, `specs/architecture.md`, `specs/invariants.md`, `specs/glossary.md`, `specs/gotchas.md`, `specs/mutation.md`, and `specs/oracle.md`.
-- All documents under `specs/notes/`, with particular weight on the current segment format, Go client, filtering audit, active cold replay, proposal-0015 v2 subscription, endpoint rename, and sequence reuse notes.
+- Documents under `specs/notes/` about the segment format, Go client, filters, active cold replay, proposal-0015, endpoint rename, and sequence reuse.
 - The oracle incident reports and mutation-testing material under `specs/oracle/` and `testing/mutation/`.
 - The `network.bsky.jetstream.*` lexicons.
 - Root client files `client.go`, `client_core.go`, `engine.go`, `options.go`, `event.go`, `errors.go`, `planner.go`, `filter.go`, `batcher.go`, `downloader.go`, `segmentfetch.go`, `decode.go`, `live.go`, `livedecode.go`, `typed.go`, and their tests.
 - The `segment/` reader, block, header, footer, sentinel, compression, validation, golden, fuzz, and swarm implementations.
 - `cmd/client`, which is the behavioral model for the Shrike CLI command.
 
-Historical notes are useful rationale, but the current lexicons, `docs/README.md`, `specs/client.md`, and production Go code win where history differs.
+When sources differ, current lexicons, `docs/README.md`, `specs/client.md`, and production Go code take precedence over historical notes.
 
 ### Endpoint inventory
 
@@ -103,21 +103,21 @@ It cannot consume `subscribeEvents`, proposal-0015 envelopes, sequence cursors, 
 
 Other relevant constraints:
 
-- `src/xrpc::Client` buffers raw responses, caps them at 512 MiB, attaches its stored bearer to every request, and has no range/ETag streaming interface. Reusing it directly would risk sending the archive key to public endpoints and cannot implement robust 1 GiB segment downloads.
+- `src/xrpc::Client` buffers up to 512 MiB, adds its bearer to every request, and lacks range/ETag streaming. It cannot safely handle archive auth or 1 GiB segments.
 - `reqwest` already has its `stream` feature, and native `tokio-tungstenite`, browser `gloo-net`, Tokio, futures, URL, and strict DAG-CBOR support already exist behind features.
-- Shrike's DAG-CBOR decoder is zero-copy, but its public `Value<'a>` borrows the input. A safe replay API therefore needs an owning record-byte abstraction rather than self-referential decoded values.
-- The cached lexicons already contain `network/bsky/jetstream`, but `lexgen.json` does not generate the `network.bsky` package. Lexgen deliberately skips subscription client generation while still generating the subscription's associated object definitions.
+- Shrike's public DAG-CBOR `Value<'a>` borrows its input. The replay API needs an owning record-byte type.
+- The lexicon cache contains `network/bsky/jetstream`, but `lexgen.json` omits `network.bsky`. Lexgen skips subscription clients but can generate their associated object types.
 - Generated API records expose `from_cbor`, but there is no common typed-decode trait. Raw record bytes are sufficient for a staged typed fast path.
-- The current `wasm` feature intentionally excludes sync/backfill-style native work, so the new engine must not depend on those modules. Browser Fetch/WebSocket, CORS, cooperative scheduling, and 32-bit memory behavior differ from native transports.
-- No universal WebSocket API exists across browser JavaScript, WASI, and arbitrary embedded WASM hosts. The portable engine therefore needs narrow transport traits plus first-party native and browser/JS-hosted implementations.
-- The existing `wasm/` demo exposes `connectJetstream` through the legacy client and points it at the legacy `/subscribe` service. Preserve that API and example; add v2 under a separately named binding so the compatibility boundary stays visible.
+- The `wasm` feature excludes native sync/backfill modules. The new engine cannot depend on them. Browsers also differ in transport, CORS, scheduling, and 32-bit memory.
+- WASM has no universal WebSocket API. Use narrow transport traits with native and browser/JS implementations.
+- The `wasm/` demo's `connectJetstream` binding uses legacy `/subscribe`. Keep it and add a separate v2 binding.
 - Jiff, zstd decoders, xxh3, shared byte storage, and secret wrappers are not direct Shrike dependencies. Repository policy requires approval before adding them; Jiff has been author-approved.
 
 ## Recommended architecture
 
 ### Public boundary
 
-Add a new `jetstream` feature and `shrike::jetstream` module. Include it in both `full` and `wasm`. The protocol, filter, planner, decoder, state machine, event model, retry policy, and integrity checks are platform-neutral. Only HTTP, WebSocket, timers/spawning, and environment-secret discovery are platform adapters.
+Add a `jetstream` feature and `shrike::jetstream` module to both `full` and `wasm`. Keep protocol, filtering, planning, decoding, state, retries, and integrity checks portable. Isolate HTTP, WebSocket, timers, task spawning, and environment access.
 
 Do not modify `streaming::Client::jetstream()` or reuse its `JetstreamEvent` type for v2. The absence of a sequence cursor and sync payload makes apparent source compatibility misleading.
 
@@ -143,7 +143,7 @@ src/jetstream/
   json_cbor.rs       atproto JSON to canonical DAG-CBOR conversion
 ```
 
-Internal modules may be combined while small; this layout describes responsibilities, not a requirement to create empty abstractions.
+Combine small modules when useful. Do not create empty abstractions to match this sketch.
 
 ### Target and transport model
 
@@ -156,11 +156,18 @@ The supported matrix is:
 | JS-hosted WASM with compatible Fetch/WebSocket globals | Same WASM adapter | Supported and tested in at least one headless JS runtime |
 | WASI or embedded hosts without browser Web APIs | Caller-supplied portable transports | Core replay/decoding works; the host supplies HTTP, WebSocket, timer, and secret access |
 
-This distinction is necessary: WASI does not currently define a universal WebSocket interface. A public transport injection point makes the client usable there without tying Shrike to one component runtime. It must be narrow enough to implement from host callbacks and stable enough that the state machine has no platform conditionals.
+WASI has no universal WebSocket API. Expose narrow host transport traits so WASI and embedded runtimes can use the portable engine without platform branches in the state machine.
 
-Prefer associated-future transport traits over an unconditional `async_trait`/boxed-future boundary in hot paths. Do not impose `Send + Sync` on the platform-neutral core; require it on the native concrete client where available. Keep scheduling outside parsers and codecs so CPU work can later move to native worker pools or browser Web Workers without changing event or engine APIs.
+Prefer associated-future transport traits over unconditional `async_trait` or boxed futures. Keep `Send + Sync` off the portable core and require it on native clients where needed. Keep scheduling out of parsers and codecs so work can later move to worker pools or Web Workers.
 
-Browser archive support has an external server requirement. Cross-origin responses must allow the caller origin and methods GET/POST/OPTIONS, accept `Authorization`, `Content-Type`, `Range`, and `If-Range`, and expose at least `ETag`, `Content-Range`, `Content-Length`, and `Retry-After`. The WebSocket must accept `xrpc.v1.json`. The proxy currently serving `jetstream.us-east.bsky.network` supplies this CORS behavior and is suitable for the explicit browser demo/smoke path. Direct and self-hosted Jetstream deployments must configure an equivalent proxy until Jetstream itself gains native CORS support. Add a startup error that identifies missing CORS/header visibility rather than misclassifying it as corrupt archive data.
+Browser archive access requires server CORS support:
+
+- allow the caller origin and GET/POST/OPTIONS;
+- allow `Authorization`, `Content-Type`, `Range`, and `If-Range`;
+- expose `ETag`, `Content-Range`, `Content-Length`, and `Retry-After`;
+- accept WebSocket subprotocol `xrpc.v1.json`.
+
+The `jetstream.us-east.bsky.network` proxy meets these needs. Direct deployments need an equivalent proxy until Jetstream adds CORS. Report missing CORS or hidden headers as a capability error, not corrupt data.
 
 ### Generated protocol types
 
@@ -172,11 +179,11 @@ Add a `network.bsky` package to `lexgen.json`, run `just lexgen`, and use the ge
 - ranged/streaming binary responses;
 - segment decoding and orchestration.
 
-The generated generic XRPC convenience functions are not the thick client's transport layer. Subscription generation remains outside this project unless using the generated associated object types exposes a concrete generator bug.
+Do not use generated XRPC helpers as the thick client's transport layer. Keep subscription generation out of scope unless associated object generation exposes a bug.
 
 ### Proposed Rust API
 
-The exact names can change during implementation, but the semantic shape should be fixed before coding:
+Names may change. Fix the semantics before coding:
 
 ```rust
 use futures::StreamExt;
@@ -202,9 +209,9 @@ while let Some(delivery) = deliveries.next().await {
 }
 ```
 
-`api_key_from_env` is a native/host convenience. Browser callers must receive any key through their application's host configuration; the client must not imply that a compiled-in browser key can be kept secret.
+`api_key_from_env` is for native or host runtimes. Browser apps must supply keys at runtime. Compiled browser keys are not secret.
 
-Builder operations should cover:
+The builder supports:
 
 - kinds, DIDs, and collections;
 - exclusive `after_seq`, inclusive `before_seq`, snapshot-only mode, and pure-live resume cursor;
@@ -215,9 +222,9 @@ Builder operations should cover:
 - live dictionary compression, enabled by default;
 - injectable portable transports for tests, WASI/embedded hosts, and advanced callers.
 
-Use conservative target-aware defaults. Batch size 64 and a 20 ms live partial flush are semantic/latency defaults worth retaining. Native may begin with the Go concurrency and range values as provisional caps; WASM must use lower bounded async concurrency and periodically yield during large decode loops so it cannot monopolize the browser event loop. Record the defaults as provisional rather than claiming they are optimal before measurement.
+Use conservative target-specific defaults. Start with batches of 64 and a 20 ms live partial flush. Use the Go concurrency and range values as provisional native caps. Use lower WASM concurrency and yield during long decode loops. Tune after measurement.
 
-`Client` should drive one event stream at a time. Dropping the stream or client must cancel tasks and close sockets; an explicit idempotent `close`/cancellation handle is useful if it can be expressed without making ordinary use awkward.
+Each `Client` drives one event stream. Dropping the stream or client cancels tasks and closes sockets. Add an idempotent `close` or cancellation handle if the API stays simple.
 
 ### Event and record model
 
@@ -238,9 +245,9 @@ EventPayload
   Sync { upstream fields }
 ```
 
-Use an enum rather than parallel optional payload fields so invalid combinations are unrepresentable. Treat segment kind 7 (`create-resync`) as a public commit/create, matching the reference client.
+Use an enum so invalid payload combinations cannot be built. Map segment kind 7 (`create-resync`) to commit/create, as the Go client does.
 
-`Record` should own or share canonical DAG-CBOR bytes and expose:
+`Record` owns or shares canonical DAG-CBOR bytes and exposes:
 
 - `as_cbor(&self) -> &[u8]`;
 - lazy generic DAG-CBOR decode borrowing from `&self`;
@@ -248,17 +255,17 @@ Use an enum rather than parallel optional payload fields so invalid combinations
 - lazy/cached CID calculation where the archive row did not carry a CID;
 - a documented way to call generated `Type::from_cbor(record.as_cbor())`.
 
-A `bytes::Bytes`-style sliced backing permits all records in an archive block to share one decompressed slab without unsafe or self-referential values. Live JSON is canonicalized once to DAG-CBOR so both paths expose the same record contract. Deletes have no record or CID. Hide the concrete backing behind `Record` so storage can change without breaking callers.
+Use `bytes::Bytes` slices so archive records share one decompressed slab without `unsafe` or self-references. Convert live JSON to canonical DAG-CBOR once. Deletes have no record or CID. Hide storage behind `Record` so it can change without breaking callers.
 
-Do not make eager generic JSON materialization the only API: it dominates full-network replay cost. A later typed adapter can add a trait or caller-supplied decode function after the base record ownership and lifetime contract is proven.
+Do not require eager generic JSON; it is too costly for full replay. Add typed adapters later, after the record ownership API is stable.
 
-`Batch` owns its events and reports the highest sequence with `last_cursor()`. It is the unit after which consumers should atomically persist progress. A seq-less `#info` frame is a separate `Delivery::Info` and never advances the cursor.
+`Batch` owns its events and reports the highest sequence through `last_cursor()`. Consumers persist progress after a batch. A seq-less `#info` frame is `Delivery::Info` and never advances the cursor.
 
-`Stats` should be a cheap point-in-time snapshot containing at least pages, sealed tip, planned-through seq, residual gap, delivered events, and last processed seq. Avoid a metrics-registry dependency.
+`Stats` is a cheap snapshot of pages, sealed tip, planned-through seq, residual gap, delivered events, and last processed seq. Do not add a metrics registry.
 
 ### Error contract
 
-Use a structured `Error` with an explicit `is_fatal()` classification. The stream may yield a recoverable error and continue; after a fatal error it must end. Preserve endpoint XRPC error names and HTTP status.
+Use a structured `Error` with `is_fatal()`. The stream may continue after a recoverable error and must end after a fatal error. Preserve XRPC error names and HTTP status.
 
 Fatal examples:
 
@@ -274,9 +281,9 @@ Recoverable examples:
 - a malformed row when valid sibling rows can still be delivered in order;
 - a transient live read/dial failure while reconnect remains possible;
 - dictionary fetch, negotiation, or decompression setup failure when uncompressed fallback works;
-- advisory `#info`, which should normally be a `Delivery::Info`, not an error.
+- advisory `#info`, represented as `Delivery::Info`, not an error.
 
-Never discard a successfully decoded prefix because a later row or block failed. Deliver the prefix, then the ordered error, then continue or terminate according to classification. Error formatting, `Debug`, tracing fields, URLs, and stats must never contain the API key.
+Keep valid rows decoded before a later failure. Emit the rows, then the ordered error, then continue or stop based on its class. Never expose the API key in errors, `Debug`, tracing fields, URLs, or stats.
 
 ## Protocol behavior
 
@@ -288,11 +295,11 @@ The three filter dimensions are independent predicates and are AND-composed:
 - `dids`: applies to every event kind; omitted/empty means all.
 - `collections`: exact NSID or terminal `.*` namespace wildcard; applies only to commits.
 
-Identity, account, and sync events bypass collection matching but still obey DID and kind filters. Therefore `collections=app.bsky.feed.post` alone includes matching commits plus all permitted DID-level markers. Commits-only requires `kinds=commit` too. Reject a collection filter combined with a non-empty kinds filter that excludes commit.
+Collection filters do not apply to identity, account, or sync events. DID and kind filters do. Thus `collections=app.bsky.feed.post` includes matching commits and allowed DID-level markers. Add `kinds=commit` for commits only. Reject collection filters when a non-empty kind filter excludes commit.
 
-The planner is intentionally one-sided and may return false positives. Apply the same exact filter after every archive decode and live decode. Never trust bloom/planner output as exact.
+The planner may return false positives. Apply the same exact filter after archive and live decode.
 
-Validate locally before I/O: no more than 4 kinds, 10,000 DIDs, or 100 collections; validate DID/NSID syntax and wildcard placement; reject the legacy `wanted*` vocabulary on the v2 API.
+Validate before I/O: at most 4 kinds, 10,000 DIDs, and 100 collections; valid DID/NSID syntax and wildcards; no legacy `wanted*` fields.
 
 ### Cursor model
 
@@ -300,7 +307,7 @@ Validate locally before I/O: no more than 4 kinds, 10,000 DIDs, or 100 collectio
 - Archive requests use `(afterSeq, beforeSeq]`.
 - `subscribeEvents` replays inclusively from `cursor`; the client drops every `seq <= last_processed_seq`.
 - An omitted cursor on a pure live subscription starts at the current tip.
-- A v2 cursor `>= 10^15` is interpreted by the server as Unix microseconds, not a sequence. The high-level API should prefer explicit sequence cursor methods and offer timestamp resume only if it can be named distinctly.
+- The server reads a v2 cursor `>= 10^15` as Unix microseconds, not a sequence. Use distinct sequence and timestamp resume APIs.
 - An old sequence cursor is rejected pre-upgrade as `CursorTooOld`.
 - An old timestamp cursor is clamped and starts with seq-less `#info`/`OutdatedCursor`.
 - A future cursor enters tip mode.
@@ -338,17 +345,17 @@ For `mode=segment`:
 - honor bounded `Retry-After` for 429 and retry eligible 5xx/network failures;
 - stream response bodies and decode per block instead of retaining multiple decoded segments.
 
-On memory-constrained WASM, prefer fetching the header and footer/index ranges first, validating the generation, then fetching bounded compressed frame ranges. This avoids assembling a potentially 1 GiB segment in linear WASM memory. When Range or the required exposed headers are unavailable, use a bounded sequential response only if its advertised/observed size fits target limits; otherwise return an actionable capability/resource error. The native implementation may use wider range striping behind the same `SegmentSource` seam.
+On WASM, fetch and validate header and footer/index ranges before bounded compressed frame ranges. Do not assemble a 1 GiB segment in linear memory. Without Range or exposed headers, use a sequential response only if its declared and observed sizes fit target limits. Otherwise return a capability or resource error. Native may use wider range striping behind the same `SegmentSource` API.
 
-Use separate short-control and bulk-download request policies by default. The current general XRPC client's response buffering and timeout model is not suitable for the bulk path.
+Use separate policies for short control requests and bulk downloads. The general XRPC client's buffering and timeouts do not fit bulk downloads.
 
-The plan checksum/ETag identifies a segment generation. After a whole download, parse and validate the header/footer and recompute the segment metadata checksum (xxh3 over `header[12..] || footer`) instead of treating transport success as integrity success.
+The plan checksum/ETag identifies a segment generation. After a whole download, validate the header/footer and recompute xxh3 over `header[12..] || footer`. HTTP success does not prove integrity.
 
 ### Segment and block decoding
 
-A whole `.jss` segment has a 256-byte reserved header, magic `jss0`, version 1, compressed block frames before `FooterOffset`, and footer indexes at/after that offset. Each file block frame is prefixed by an 8-byte little-endian compressed length. `getBlock` returns only the raw zstd frame, without that prefix.
+A `.jss` segment has a 256-byte reserved header, `jss0` magic, version 1, compressed blocks before `FooterOffset`, and footer indexes at or after it. Each file block has an 8-byte little-endian compressed-length prefix. `getBlock` returns the raw zstd frame without this prefix.
 
-Validate header/footer offsets and counts before allocation or slicing. In particular, use checked arithmetic and reject offsets into the header, beyond `FooterOffset`, beyond file length, or inconsistent with block indexes.
+Validate offsets and counts before allocation or slicing. Use checked arithmetic. Reject offsets into the header, past `FooterOffset` or file length, or inconsistent with block indexes.
 
 The decompressed columnar block is:
 
@@ -366,7 +373,7 @@ payload_len[event_count]: u32
 collections || dids || rkeys || revs || payloads
 ```
 
-Hard limits should initially match the reference: 262,144 rows and 1 GiB decompressed bytes per block. Check every aggregate length before slicing. Require all columns and blob regions to be consumed exactly; reject trailing or truncated data.
+Start with the Go limits: 262,144 rows and 1 GiB decompressed per block. Check aggregate lengths before slicing. Consume all columns and blob regions exactly; reject trailing or truncated data.
 
 Kind mapping:
 
@@ -380,9 +387,9 @@ Kind mapping:
 | 6 | sync |
 | 7 | create-resync, exposed as commit create |
 
-Use `indexed_at` as display time when nonzero, otherwise `witnessed_at`. Identity/account/sync payloads are upstream event DAG-CBOR. Commit create/update payloads are canonical record DAG-CBOR. A delete carries no record payload. Validate required/forbidden metadata per kind, syntax fields, payload CBOR, and record CID behavior.
+Use nonzero `indexed_at` as display time; otherwise use `witnessed_at`. Identity, account, and sync payloads contain upstream event DAG-CBOR. Commit create/update payloads contain canonical record DAG-CBOR. Deletes have no record. Validate metadata, syntax, CBOR, and CID rules for each kind.
 
-Parallel workers may fetch and decode ahead, but one ordered reassembly stage is the only component allowed to emit. On single-threaded WASM these are bounded concurrent futures, not an assumption of OS threads. Long block loops must yield cooperatively at deterministic work intervals. Memory is bounded by concurrency, prefetch depth, compressed limits, decompressed limits, target address space, and batch ownership.
+Workers may fetch and decode ahead. Only the ordered reassembly stage emits. WASM uses bounded concurrent futures, not OS threads, and yields during long loops. Bound memory by concurrency, prefetch depth, compressed/decompressed limits, target address space, and batch ownership.
 
 ### Live WebSocket
 
@@ -402,11 +409,11 @@ Uncompressed frames are proposal-0015 JSON:
 {"$type":"error","error":"ConsumerTooSlow","message":"..."}
 ```
 
-Dispatch the payload union by exact `$type`; preserve unknown-type context in a bounded error. Parse pre-upgrade XRPC JSON bodies, especially `CursorTooOld`, `UnknownZstdDictionary`, and implemented `InvalidRequest`.
+Dispatch payloads by exact `$type` and keep bounded context for unknown types. Parse pre-upgrade XRPC errors, including `CursorTooOld`, `UnknownZstdDictionary`, and `InvalidRequest`.
 
-Apply a 32 MiB default live message/decompressed-frame ceiling, configurable downward/upward within a hard safe maximum. Ping/pong/close handling must comply with tungstenite behavior and cancellation.
+Default to a 32 MiB live message/decompressed-frame limit, configurable within a hard maximum. Handle ping, pong, close, and cancellation correctly on each transport.
 
-Reconnect from the last processed sequence, not merely the last received frame. Because server replay is inclusive, always deduplicate `<= last_processed_seq`. Flush a pending partial batch before surfacing a live error or switching back to archive recovery.
+Reconnect from the last processed sequence. Server replay is inclusive, so drop `seq <= last_processed_seq`. Flush a partial batch before reporting a live error or returning to archive recovery.
 
 ### Dictionary zstd
 
@@ -418,7 +425,7 @@ Compression is an optimization and is enabled by default:
 4. Treat each binary WebSocket message as one complete zstd frame and cap decompressed output before JSON parsing.
 5. Reject binary frames when compression was not successfully negotiated and reject text data frames when the compressed mode contract requires binary.
 6. On `UnknownZstdDictionary`, refetch once. If the fetch fails or returns the same rejected ID, fall back to an uncompressed dial.
-7. On dictionary/decode setup failure, log a redacted diagnostic and fall back uncompressed. A malformed compressed data frame after a successful upgrade is a stream error, followed by bounded recovery.
+7. On dictionary or decoder setup failure, log a redacted error and fall back to uncompressed mode. Treat a malformed compressed frame after upgrade as a stream error and recover within configured bounds.
 
 Never attach the archive bearer key to dictionary fetch or WebSocket upgrade.
 
@@ -439,7 +446,7 @@ validate config
                            flush batch, backfill from processed
 ```
 
-When a live/cutover cursor is too old, flush any pending valid batch, restart archive replay exclusively after the last processed seq, pin a new sealed tip, and retry cutover. Bound consecutive cycles that neither advance `last_processed_seq` nor change the useful archive coverage; terminate fatally rather than spin.
+On `CursorTooOld`, flush valid pending rows, replay after the last processed seq, pin a new sealed tip, and retry cutover. Stop after a bounded number of cycles that neither advance the cursor nor extend archive coverage.
 
 The engine must not assume that a plan entry contains every sequence in its range, that a page contains events, or that the live cursor is adjacent to the sealed tip.
 
@@ -452,7 +459,7 @@ The engine must not assume that a plan entry contains every sequence in its rang
 - Disable or strictly constrain cross-origin redirects for authenticated archive requests so a key cannot be forwarded to another host.
 - Reject an archive key over cleartext except explicit loopback test/dev hosts. Do not infer that private RFC1918 networks are safe.
 - Keep the CLI key in `JETSTREAM_API_KEY`; do not require it as a process-visible command-line argument.
-- Treat browser bearer keys as extractable by end users. Document that long-lived privileged keys must not be embedded in public bundles; use a narrowly scoped/ephemeral key or a trusted proxy when the deployment's threat model requires secrecy.
+- Browser users can extract bearer keys. Never embed long-lived keys in public bundles. Use short-lived/scoped keys or a trusted proxy.
 - Treat browser CORS as part of the deployment contract and test preflight/header exposure. Never work around it with query-string credentials.
 - Cap error bodies and never echo arbitrary huge or binary server responses.
 - Use checked conversions/arithmetic throughout parser and range code; no `unsafe`, panics, unwraps, expects, or unreachable branches in production.
@@ -483,11 +490,11 @@ Flags:
 - duration and report interval;
 - output mode: newline-delimited JSON or periodic throughput/progress stats.
 
-Read archive auth from `JETSTREAM_API_KEY` by default. If an override is needed, prefer an environment-variable-name option over a raw key flag. JSON output must include Jetstream seq and all marker kinds. Stats output should include total events, events/sec, last cursor, sealed tip, planned through, and residual gap.
+Read archive auth from `JETSTREAM_API_KEY`. If needed, accept an environment variable name, not a key flag. JSON output includes seq and every marker kind. Stats include total events, events/sec, last cursor, sealed tip, planned-through seq, and residual gap.
 
 Ctrl-C and duration expiry are successful cancellation, not stream failure. Fatal errors produce nonzero exit; recoverable errors are printed to stderr and consumption continues.
 
-The CLI is the only checked-in production smoke vehicle. Normal invocations default to a caller-provided/local host rather than silently pulling a full production archive.
+Use the CLI for production smoke tests. Require a host so normal use cannot start a production full replay by accident.
 
 ## Implementation milestones and acceptance criteria
 
@@ -502,7 +509,7 @@ The CLI is the only checked-in production smoke vehicle. Normal invocations defa
 - [ ] Capture/copy minimal Go-generated fixtures into `testdata/jetstream/` with provenance and generation instructions.
 - [ ] Prove one full compressed block decode and one proposal-0015 dictionary frame in native and browser WASM tests.
 
-Acceptance: dependency/API/target decisions are explicit; a tiny Rust spike decodes a Go golden block, verifies a Go golden checksum, and compiles/runs the portable codec on native and WASM without network access.
+Acceptance: record dependency, API, and target decisions. Decode and checksum a Go golden block. Run the portable codec offline on native and WASM.
 
 ### M1 — Protocol DTOs and public value model
 
@@ -514,7 +521,7 @@ Acceptance: dependency/API/target decisions are explicit; a tiny Rust spike deco
 - [ ] Document legacy/v2 type separation.
 - [ ] Add Jiff-backed exact conversion between live RFC 3339 timestamps and archive Unix microseconds.
 
-Acceptance: every live lexicon example maps to the proposed event model, archive record bytes can be typed-decoded through existing generated APIs, and invalid states cannot be constructed through public builders.
+Acceptance: map every live lexicon example to the event model. Typed-decode archive records with generated APIs. Public builders cannot create invalid states.
 
 ### M2 — Segment/block decoder
 
@@ -526,11 +533,11 @@ Acceptance: every live lexicon example maps to the proposed event model, archive
 - [ ] Add fuzz targets for header, footer, frame, decompression, column lengths, payload decode, and filter wildcard logic.
 - [ ] Add property tests for overflow-free layout calculations and ordered/filter equivalence.
 
-Acceptance: no malformed input can panic or allocate beyond configured bounds; golden output matches the reference implementation event-for-event.
+Acceptance: malformed input cannot panic or exceed configured allocation limits. Golden output matches Go event for event.
 
 ### M3 — Planner and archive transport
 
-- [ ] Build the reusable scripted local protocol server with deterministic gates, request/fault ledger, CORS controls, and anti-vacuity assertions.
+- [ ] Build a scripted local protocol server with deterministic gates, a request/fault ledger, CORS controls, and anti-vacuity checks.
 - [ ] Implement scoped-auth `planSnapshot` calls and strict response validation.
 - [ ] Implement pinned pagination and empty-page progress.
 - [ ] Implement `getBlock` pooling with ordered reassembly.
@@ -539,7 +546,7 @@ Acceptance: no malformed input can panic or allocate beyond configured bounds; g
 - [ ] Add cancellation and clean worker shutdown.
 - [ ] Implement the browser range/stream capability path and clear CORS/resource errors.
 
-Acceptance: entirely local native and browser-WASM fault servers can exercise whole, sparse, ranged, non-ranged, interrupted, rate-limited, generation-changing, corrupt, truncated, oversized, CORS-constrained, and non-advancing cases with deterministic results and no secret leakage.
+Acceptance: local native and browser-WASM servers cover whole, sparse, ranged, non-ranged, interrupted, rate-limited, generation-changing, corrupt, truncated, oversized, CORS, and stalled cases. Results are deterministic and leak no secrets.
 
 ### M4 — Live v2 transport
 
@@ -551,11 +558,11 @@ Acceptance: entirely local native and browser-WASM fault servers can exercise wh
 - [ ] Implement rejected/stale dictionary recovery and uncompressed fallback.
 - [ ] Implement native and browser/JS-hosted WebSocket adapters with the same frame/error fixtures.
 
-Acceptance: local native and headless-browser/JS WebSocket fixtures cover text and compressed frames, every event/info/error kind, inclusive duplicates, gaps, future/old cursor paths, slow-consumer terminal errors, malformed frames, disconnects, and dictionary rotation.
+Acceptance: local native and browser/JS fixtures cover text and compressed frames, every event/info/error kind, duplicates, gaps, future/old cursors, slow consumers, malformed frames, disconnects, and dictionary rotation.
 
 ### M5 — Replay/live engine
 
-- [ ] Build the independent synchronous replay model and test-only normalized event representation without reusing production filtering, batching, retry, or engine logic.
+- [ ] Build an independent synchronous replay model and normalized test event type. Do not reuse production filter, batch, retry, or engine logic.
 - [ ] Join planner, archive workers, ordered batching, and live tail.
 - [ ] Pin the first sealed tip and cut over at `max(S, last_processed_seq)`.
 - [ ] Implement snapshot-only completion.
@@ -565,22 +572,22 @@ Acceptance: local native and headless-browser/JS WebSocket fixtures cover text a
 - [ ] Test native task cancellation and WASM future/listener cleanup.
 - [ ] Add structured property tests, small exhaustive partition/schedule checks, and deterministic interaction swarms against the independent model.
 
-Acceptance: deterministic model tests prove no duplicates and ordered delivery across pagination, parallel completion, retries, sparse filters, cutover overlap, sequence vacancies, repeated `CursorTooOld`, cancellation, and server mutation scenarios.
+Acceptance: model tests prove ordered, duplicate-free delivery across pagination, parallel completion, retries, sparse filters, cutover overlap, seq gaps, repeated `CursorTooOld`, cancellation, and server mutation.
 
 ### M6 — CLI, WASM demo, documentation, and smoke test
 
 - [ ] Add `shrike jetstream` with JSON/stats modes and environment-only secret default.
-- [ ] Keep the existing legacy `connectJetstream` WASM export and demo path unchanged; add a distinctly named v2 export such as `connectJetstreamV2` backed only by `shrike::jetstream`.
-- [ ] Update `wasm/index.html` and `wasm/README.md` with a Jetstream v2 live demo using `jetstream.us-east.bsky.network`, plus an optional small, explicitly bounded archive replay.
-- [ ] Let a user provide a replay key for the current browser session without persisting it or placing it in the URL; never embed a long-lived `JETSTREAM_API_KEY` in checked-in HTML, JavaScript, generated WASM, or examples.
-- [ ] Show v2 sequence cursors, event kinds, replay/cutover progress, cancellation, actionable errors, and dictionary-compression fallback in the demo.
-- [ ] Add local headless-browser coverage for the v2 binding and UI lifecycle, including live frames, bounded replay, CORS/header failures, cancellation/listener cleanup, and compressed-to-uncompressed fallback.
+- [ ] Keep the legacy `connectJetstream` WASM export and demo. Add a separate v2 export, such as `connectJetstreamV2`, backed only by `shrike::jetstream`.
+- [ ] Add a v2 live demo for `jetstream.us-east.bsky.network` to `wasm/index.html` and `wasm/README.md`, with optional bounded archive replay.
+- [ ] Accept a replay key for the browser session without persisting it or adding it to the URL. Never embed a long-lived key in checked-in HTML, JavaScript, WASM, or examples.
+- [ ] Show v2 sequence cursors, event kinds, replay/cutover progress, cancellation, clear errors, and compression fallback in the demo.
+- [ ] Test the v2 binding and UI in a local headless browser: live frames, bounded replay, CORS/header errors, cancellation, listener cleanup, and compression fallback.
 - [ ] Add public rustdoc and a minimal README example.
 - [ ] Document cursor persistence with host identity, marker folding responsibility, snapshot semantics, resource knobs, and recoverable/fatal handling.
 - [ ] Add an ignored/explicit smoke target or documented command that requires both a host and `JETSTREAM_API_KEY`.
-- [ ] When the service is reachable, run a tiny filtered live test and a tiny bounded snapshot test from both the native CLI and browser demo; record no event payloads or credentials in the repository.
+- [ ] When production is reachable, run small filtered live and bounded snapshot tests from the CLI and browser. Record no payloads or credentials.
 
-Acceptance: the CLI behavior can be compared with `cmd/client` against a local server; the browser demo exercises v2 live streaming and user-authorized bounded replay through the production CORS proxy without changing the legacy binding or persisting a key; local headless tests verify its observable states and cleanup; and opt-in production smoke paths cannot run accidentally under `just test` or `just check`.
+Acceptance: compare the CLI with `cmd/client` against a local server. The browser demo runs v2 live and user-authorized bounded replay without changing the legacy binding or storing a key. Headless tests cover UI state and cleanup. `just test` and `just check` never run production smoke tests.
 
 ### Deferred post-flight performance work — not part of current completion
 
@@ -589,11 +596,11 @@ Acceptance: the CLI behavior can be compared with `cmd/client` against a local s
 - Tune target-specific defaults and compare Rust with Go using the same host, filter, snapshot, and network path.
 - Add higher-level typed adapters only after the record ownership contract is stable.
 
-The current implementation may include obvious low-risk efficiencies, but it must not use airplane-network measurements to choose defaults or make performance claims.
+Apply low-risk efficiencies now. Do not set defaults or make performance claims from airplane-network measurements.
 
 ## Verification strategy
 
-All automated tests are offline and hermetic. The strategy follows Jetstream's strongest testing lesson: test the client-visible replay contract through independent observations, not merely individual implementation paths. Different techniques have different jobs; duplicating the same weak assertion at every layer does not improve confidence.
+Automated tests are offline and hermetic. Test the replay contract with independent observations. Give each test layer a distinct job; repeating weak assertions adds little value.
 
 ### Verification work tracker
 
@@ -606,21 +613,21 @@ All automated tests are offline and hermetic. The strategy follows Jetstream's s
 - [ ] Add semantic fuzz targets, real-shaped seeds, strict resource limits, artifact retention, and regression promotion.
 - [ ] Add local native CLI and headless-browser end-to-end acceptance gates.
 - [ ] Add resource/cancellation instrumentation and prove configured high-water/cleanup bounds.
-- [ ] Run and record an initial curated mutation campaign; close or explicitly disposition every surviving oracle blind spot.
-- [ ] Add focused `just` recipes and CI tiers without introducing external requests or making the default loop impractically slow.
+- [ ] Run an initial mutation campaign. Fix or document every oracle gap it finds.
+- [ ] Add focused `just` recipes and CI tiers. Keep the default loop fast and offline.
 
 ### Principles
 
-- **Test contracts and failure modes, not line coverage.** Each test must name the bug class or invariant it protects. Coverage reports may locate unexercised code, but no numeric coverage target is a release criterion.
-- **Prefer independent oracles.** Expected events come from a small logical model or pinned Go-generated manifest, never by decoding expected data with the same Shrike code under test.
-- **Exercise public product paths.** Parser unit tests are necessary, but archive-to-live correctness must also be observed through the public client over real local HTTP and WebSocket transports.
-- **Make faults non-vacuous.** Every injected fault has an ID and hit counter; a test fails if the intended fault, retry, cancellation point, or recovery transition did not occur.
-- **Control concurrency rather than sleep.** Use barriers, gated transports, paused/mock time, explicit acknowledgements, and deterministic completion permutations. Wall-clock sleeps are reserved for a small real-timer acceptance tier.
-- **Make randomized failures reproducible.** Print and persist the seed, enabled swarm axes, minimized action script, target, and relevant limits. Property failures must shrink to a focused regression case.
-- **Assert resources and cleanup.** Tests observe request counts, attempts, active tasks/listeners, queue high-water marks, in-flight bytes, response limits, and decoder output limits—not just returned events.
-- **Test native/WASM semantic parity.** Portable fixtures and model scenarios run against the shared core on both targets; actual browsers separately cover Fetch, CORS, WebSocket, event-loop yielding, and listener cleanup.
-- **Keep production opt-in.** The only external checks are explicit, tightly bounded CLI/browser smoke tests. They are never invoked by default tests, doctests, examples, or library startup.
-- **Turn discoveries into durable assets.** Every fixed bug gets the smallest focused regression test at the lowest layer that reproduces it; escaped fuzz/property/swarm inputs join the permanent seed or regression corpus.
+- **Test contracts, not line counts.** Name the bug class or invariant each test protects. Coverage finds untested code; it is not a release target.
+- **Use independent oracles.** Derive expected events from a small model or a pinned Go manifest, never from Shrike code under test.
+- **Test public paths.** Unit-test parsers, then test archive-to-live behavior through the public client over local HTTP and WebSocket servers.
+- **Prove faults fired.** Give each injected fault an ID and hit counter. Fail if the expected fault or transition did not occur.
+- **Control concurrency.** Use barriers, gated transports, paused time, acknowledgements, and fixed completion orders. Use wall-clock sleeps only in real-timer acceptance tests.
+- **Reproduce random failures.** Record the seed, swarm axes, minimized action script, target, and limits. Shrink property failures.
+- **Check bounds and cleanup.** Track requests, attempts, tasks, listeners, queue peaks, in-flight bytes, and decode limits as well as output.
+- **Check native/WASM parity.** Run portable fixtures and model cases on both. Use a browser for Fetch, CORS, WebSocket, yielding, and listener cleanup.
+- **Keep production opt-in.** Only explicit, bounded CLI/browser smoke tests use external services.
+- **Keep every finding.** Add a focused regression test for each bug. Add escaped fuzz/property/swarm inputs to the permanent corpus.
 
 ### Risk-to-oracle map
 
@@ -630,7 +637,7 @@ All automated tests are offline and hermetic. The strategy follows Jetstream's s
 | Archive/live semantic mismatch | Same logical event history encoded independently as archive rows and live envelopes | Differential integration, property tests |
 | Loss, duplication, reordering, or bad cutover | Simple sequential replay model over a generated logical history and cursor script | Model/property tests, schedule permutations, end-to-end acceptance |
 | Retry, mutation, or generation handling | Scripted local server request ledger plus final byte/event equivalence | Fault injection, integration tests, swarms |
-| Filter or marker loss | Obvious predicate model over logical events before wire encoding | Truth-table unit tests, properties, archive/live differential |
+| Filter or marker loss | Small predicate model over logical events before wire encoding | Truth-table unit tests, properties, archive/live differential |
 | Unbounded resource use or leaked work | Instrumented transports/queues/decoders with hard high-water assertions | Boundary tests, cancellation tests, compression-bomb fuzzing |
 | Credential disclosure | Complete local request/redirect/error/log ledger that treats the key as a forbidden byte string | Security integration tests, formatting tests, browser tests |
 | Target-specific divergence | Identical corpus manifest and scenario outcomes on native, Node-hosted WASM, and a real browser | Cross-target conformance and browser acceptance |
@@ -638,14 +645,14 @@ All automated tests are offline and hermetic. The strategy follows Jetstream's s
 
 ### Test architecture and independent evidence
 
-Build four reusable test components rather than bespoke mocks per test:
+Build four shared test components:
 
-1. **Logical replay model.** A deliberately small synchronous interpreter consumes logical events, filters, snapshot bounds, live reconnect cursors, and a fault/recovery script. It produces normalized expected events, batches, final cursor, terminal classification, and request/attempt ceilings. It must not call the production planner, filter, decoder, batching, retry, or engine code.
-2. **Pinned cross-language corpus.** A generator in the Jetstream Go checkout emits minimal raw blocks, whole segments, dictionaries, proposal-0015 frames, plan pages, expected normalized events, and a manifest containing the Jetstream commit and file hashes. Commit the immutable results under `testdata/jetstream/`, not the generator's build products. Default Rust tests never require Go or the adjacent checkout.
-3. **Scripted protocol server.** One local fixture serves XRPC HTTP, ranged objects, dictionary responses, and WebSockets. A declarative script controls response bytes, gates, disconnect points, status/headers, CORS, ETag generations, and live frames. Its request ledger records ordering, ranges, cursors, subprotocols, auth presence, concurrency, and whether every planned fault fired.
-4. **Instrumented host transports.** In-memory portable transport implementations drive exhaustive engine/model cases cheaply and deterministically. The same conformance contract applies to native, browser, and caller-injected WASI transports; these tests supplement rather than replace real sockets and Fetch/WebSocket tests.
+1. **Logical replay model.** A small synchronous interpreter consumes events, filters, snapshot bounds, reconnect cursors, and faults. It returns expected events, batches, cursor, terminal class, and request limits. It must not call production planner, filter, decoder, batch, retry, or engine code.
+2. **Cross-language corpus.** A Go generator emits small blocks, segments, dictionaries, proposal-0015 frames, plan pages, expected events, and a manifest with commit and file hashes. Commit outputs under `testdata/jetstream/`. Default tests do not require Go or a nearby checkout.
+3. **Scripted protocol server.** One local fixture serves XRPC HTTP, ranged objects, dictionaries, and WebSockets. Scripts control bytes, gates, disconnects, status, headers, CORS, ETags, and live frames. A ledger records requests, concurrency, and fault hits.
+4. **Instrumented host transports.** In-memory transports run engine/model cases quickly. Apply one conformance contract to native, browser, and caller-supplied WASI transports. Also test real sockets and browser APIs.
 
-Keep expected data outside production DTOs where practical. Normalize both actual and expected events into a test-only representation containing seq, kind, DID, collection/rkey/rev, payload bytes/hash, and relevant timestamps. Compare exact event logs as well as any folded final state: final state alone can hide a dropped intermediate update or marker.
+Keep expected data out of production DTOs. Normalize actual and expected events to seq, kind, DID, collection/rkey/rev, payload bytes/hash, and timestamps. Compare exact logs and folded state; folded state can hide missing updates or markers.
 
 ### Test tiers and gates
 
@@ -659,11 +666,11 @@ Keep expected data outside production DTOs where practical. Normalize both actua
 | Targeted mutation | Curated realistic client bugs run against the relevant oracle tier | After the suite stabilizes, scheduled and before major release |
 | Production smoke | Tiny filtered live tail and strictly bounded replay via CLI/browser | Manual opt-in only with explicit host/key |
 
-Add focused recipes such as `just test-jetstream`, `just test-jetstream-long`, and `just test-jetstream-browser`; keep `just check` deterministic and reasonably fast. Exact time budgets should be measured locally/CI rather than guessed on airplane Wi-Fi.
+Add `just test-jetstream`, `just test-jetstream-long`, and `just test-jetstream-browser`. Keep `just check` deterministic and fast. Set time budgets from local and CI measurements.
 
 ### Unit and boundary tests
 
-Use table-driven unit tests for pure logic whose complete contract fits in a small input/output table:
+Use table-driven tests for small pure functions:
 
 - filter kind × DID × exact/wildcard collection behavior, especially marker pass-through;
 - config conflicts, counts, syntax, cursor domains, host normalization, TLS policy, and checked integer conversions;
@@ -673,22 +680,22 @@ Use table-driven unit tests for pure logic whose complete contract fits in a sma
 - pagination progress, retry eligibility, `Retry-After`, backoff caps, `Content-Range`, ETag/If-Range, and no-progress accounting;
 - batch partial/full flush, last-cursor semantics, inclusive-cursor deduplication, and cancellation precedence.
 
-Use boundary values such as zero, one, limit−1, limit, limit+1, and integer maxima. Avoid one test per getter, builder setter, derived trait, or error string. Serialization tests are valuable only where exact wire shape, omission, union tagging, redaction, or compatibility is contractual.
+Test zero, one, limit−1, limit, limit+1, and integer maxima. Skip tests for trivial getters, setters, derived traits, and error prose. Test serialization only when wire shape, omission, tags, redaction, or compatibility matters.
 
 ### Golden and differential tests
 
 - Decode every pinned Go raw block and whole segment and compare the complete normalized event log, segment metadata, checksum, and payload hashes with the manifest.
-- Include every durable kind, sentinel rows, empty optionals, sparse/whole plans, dictionary frames, maximum realistic identifiers, and deliberately malformed neighboring rows.
+- Include every durable kind, sentinels, empty fields, sparse/whole plans, dictionary frames, long valid identifiers, and malformed neighboring rows.
 - Run the same zstd dictionary/frame/error corpus through native `zstd` and WASM `ruzstd`; accepted output and rejection class/limit behavior must agree even if exact error text differs.
 - Encode one logical history into both archive and live representations using fixture code independent from Shrike; after normalization and filtering, outputs must be identical.
 - Check live JSON record conversion to canonical DAG-CBOR against Go-produced CBOR/CID pairs and existing Shrike strict decoding.
-- Regenerate the corpus only through a reviewed explicit command. A manifest diff must make reference commit, format, expected output, and hash changes visible.
+- Regenerate the corpus only through a reviewed command. The manifest diff shows reference commit, format, output, and hash changes.
 
-Golden files should be small and diagnostic. Do not commit production captures, credentials, giant segments, or snapshots of unstable debug/error text.
+Keep golden files small. Do not commit production captures, credentials, large segments, or unstable debug/error snapshots.
 
 ### Property and model-based tests
 
-Use the existing `proptest` dependency to generate structured, valid logical scenarios rather than mostly-invalid byte noise. Generate:
+Use `proptest` to generate valid logical scenarios:
 
 - non-contiguous increasing sequences and all event kinds;
 - exact/wildcard filters and matching/nonmatching markers;
@@ -699,20 +706,20 @@ Use the existing `proptest` dependency to generate structured, valid logical sce
 The core properties are:
 
 - actual output exactly equals the independent sequential model;
-- delivered sequences are strictly increasing, with documented gaps allowed, and no matching event is lost or duplicated;
+- delivered sequences strictly increase; gaps are allowed; no matching event is lost or duplicated;
 - changing batch size, archive partitioning, page boundaries, legal worker concurrency, or completion order does not change concatenated output;
-- replaying to cursor `C`, persisting the delivered cursor, then resuming is equivalent to one uninterrupted run after inclusive-boundary deduplication;
+- stop at cursor `C`, persist it, and resume: output equals one uninterrupted run after boundary deduplication;
 - archive-only and live-only encodings of the same logical history filter and normalize identically;
 - cutover and every successful re-backfill start strictly after the last processed seq and never rewind observable output;
 - retry and no-progress counters never exceed configuration, and permanent errors are never retried;
 - cancellation has one terminal outcome and leaves no queued delivery after completion;
 - all size/offset arithmetic either produces a valid in-bounds layout or a bounded error without wrapping.
 
-For small histories, exhaustively enumerate page splits, archive/live cut points, and worker completion permutations rather than relying only on randomness. Preserve minimized failing scripts as readable regression cases.
+For small histories, enumerate page splits, archive/live cut points, and worker completion orders. Save minimized failures as regression cases.
 
 ### Local integration and fault-injection tests
 
-Drive the public native client against the scripted server and cover these fault families independently before combining them:
+Drive the public native client against the scripted server. Test each fault alone before testing combinations:
 
 - plans: multiple/empty pages, sparse and whole modes mixed, overlap, malformed bounds, cursor regression, changing sealed tip, and non-advancing continuation;
 - HTTP bodies: ignored ranges, invalid/missing `Content-Range`, wrong lengths, early EOF, trailing bytes, slow/dribbled bodies, mid-body disconnect/resume, and oversized declared/observed bodies;
@@ -721,21 +728,21 @@ Drive the public native client against the scripted server and cover these fault
 - live: text/binary frames, ping/pong/close, malformed/control/info/error frames, duplicate reconnect boundary, seq vacancy, future/old cursor, consumer-too-slow, and reconnect exhaustion;
 - compression: initial dictionary failure, corrupt/oversized frame, rejected/stale dictionary, rotation, refetch, bounded decode, and uncompressed fallback;
 - authentication: archive endpoints receive exactly one scoped authorization header; live/dictionary/foreign redirects/errors/logs never receive or reveal it;
-- cancellation: pause at every meaningful await boundary—plan, body read, range worker, decode handoff, blocked output, partial batch, reconnect timer, dictionary fetch, and live read—then assert bounded shutdown and zero live work.
+- cancellation: pause at each await boundary—plan, body read, range worker, decode handoff, blocked output, partial batch, reconnect timer, dictionary fetch, and live read—then require bounded shutdown and no live work.
 
-For concurrency tests, gate each worker and release completions in forward, reverse, and selected interleaved orders. Assert exact request/attempt counts, maximum in-flight work, ordered output, and cleanup. A returned error without these observables is insufficient because a retry path can appear correct while leaking tasks or exceeding its budget.
+Release gated workers in forward, reverse, and selected mixed orders. Check exact request/attempt counts, peak in-flight work, output order, and cleanup. An error alone does not prove retry bounds or task cleanup.
 
 ### Swarm and schedule testing
 
-Use deterministic feature swarms for interaction bugs that isolated fault tests and unconstrained random generation rarely hit. Each iteration independently enables axes with roughly 50% probability, forces at least one non-default axis, and records `seed + axes + action script`.
+Use deterministic feature swarms for interaction bugs. Enable each axis with 50% probability, require one non-default axis, and record `seed + axes + action script`.
 
-Candidate axes include empty pages, mixed sparse/whole plans, tiny/large blocks, collection/DID filters, marker-heavy streams, seq gaps, duplicate boundaries, reversed completion, low queue limits, range fallback, ETag rotation, truncation, 429/5xx, dictionary rotation, cursor-too-old, slow consumer, and cancellation phase. Maintain a short PR swarm and a much larger scheduled seed sweep. Assert that requested faults and rare transitions actually fired, and track basic scenario coverage counters so thousands of vacuous happy paths cannot pass as stress testing.
+Axes: empty pages, sparse/whole plans, block size, filters, markers, seq gaps, duplicate boundaries, completion order, queue limits, range fallback, ETag rotation, truncation, 429/5xx, dictionary rotation, `CursorTooOld`, slow consumers, and cancellation phase. Run a short PR swarm and a large scheduled sweep. Count fault and transition hits to reject vacuous runs.
 
-Keep swarm generation at the logical/protocol level; byte-level corruption belongs in fuzzing. Swarm's purpose is combinatorial subsystem interaction, not raw input mutation.
+Generate swarms at the logical/protocol level. Leave byte corruption to fuzzing.
 
 ### Fuzzing
 
-Extend Shrike's existing `cargo-fuzz` setup and real-shaped seed generator. Favor strong semantic oracles over bare "does not panic":
+Extend the existing `cargo-fuzz` setup and seed generator. Use semantic checks, not only panic checks:
 
 - **segment container:** arbitrary header/footer/index/frame bytes; accepted layouts stay within the input and configured limits, whole versus ranged readers agree, and reinspection is stable;
 - **columnar block:** malformed lengths/counts/UTF-8/syntax and valid Go seeds; accepted rows satisfy structural invariants and alternate decode paths agree;
@@ -746,32 +753,32 @@ Extend Shrike's existing `cargo-fuzz` setup and real-shaped seed generator. Favo
 - **filters:** arbitrary structured events/filters; production predicate equals a simple test-only predicate;
 - **engine scripts:** small arbitrary sequences of plan pages, decoded events, live frames, disconnects, and cancellations; output/termination equals the logical model with bounded steps.
 
-Seed with every golden artifact, hand-built boundary cases, and all prior failures. Set strict per-input time and memory limits, retain artifacts in CI, and turn meaningful findings into focused regression tests. Do not fuzz through real network servers or treat hours without a crash as proof of semantic correctness.
+Seed with golden files, boundary cases, and prior failures. Bound per-input time and memory. Keep CI artifacts and promote findings to regression tests. Do not fuzz through network servers.
 
 ### End-to-end and acceptance tests
 
-Run a small number of broad tests through only public consumer surfaces:
+Run a few broad tests through public APIs:
 
-1. Native client: local authenticated multi-page replay containing whole and sparse entries, then live cutover with an inclusive duplicate, seq gap, dictionary rotation, reconnect, marker events, and graceful cancellation. Compare the exact log/cursor with the independent model.
+1. Native client: replay local whole and sparse pages, then cut over to live with a duplicate, seq gap, dictionary rotation, reconnect, markers, and cancellation. Compare the log and cursor with the model.
 2. Recovery: disconnect and return `CursorTooOld`, extend the sealed archive, replan/re-backfill, and cut over again. Prove no loss/duplication and bounded no-progress termination.
 3. Native CLI: run `shrike jetstream` against the local server in JSON and stats modes; validate exit status, cursor/progress fields, stderr separation, cancellation, and absence of secrets.
-4. Browser client/demo: from a different local origin, exercise preflight, exposed range/generation headers, Fetch streaming, WebSocket subprotocol, compressed-to-uncompressed fallback, progress rendering, session-only key handling, close/reconnect cleanup, and preservation of the legacy binding.
+4. Browser client/demo: from another local origin, test preflight, exposed headers, Fetch streaming, WebSocket subprotocol, compression fallback, progress UI, session keys, cleanup, and the legacy binding.
 5. Host adapter: run the portable conformance suite through at least one caller-injected transport representative of WASI/embedded use.
 
-The manual production smoke repeats only a tiny filtered live path and a strictly bounded replay against `jetstream.us-east.bsky.network`. It validates deployment integration, not correctness, and must not weaken or replace any hermetic acceptance gate.
+The production smoke runs a small filtered live tail and bounded replay against `jetstream.us-east.bsky.network`. It checks deployment integration, not correctness, and never replaces local gates.
 
 ### Resource, concurrency, and platform checks
 
-- Configure tiny limits in tests so queue, response, decompression, retry, and concurrency boundaries are exercised without allocating huge objects.
-- Assert rejection before allocation where a declared size is already excessive; assert observed-byte limits for lying or streaming peers.
+- Use small test limits to hit queue, response, decompression, retry, and concurrency bounds without large allocations.
+- Reject oversized declarations before allocation. Enforce observed-byte limits when peers lie or stream.
 - Track compressed bytes, decompressed bytes, queued batches/events, active requests/decoders/tasks/listeners, and cooperative-yield counts with test instrumentation.
-- On WASM, test 32-bit conversion boundaries and ensure long decode loops yield while preserving order. Run shared pure tests in Node and browser-only transport/CORS/lifecycle tests in a real headless browser.
-- Test native cancellation and close races repeatedly under deliberately varied schedules. Add `loom` or another concurrency-model dependency only if implementation introduces custom atomic/lock-free synchronization that deterministic gates cannot adequately cover; request approval first.
-- Keep performance benchmarks deferred, but retain correctness gates on bounded memory/concurrency behavior. Throughput or RSS comparisons are not pass/fail criteria in this phase.
+- On WASM, test 32-bit conversions and yielding without reordering. Run pure tests in Node and transport/CORS/lifecycle tests in a headless browser.
+- Repeat native cancellation and close races under varied schedules. Add `loom` only if custom atomic or lock-free code needs it, and request approval first.
+- Keep correctness gates for memory and concurrency. Defer throughput and RSS gates.
 
 ### Targeted mutation testing
 
-After the main oracle is stable, measure whether it can actually detect realistic client bugs. Start with a small reviewed mutation scorecard rather than chasing a global mutation percentage. Mutants should include:
+After the oracle is stable, test its detection power with a small reviewed mutation set. Do not target a global mutation score. Include:
 
 - changing an exclusive cursor boundary to inclusive or removing reconnect deduplication;
 - dropping marker events when a collection filter is active;
@@ -783,7 +790,7 @@ After the main oracle is stable, measure whether it can actually detect realisti
 - removing decompression/output limits or cancellation cleanup;
 - skipping `CursorTooOld` re-backfill or rewinding below the delivered cursor.
 
-Record which exact tier kills each mutant. A survivor indicates an oracle blind spot to investigate, not a reason to tailor production code to the test. `cargo-mutants` may be evaluated as an external scheduled tool, but adding it to repository/CI tooling requires separate approval; hand-authored patches are sufficient for the first focused campaign.
+Record which tier kills each mutant. A survivor marks an oracle gap. Start with hand-written patches. Adding `cargo-mutants` to repository or CI tooling needs approval.
 
 ### Tests intentionally not written
 
@@ -796,11 +803,11 @@ Record which exact tier kills each mutant. A survivor indicates an oracle blind 
 - giant fixtures when a minimal artifact exercises the same format boundary;
 - benchmarks disguised as correctness tests during this phase.
 
-Every test should answer: what realistic defect makes this fail, is its expected result independently derived, and is this the cheapest layer that can catch it? If those answers are unclear, do not add the test.
+Before adding a test, ask: what bug does it catch, is the expected result independent, and is this the cheapest useful layer? Skip it if those answers are unclear.
 
 ## Performance-ready design constraints
 
-Without doing comparative tuning now, preserve these properties:
+Preserve these properties before tuning:
 
 - decode from borrowed/shared byte ranges and materialize JSON only on request;
 - keep codec, transport, scheduling, and ordered emission behind narrow seams;
@@ -810,15 +817,15 @@ Without doing comparative tuning now, preserve these properties:
 - avoid trait-object or boxed-future dispatch inside per-row decode loops;
 - keep exact filtering cheap and after structural validation;
 - keep logging off hot paths and expose progress through `Stats`;
-- use target-aware concurrency, allowing native worker pools and future browser Web Workers without changing the public API.
+- keep target-specific concurrency behind an API that can later use native workers or Web Workers.
 
-Criterion and end-to-end throughput/RSS work belongs to the deferred post-flight effort. Correctness tests may still assert allocation/size bounds where needed to prevent resource vulnerabilities.
+Defer Criterion, throughput, and RSS work. Keep correctness tests for allocation and size bounds.
 
 ## Resolved decisions
 
-1. **Package compatibility:** add a completely independent `shrike::jetstream` v2 package. Leave the legacy implementation untouched.
+1. **Package compatibility:** add an independent `shrike::jetstream` v2 package. Leave the legacy implementation untouched.
 2. **Target scope:** ship archive and live support for native and WASM. Provide built-in browser/JS-hosted transports and public host-transport injection for WASI/embedded runtimes.
-3. **Delivery scope:** implement correctness and recovery parity now, preserve performance-ready seams, and defer extensive measurement/tuning until reliable networking is available.
+3. **Delivery scope:** implement correctness and recovery now. Keep performance seams and defer tuning.
 4. **Date/time:** use BurntSushi's Jiff for RFC 3339 parsing/formatting and Unix-microsecond conversion.
 
 ## Dependency recommendations
@@ -827,36 +834,36 @@ These additions require explicit approval before implementation:
 
 | Crate | Recommended configuration | Why |
 |---|---|---|
-| `jiff` 0.2 | `default-features = false`, `features = ["std", "perf-inline"]` | Author-approved, robust Temporal-inspired timestamp handling; avoids maintaining calendar/offset/leap-second code without bundling an unused timezone database |
-| `zstd` 0.14, native only | `default-features = false`; use only its decode APIs | Mature bindings to upstream zstd 1.5.7, reusable/prepared dictionaries, dictionary-ID inspection, hard destination capacity, `WindowLogMax`, and the strongest initial native performance |
-| `ruzstd` 0.9, WASM only | default decode features; do not enable dictionary building | Pure Rust, actively maintained and fuzzed, tagged-dictionary decode, streaming output, explicit maximum window size, and no C cross-toolchain requirement |
-| `twox-hash` 2.1 | `default-features = false`, `features = ["xxhash3_64"]` | Small, MIT, pure Rust, no FFI, native/WASM portable; implements the exact XXH3-64 checksum needed by the segment format |
-| `bytes` 1 | default `std` feature | Mature Tokio-ecosystem shared immutable buffers and O(1) slices; cleanly solves safe block-slab/record ownership |
-| `secrecy` 0.10 | no serde feature | Redacted secret wrapper with zeroization; makes accidental API-key formatting/serialization harder |
+| `jiff` 0.2 | `default-features = false`, `features = ["std", "perf-inline"]` | Approved. Handles RFC 3339, offsets, and edge cases without an unused timezone database |
+| `zstd` 0.14, native only | `default-features = false`; decode APIs only | Upstream zstd 1.5.7, prepared dictionaries, dictionary IDs, output caps, `WindowLogMax`, and fast native decode |
+| `ruzstd` 0.9, WASM only | default decode features; no dictionary building | Pure Rust, fuzzed, tagged-dictionary decode, streaming output, window caps, and no C toolchain |
+| `twox-hash` 2.1 | `default-features = false`, `features = ["xxhash3_64"]` | Small, pure Rust, native/WASM, and implements the segment XXH3-64 checksum |
+| `bytes` 1 | default `std` feature | Shared immutable buffers and O(1) slices for block-slab/record ownership |
+| `secrecy` 0.10 | no serde feature | Redaction and zeroization reduce accidental key exposure |
 
-`reqwest`, `tokio-tungstenite`, `gloo-net`, `futures`, `url`, `serde`, `serde_json`, `thiserror`, and the necessary platform/timer primitives already exist in Shrike and should be reused.
+Reuse Shrike's existing `reqwest`, `tokio-tungstenite`, `gloo-net`, `futures`, `url`, `serde`, `serde_json`, `thiserror`, and platform/timer dependencies.
 
-Put both implementations behind one private `Decompressor` interface and require identical golden/error behavior. `ruzstd`'s own documentation reports slower decoding than upstream zstd, which is why it is not the native default; reliable pure-Rust cross-compilation is the more important first-pass WASM property. A preliminary `zstd` 0.14 wasm32 compile on 2026-09-18 reached `zstd-sys` but was blocked by Shrike's local Nix-wrapped clang injecting the host-only `-fzero-call-used-regs=used-gpr` flag. This is an environment/toolchain failure rather than evidence of a codec bug, but it demonstrates the operational cost of making C cross-compilation mandatory for browser users.
+Hide both decoders behind a private `Decompressor` interface and require the same golden/error behavior. Use upstream zstd on native and pure-Rust `ruzstd` on WASM. A 2026-09-18 `zstd` WASM check reached `zstd-sys` but failed because Nix clang injected the host-only `-fzero-call-used-regs=used-gpr` flag. This was a toolchain error, not a codec failure.
 
-Preliminary isolated `wasm32-unknown-unknown` checks succeeded for `ruzstd` 0.9 with its default checksum features, Jiff 0.2 with `std,perf-inline`, `twox-hash` 2.1 with only XXH3-64, and `secrecy` 0.10. These are compile checks, not substitutes for the Jetstream golden-corpus and browser-runtime acceptance tests in M0.
+Isolated `wasm32-unknown-unknown` checks passed for `ruzstd` 0.9, Jiff 0.2 with `std,perf-inline`, `twox-hash` 2.1 with XXH3-64, and `secrecy` 0.10. M0 still requires corpus and browser tests.
 
-`structured-zstd` is promising and explicitly WASM/SIMD-oriented, but its current `0.0.x` maturity makes it a less conservative first choice for untrusted production input. Revisit it—or C-backed zstd on WASM—during the deferred measurement phase without changing the engine API.
+Do not start with `structured-zstd`; its `0.0.x` API is too young for untrusted input. Revisit it or C-backed zstd during tuning without changing the engine API.
 
-No general-purpose backoff, range-parser, datetime, executor, or logging crate is recommended. Those needs are already small, security-sensitive, or covered by existing dependencies.
+Do not add general backoff, range-parser, executor, or logging crates. Existing code or dependencies cover these needs.
 
 ## Known risks
 
-- **Memory amplification:** decompressed blocks may approach 1 GiB. Limits, shared slabs, ordered backpressure, and small prefetch bounds must be designed together, not added after parallelism.
+- **Memory amplification:** blocks may decompress to 1 GiB. Design limits, shared slabs, backpressure, and prefetch bounds together.
 - **Safe zero-copy API:** Rust cannot store decoded borrowing values beside their owner without unsafe/self-reference. Expose owning bytes and borrow only during accessor calls.
 - **HTTP generation safety:** striped downloads can silently combine generations unless every part is pinned and validated.
 - **False-positive planning:** omitting exact post-decode filtering corrupts consumer views, especially around marker events.
 - **Cursor ambiguity:** values at or above `10^15` are timestamps on the live endpoint. High-level sequence and timestamp resume APIs must not blur this distinction.
 - **Credential propagation:** generic bearer middleware or redirects can leak the archive key to public/foreign endpoints.
-- **Compression bombs/corruption:** limits must be enforced by the decoder, not only checked after allocating a full output.
+- **Compression bombs/corruption:** enforce limits during decode, before full output allocation.
 - **Lexicon/codegen drift:** the subscription main def is intentionally skipped today. Generated associated DTOs must be covered by a regeneration check.
-- **WASM memory and responsiveness:** browser linear memory is constrained and decode is normally single-threaded. Range-to-frame fetching, checked `usize` conversions, lower target limits, backpressure, and cooperative yields are required.
-- **WASM host fragmentation:** browser/JS transports do not imply a universal WASI WebSocket. Keep a conformance-tested injection API and state the built-in target matrix precisely.
-- **Browser CORS and credentials:** full replay needs authorization and visible range/generation headers. The production us-east proxy currently provides them, but direct/self-hosted deployments remain responsible for equivalent CORS until Jetstream adds it natively. Browser-bundled bearer keys are extractable, so the demo accepts a session-only key and never ships one.
+- **WASM memory and responsiveness:** browsers have limited linear memory and usually decode on one thread. Use frame ranges, checked `usize` conversions, lower limits, backpressure, and yields.
+- **WASM host fragmentation:** WASI has no universal WebSocket. Keep a tested host transport API and a precise target matrix.
+- **Browser CORS and credentials:** replay needs auth and exposed range/generation headers. The us-east proxy provides them; direct deployments need equivalent CORS. The demo accepts session-only keys and ships none.
 - **Reference evolution:** record the Jetstream commit in fixtures and rerun the cross-language corpus when updating lexicons or segment version support.
 
 ## Completion definition
@@ -864,14 +871,14 @@ No general-purpose backoff, range-parser, datetime, executor, or logging crate i
 This plan is complete when:
 
 - all M0–M6 acceptance criteria pass on the applicable native and WASM target matrix;
-- the cross-cutting verification tracker is complete and every release-critical risk in the risk-to-oracle map has a passing independent primary oracle;
-- `just build`, `just test`, `just test-wasm`, `just lint`, and `just check` pass with the new feature included where appropriate, and the local headless-browser acceptance tier passes;
-- fuzz targets have a clean initial seeded campaign, property/swarm failures are reproducible, and resource-bound tests establish safe memory/concurrency limits and clean cancellation;
-- the initial curated mutation campaign kills each required mutant or records a reviewed blind spot and the additional oracle work needed to close it;
+- the verification tracker is complete and each release risk has a passing independent oracle;
+- `just build`, `just test`, `just test-wasm`, `just lint`, `just check`, and local browser acceptance pass;
+- the initial fuzz campaign passes; property/swarm failures reproduce; resource tests prove memory, concurrency, and cancellation bounds;
+- the initial mutation campaign kills each required mutant or records the remaining oracle gap;
 - normal tests make zero external requests;
-- the only production exercise is explicit, bounded, credential-safe, and user-invoked;
+- production checks are explicit, bounded, credential-safe, and user-invoked;
 - legacy `/subscribe` remains compatible;
 - the legacy client implementation has no diff;
-- the existing legacy WASM binding remains available and the separate v2 demo passes its local headless-browser lifecycle tests;
+- the legacy WASM binding remains available and the v2 demo passes browser lifecycle tests;
 - public docs explain cursor locality, inclusive replay/dedup, marker semantics, secret scope, snapshot exclusion of the active segment, error continuation, and cancellation;
 - no generated file is hand-edited and only the explicitly approved dependencies are added.
