@@ -178,6 +178,7 @@ pub struct JetstreamSubscribeEventsCommit {
     pub did: crate::syntax::Did,
     pub operation: String,
     /// The record decoded to JSON. Absent for deletes.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub record: serde_json::Value,
     /// The repo rev of the commit that produced this op.
     pub rev: crate::syntax::Tid,

@@ -7687,6 +7687,7 @@ impl ModerationDefsModEventViewDetail {
 #[serde(rename_all = "camelCase")]
 pub struct ModerationDefsModTool {
     /// Additional arbitrary metadata about the source
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub meta: serde_json::Value,
     /// Name/identifier of the source (e.g., 'automod', 'ozone/workspace')
     pub name: String,
@@ -10757,6 +10758,7 @@ pub struct ModerationDefsScheduledActionView {
     /// Subject DID for the action
     pub did: crate::syntax::Did,
     /// Serialized event object that will be propagated to the event when performed
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub event_data: serde_json::Value,
     /// Earliest time to execute the action (for randomized scheduling)
     #[serde(default, skip_serializing_if = "Option::is_none")]

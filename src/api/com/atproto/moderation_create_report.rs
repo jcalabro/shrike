@@ -372,6 +372,7 @@ pub async fn moderation_create_report(
 #[serde(rename_all = "camelCase")]
 pub struct ModerationCreateReportModTool {
     /// Additional arbitrary metadata about the source
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub meta: serde_json::Value,
     /// Name/identifier of the source (e.g., 'bsky-app/android', 'bsky-web/chrome')
     pub name: String,

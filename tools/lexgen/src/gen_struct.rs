@@ -228,6 +228,24 @@ fn gen_struct_body(
                 write!(out, ", rename = {json_name_str:?}").ok();
             }
             writeln!(out, ")]").ok();
+        } else if rust_type == "serde_json::Value" && !is_required {
+            // An optional `unknown` field is kept as a bare `serde_json::Value`
+            // (absence is representable as `Value::Null`), but without these
+            // attributes an absent key is a hard deserialization error and a
+            // decoded-absent value would re-serialize as an explicit `null`,
+            // adding a key the wire never carried. `default` makes absence
+            // decode to `Null`; `skip_serializing_if` keeps the round trip
+            // faithful. This is the path a proposal-0015 delete commit takes,
+            // whose `record` is absent.
+            write!(
+                out,
+                "    #[serde(default, skip_serializing_if = \"serde_json::Value::is_null\""
+            )
+            .ok();
+            if needs_rename {
+                write!(out, ", rename = {json_name_str:?}").ok();
+            }
+            writeln!(out, ")]").ok();
         } else if needs_rename {
             writeln!(out, "    #[serde(rename = {json_name_str:?})]").ok();
         }
@@ -500,5 +518,42 @@ mod tests {
     fn no_rename_standard_camel() {
         assert!(!needs_explicit_rename("createdAt", "created_at"));
         assert!(!needs_explicit_rename("text", "text"));
+    }
+
+    /// Regression: a non-required `unknown` field (Rust `serde_json::Value`)
+    /// must carry `#[serde(default, skip_serializing_if = ...)]` so an absent
+    /// key deserializes rather than hard-erroring. Without it, a proposal-0015
+    /// delete commit — whose `record` is absent — cannot be decoded into the
+    /// generated DTO. The Jetstream commit def is the canonical case.
+    #[test]
+    fn optional_unknown_field_is_serde_default() {
+        let Some((cfg, schemas)) = test_ctx() else {
+            return;
+        };
+        let schema = schemas
+            .get("network.bsky.jetstream.subscribeEvents")
+            .unwrap();
+        let ctx = GenContext {
+            schema,
+            cfg: &cfg,
+            schemas: &schemas,
+            caller_module: "crate::api::network::bsky",
+        };
+        if let shrike::lexicon::Def::Object(obj) = &schema.defs["commit"] {
+            let code = gen_object(&ctx, "commit", obj).unwrap();
+            // `record` is `unknown` and absent from the def's `required` list.
+            assert!(
+                code.contains("pub record: serde_json::Value,"),
+                "code:\n{code}"
+            );
+            assert!(
+                code.contains(
+                    "#[serde(default, skip_serializing_if = \"serde_json::Value::is_null\")]"
+                ),
+                "optional unknown field must be serde(default); code:\n{code}"
+            );
+        } else {
+            panic!("expected Object def");
+        }
     }
 }

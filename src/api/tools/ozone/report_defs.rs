@@ -1670,6 +1670,7 @@ pub struct ReportDefsReportActivityView {
     /// True if this activity was created by an automated process (e.g. queue router) rather than a direct human action.
     pub is_automated: bool,
     /// Extensible JSON payload for loose activity-specific metadata (e.g. assignmentId).
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub meta: serde_json::Value,
     /// Full member record of the moderator who created this activity
     #[serde(default, skip_serializing_if = "Option::is_none")]

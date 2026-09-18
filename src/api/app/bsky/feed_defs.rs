@@ -1635,6 +1635,7 @@ pub struct FeedDefsPostView {
     pub bookmark_count: Option<i64>,
     pub cid: String,
     /// Debug information for internal development
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed: Option<FeedDefsPostViewEmbedUnion>,
@@ -4252,6 +4253,7 @@ pub struct FeedDefsThreadgateView {
     pub cid: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lists: Vec<crate::api::app::bsky::GraphDefsListViewBasic>,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub record: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uri: Option<crate::syntax::AtUri>,

@@ -14,8 +14,9 @@
 //!   CID link (CBOR tag 42);
 //! - every other object is a map, its keys emitted in canonical order
 //!   (length-first, then bytewise), matching [`crate::cbor::encode_value`];
-//! - numbers must be integers within the `i64`/`u64` range — the atproto data
-//!   model has no floats, so a fractional or out-of-range number is rejected;
+//! - numbers must be integers within the signed 64-bit range — the atproto data
+//!   model has no floats and no integers above `i64::MAX`, so a fractional or
+//!   out-of-range number is rejected;
 //! - strings, booleans, null, and arrays map directly.
 //!
 //! The output is byte-for-byte identical to what shrike's own canonical CBOR
@@ -46,15 +47,18 @@ fn encode(value: &Value, buf: &mut Vec<u8>) -> Result<()> {
                 Encoder::new(&mut *buf)
                     .encode_i64(i)
                     .map_err(|_| Error::InvalidRecord("cbor int"))?;
-            } else if let Some(u) = n.as_u64() {
-                Encoder::new(&mut *buf)
-                    .encode_u64(u)
-                    .map_err(|_| Error::InvalidRecord("cbor uint"))?;
             } else {
-                // A float or an integer outside [i64::MIN, u64::MAX]. The
-                // atproto data model only permits integers in the signed 64-bit
-                // range, so anything else is not a valid record value.
-                return Err(Error::InvalidRecord("non-integer number"));
+                // A float, or an integer outside `[i64::MIN, i64::MAX]`. The
+                // atproto data model permits integers only in the signed 64-bit
+                // range, and shrike's own canonical CBOR decoder rejects
+                // unsigned values above `i64::MAX` (see `cbor::bump`), so a value
+                // in `(i64::MAX, u64::MAX]` must be rejected here too — encoding
+                // it would produce bytes the decoder would refuse and no real
+                // record would ever carry. `as_i64` already covers every valid
+                // integer, so this branch is only ever reached by invalid input.
+                return Err(Error::InvalidRecord(
+                    "number outside the atproto integer model",
+                ));
             }
         }
         Value::String(s) => Encoder::new(&mut *buf)
@@ -232,6 +236,27 @@ mod tests {
             record_json_to_dag_cbor(&huge),
             Err(Error::InvalidRecord(_))
         ));
+    }
+
+    /// Regression: an integer in `(i64::MAX, u64::MAX]` fits `u64` but is
+    /// outside the atproto signed-64-bit integer model, and shrike's own
+    /// canonical CBOR decoder rejects unsigned values above `i64::MAX`. Encoding
+    /// it (rather than rejecting) would have produced bytes the decoder refuses.
+    #[test]
+    fn rejects_positive_integer_above_i64_max() {
+        // i64::MAX + 1 == 9223372036854775808, a valid u64 but not a valid i64.
+        let over: serde_json::Value =
+            serde_json::from_str("9223372036854775808").expect("parses as number");
+        assert_eq!(over.as_u64(), Some(9_223_372_036_854_775_808));
+        assert_eq!(over.as_i64(), None);
+        assert!(matches!(
+            record_json_to_dag_cbor(&over),
+            Err(Error::InvalidRecord(_))
+        ));
+        // The largest valid signed integer is still accepted.
+        let max: serde_json::Value =
+            serde_json::from_str("9223372036854775807").expect("parses as number");
+        assert!(record_json_to_dag_cbor(&max).is_ok());
     }
 
     #[test]

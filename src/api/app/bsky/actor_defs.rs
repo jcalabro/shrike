@@ -3897,6 +3897,7 @@ pub struct ActorDefsProfileView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
     /// Debug information for internal development
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -4323,6 +4324,7 @@ pub struct ActorDefsProfileViewBasic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
     /// Debug information for internal development
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub debug: serde_json::Value,
     pub did: crate::syntax::Did,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4694,6 +4696,7 @@ pub struct ActorDefsProfileViewDetailed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<crate::syntax::Datetime>,
     /// Debug information for internal development
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub debug: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
