@@ -66,6 +66,15 @@ impl SealedHeader {
     /// segment. Rejects a bad magic, a zero (active) checksum, and an
     /// unsupported version. Does not validate section-offset ordering; use
     /// [`SealedHeader::validate_layout`] once the file length is known.
+    ///
+    /// The defined fields end at byte 98; bytes `[98, 256)` are reserved for
+    /// future expansion. We deliberately do not require them to be zero, even
+    /// though the current writer zero-fills them: the reference `decodeHeader`
+    /// does not check them either, and a future writer may populate the region
+    /// while keeping `version == 1`, expecting older readers to ignore it. The
+    /// reserved bytes are still covered by the xxh3 checksum, so any alteration
+    /// that does not recompute the checksum is rejected by
+    /// [`SealedHeader::verify_checksum`].
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let head = bytes
             .get(..RESERVED_HEADER_BYTES)
