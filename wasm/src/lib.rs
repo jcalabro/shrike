@@ -761,6 +761,7 @@ impl WasmXrpcClient {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
@@ -800,6 +801,48 @@ mod tests {
         let first = cid_for_bytes("raw", b"hello").unwrap_or_default();
         let second = cid_for_bytes("raw", b"hello").unwrap_or_default();
         assert_eq!(first, second);
+    }
+
+    // Jetstream v2 M0: prove the portable segment codec runs on the browser
+    // target, where compression goes through `ruzstd` rather than libzstd. The
+    // same golden corpus the native tests use is embedded here.
+    #[wasm_bindgen_test]
+    fn jetstream_golden_block_decodes_on_wasm() {
+        const GOLDEN_BLOCK: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../testdata/jetstream/golden/golden_block.bin"
+        ));
+        let events =
+            shrike::jetstream::decode_block_frame(GOLDEN_BLOCK).expect("golden block decodes");
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].seq, 1);
+        assert_eq!(events[0].did, b"did:plc:abcdefghijklmnopqrstuvwx");
+        assert_eq!(events[0].collection, b"app.bsky.feed.post");
+        assert_eq!(
+            events[0].payload,
+            [0xA1, 0x65, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x05]
+        );
+        assert_eq!(events[2].kind, shrike::jetstream::SegmentKind::Delete);
+    }
+
+    #[wasm_bindgen_test]
+    fn jetstream_dictionary_frame_decodes_on_wasm() {
+        const LIVE_DICT: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../testdata/jetstream/golden/live_dict.bin"
+        ));
+        const LIVE_COMMIT_DICTZST: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../testdata/jetstream/golden/live_commit.dictzst"
+        ));
+        const LIVE_COMMIT_JSON: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../testdata/jetstream/golden/live_commit.json"
+        ));
+        let out =
+            shrike::jetstream::decompress_bounded(LIVE_COMMIT_DICTZST, 32 << 20, Some(LIVE_DICT))
+                .expect("dictionary frame decodes");
+        assert_eq!(out, LIVE_COMMIT_JSON);
     }
 
     #[wasm_bindgen_test]

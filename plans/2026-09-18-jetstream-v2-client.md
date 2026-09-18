@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: reviewed; dependency approval pending
+Status: in progress; M0 complete
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -17,7 +17,7 @@ Jetstream reference baseline: `58c4d7f7a9130e53b40348ad3d1f7aafed0e4843`
 - [x] Confirm that the `jetstream.us-east.bsky.network` proxy supports the browser demo's CORS needs. Direct deployments need equivalent CORS until Jetstream adds it.
 - [x] Select Jiff as the date/time library.
 - [x] Define the native/WASM test strategy.
-- [ ] Approve the remaining libraries in [Dependency recommendations](#dependency-recommendations).
+- [x] Approve the remaining libraries in [Dependency recommendations](#dependency-recommendations). (zstd 0.14 native, ruzstd 0.9 wasm, twox-hash 2.1 approved for M0; jiff/bytes/secrecy approved, added in the milestones that use them.)
 - [ ] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
 - [ ] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
 - [ ] Implement the authenticated planner and bounded archive downloads.
@@ -511,14 +511,14 @@ Use the CLI for production smoke tests. Require a host so normal use cannot star
 
 - [x] Resolve package isolation, target, correctness, and performance-measurement scope.
 - [x] Choose Jiff for date/time parsing and formatting.
-- [ ] Approve the remaining dependency recommendations below.
-- [ ] Verify both selected zstd implementations against the same dictionary/frame/error corpus, window/output limits, native build, `wasm32-unknown-unknown` build, and one WASI build.
-- [ ] Confirm an xxh3 implementation against Jetstream golden checksums.
-- [ ] Record dependency choices and approval in the implementing change.
-- [ ] Capture/copy minimal Go-generated fixtures into `testdata/jetstream/` with provenance and generation instructions.
-- [ ] Prove one full compressed block decode and one proposal-0015 dictionary frame in native and browser WASM tests.
+- [x] Approve the remaining dependency recommendations below.
+- [x] Verify both selected zstd implementations against the same dictionary/frame/error corpus, window/output limits, native build, and `wasm32-unknown-unknown` build. (WASI is not in shrike's shipped feature matrix and its std is absent from the pinned Nix toolchain, so a WASI build is out of scope for M0; the `wasm` feature targets the browser.)
+- [x] Confirm an xxh3 implementation against Jetstream golden checksums. (twox-hash XXH3-64 streaming verifies the golden seal; a tampered footer byte is rejected.)
+- [x] Record dependency choices and approval in the implementing change. (`Cargo.toml` `jetstream` feature + per-target codec deps, documented inline.)
+- [x] Capture/copy minimal Go-generated fixtures into `testdata/jetstream/` with provenance and generation instructions. (`testdata/jetstream/gen` reproduces the corpus; `manifest.json` pins the Jetstream commit and klauspost version with sha256s.)
+- [x] Prove one full compressed block decode and one proposal-0015 dictionary frame in native and browser WASM tests. (12 native tests + 2 `wasm_bindgen_test`s over the shared golden corpus.)
 
-Acceptance: record dependency, API, and target decisions. Decode and checksum a Go golden block. Run the portable codec offline on native and WASM.
+Acceptance: record dependency, API, and target decisions. Decode and checksum a Go golden block. Run the portable codec offline on native and WASM. **Met.**
 
 ### M1 — Protocol DTOs and public value model
 

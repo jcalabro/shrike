@@ -1,0 +1,67 @@
+{
+  "description": "Jetstream v2 golden corpus for the Shrike Rust segment codec. Regenerate with testdata/jetstream/gen. See that program's doc comment.",
+  "jetstream_commit": "58c4d7f7a9130e53b40348ad3d1f7aafed0e4843",
+  "klauspost": "github.com/klauspost/compress v1.19.2",
+  "live_dict_id": 424242,
+  "sha256": {
+    "golden_block.bin": "c22f682568a8089ec79c8f6ea52480375238c13fd2828e8eaa33a6f5d8d9cbec",
+    "golden_seal.bin": "d05345a3217bf5bb5a146af5bb41bcbf61a1812e511c5cf6b995c4a98ddb8ab8",
+    "live_commit.dictzst": "152033544a3fd8996272457e636bdf36085c5ca60a7d3d848da65a312338547c",
+    "live_commit.json": "6a6ba99d7b4883c49550e24acea5bd3b055e1f6d64b66751b9abfd2f61a93b32",
+    "live_dict.bin": "6d618d7d43e6d1fea69d1032c6d5a85ee685beccac84940d8af8cb4b844fe843"
+  },
+  "golden_block_events": [
+    {
+      "seq": 1,
+      "witnessed_at": 1700000000000000,
+      "indexed_at": 0,
+      "kind": 1,
+      "did": "did:plc:abcdefghijklmnopqrstuvwx",
+      "collection": "app.bsky.feed.post",
+      "rkey": "3l3qo2vuowo2b",
+      "rev": "3l3qo2vutsw2b",
+      "payload_hex": "a16568656c6c6f05"
+    },
+    {
+      "seq": 2,
+      "witnessed_at": 1700000001000000,
+      "indexed_at": 1700000000500000,
+      "kind": 4,
+      "did": "did:web:example.com"
+    },
+    {
+      "seq": 3,
+      "witnessed_at": 1700000002000000,
+      "indexed_at": 0,
+      "kind": 3,
+      "did": "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz",
+      "collection": "app.bsky.feed.like",
+      "rkey": "3l3qo2vuowo2c",
+      "rev": "3l3qo2vutsw2c"
+    }
+  ],
+  "golden_seal_events": [
+    {
+      "seq": 1,
+      "witnessed_at": 100,
+      "indexed_at": 0,
+      "kind": 1,
+      "did": "did:plc:a",
+      "collection": "app.bsky.feed.post",
+      "rkey": "k1",
+      "rev": "v1",
+      "payload_hex": "7031"
+    },
+    {
+      "seq": 2,
+      "witnessed_at": 200,
+      "indexed_at": 250,
+      "kind": 1,
+      "did": "did:plc:b",
+      "collection": "app.bsky.feed.like",
+      "rkey": "k2",
+      "rev": "v2",
+      "payload_hex": "7032"
+    }
+  ]
+}
