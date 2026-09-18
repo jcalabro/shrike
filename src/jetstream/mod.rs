@@ -8,23 +8,62 @@
 //!
 //! # Status
 //!
-//! The module is built milestone by milestone. Landed so far (M0): the portable
-//! segment codec — bounded zstd decode ([`compression`]), the columnar block
-//! decoder ([`block`]), and sealed-segment header parsing plus xxh3 checksum
-//! verification ([`segment`]). The protocol value model, planner, transports,
-//! and replay/live engine follow in later milestones.
+//! The module is built milestone by milestone.
+//!
+//! - **M0** — the portable segment codec: bounded zstd decode
+//!   ([`compression`]), the columnar block decoder ([`block`]), and
+//!   sealed-segment header parsing plus xxh3 checksum verification
+//!   ([`segment`]).
+//! - **M1** — the protocol value model: the public [`Event`]/[`EventPayload`]
+//!   model and [`Record`] backing ([`event`], [`record`]); the three-dimension
+//!   [`Filter`] ([`filter`]); local [`config`] validation ([`normalize_host`],
+//!   [`Cursor`]); atproto dag-json → canonical DAG-CBOR canonicalization
+//!   ([`json_cbor`]); and exact RFC-3339 ↔ Unix-microsecond conversion
+//!   ([`time`]).
+//!
+//! The planner, transports, and replay/live engine follow in later milestones.
+//!
+//! # Relationship to the legacy Jetstream client
+//!
+//! This module is a *distinct* implementation from [`crate::streaming`]'s
+//! Jetstream v1 client. The two share no protocol state, no cursor domain, and
+//! no types: v1 speaks line-delimited JSON over a single WebSocket, while v2
+//! merges sealed `.jss` archive segments with a live WebSocket into one ordered
+//! stream. The legacy `streaming::Client::jetstream()` API is left untouched;
+//! new code targeting Jetstream v2 should use the types in this module only.
 //!
 //! [Jetstream]: https://github.com/bluesky-social/jetstream
 
 pub mod block;
 pub mod compression;
+pub mod config;
 pub mod error;
+pub mod event;
+pub mod filter;
+pub mod json_cbor;
+pub mod record;
 pub mod segment;
+pub mod time;
 
 pub use block::{RawEvent, SegmentKind, decode_block, decode_block_frame};
 pub use compression::decompress_bounded;
-pub use error::{Error, Result};
+pub use config::{Cursor, TIMESTAMP_CURSOR_THRESHOLD, normalize_host};
+pub use error::{Error, MAX_PROTOCOL_MESSAGE_LEN, Result};
+pub use event::{
+    Batch, Commit, Delivery, Event, EventPayload, Info, LiveFrame, Operation, Stats,
+    parse_live_frame, parse_live_value,
+};
+pub use filter::{Filter, Kind};
+pub use json_cbor::record_json_to_dag_cbor;
+pub use record::Record;
 pub use segment::{SealedHeader, read_sealed_header};
+pub use time::{micros_to_rfc3339, rfc3339_to_micros};
+
+// The upstream `com.atproto.sync.subscribeRepos` events wrapped by the DID-level
+// payload variants, re-exported so callers need not reach into `crate::api`.
+pub use crate::api::com::atproto::{
+    SyncSubscribeReposAccount, SyncSubscribeReposIdentity, SyncSubscribeReposSync,
+};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

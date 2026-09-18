@@ -35,7 +35,7 @@ mod tests {
     #[test]
     fn load_config() {
         let cfg = Config::load(Path::new("../../lexgen.json")).unwrap();
-        assert_eq!(cfg.packages.len(), 4);
+        assert_eq!(cfg.packages.len(), 5);
     }
 
     #[test]

@@ -1,10 +1,19 @@
 //! Error types for the Jetstream v2 client.
 //!
-//! This enum grows one milestone at a time. M0 covers only the portable
-//! segment codec, so the variants here describe segment/block/compression
-//! decode failures. Transport, planning, and live-stream variants — and the
-//! `is_fatal()` recoverable/fatal classification the engine relies on — arrive
-//! with the milestones that introduce them.
+//! This enum grows one milestone at a time. M0 covered the portable segment
+//! codec (segment/block/compression decode). M1 adds the protocol value model,
+//! so the variants here now also describe live-frame parsing, record
+//! canonicalization, timestamp conversion, and local configuration/filter
+//! validation. Transport, planning, and live-engine variants arrive with the
+//! milestones that introduce them.
+//!
+//! [`Error::is_fatal`] gives the recoverable/fatal split the replay/live engine
+//! relies on: the stream may continue after a recoverable error but must end
+//! after a fatal one. The classification here covers only the *intrinsic*
+//! fatality of each variant; the engine layers additional context on top (for
+//! example, `CursorTooOld` on a pure-live stream is fatal because there is no
+//! archive loop to re-enter, but the same protocol error is recoverable for a
+//! stream that can fall back to backfill).
 
 use thiserror::Error;
 
@@ -53,6 +62,104 @@ pub enum Error {
     /// dictionary.
     #[error("invalid zstd dictionary: {0}")]
     InvalidDictionary(&'static str),
+
+    /// A caller-supplied filter, cursor, or client configuration is invalid.
+    /// Detected before any I/O; always fatal because it can never make progress.
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(&'static str),
+
+    /// A live WebSocket frame was structurally unusable: the JSON did not parse,
+    /// or it carried no envelope `$type`. A missing envelope `$type` most often
+    /// means the endpoint is a legacy v1 `/subscribe` firehose rather than a v2
+    /// Jetstream, so this is treated as fatal for the connection.
+    #[error("invalid live frame: {0}")]
+    InvalidFrame(&'static str),
+
+    /// A single event (row or live message) was semantically invalid — missing
+    /// a required field, a non-positive `seq`, or a field that failed syntax
+    /// validation. Recoverable: valid sibling events can still be delivered in
+    /// order. The message is a fixed description and never echoes wire data.
+    #[error("malformed event: {0}")]
+    MalformedEvent(&'static str),
+
+    /// A record's atproto JSON could not be canonicalized to DAG-CBOR — an
+    /// invalid `$bytes` base64, an unparseable `$link` CID, a non-string map
+    /// key, or a numeric value outside the atproto integer data model.
+    /// Recoverable at the row level. The message never echoes wire data.
+    #[error("invalid record: {0}")]
+    InvalidRecord(&'static str),
+
+    /// A wire timestamp could not be converted to/from Unix microseconds.
+    /// Recoverable at the row level.
+    #[error("invalid timestamp: {0}")]
+    InvalidTimestamp(&'static str),
+
+    /// A protocol-level error surfaced by the server: either a proposal-0015
+    /// terminal `error` envelope frame or a pre-upgrade XRPC 400 error. The
+    /// XRPC error name is preserved verbatim; the human-readable message is
+    /// bounded and may be absent. Terminal for the current connection; whether
+    /// the stream as a whole ends is decided by the engine and the error name.
+    #[error("jetstream protocol error: {name}{}", .message.as_deref().map(|m| format!(": {m}")).unwrap_or_default())]
+    Protocol {
+        /// The XRPC error name, e.g. `ConsumerTooSlow` or `CursorTooOld`.
+        name: String,
+        /// The optional human-readable message, bounded in length.
+        message: Option<String>,
+    },
+}
+
+/// The maximum number of bytes retained from a server-supplied protocol
+/// message. Server responses are untrusted; caps keep an oversized or binary
+/// body out of logs, `Debug`, and error chains.
+pub const MAX_PROTOCOL_MESSAGE_LEN: usize = 512;
+
+impl Error {
+    /// Build a [`Error::Protocol`] from an XRPC error name and optional message,
+    /// truncating the message to [`MAX_PROTOCOL_MESSAGE_LEN`] bytes on a UTF-8
+    /// boundary. Both the name and message come from the (untrusted) server, so
+    /// the name is capped too.
+    pub fn protocol(name: impl Into<String>, message: Option<impl Into<String>>) -> Self {
+        let mut name = name.into();
+        truncate_on_char_boundary(&mut name, MAX_PROTOCOL_MESSAGE_LEN);
+        let message = message.map(|m| {
+            let mut m = m.into();
+            truncate_on_char_boundary(&mut m, MAX_PROTOCOL_MESSAGE_LEN);
+            m
+        });
+        Error::Protocol { name, message }
+    }
+
+    /// Whether this error is intrinsically fatal to the stream.
+    ///
+    /// Fatal errors can never make forward progress on their own: an invalid
+    /// local configuration, a frame from a non-v2 endpoint, or a segment whose
+    /// format version this client cannot parse. Everything else is reported as
+    /// recoverable here; the engine may still escalate a recoverable error to
+    /// fatal based on context it alone has (retry budgets, pure-live vs archive
+    /// mode, cutover invariants). [`Error::Protocol`] is intentionally *not*
+    /// intrinsically fatal — most protocol errors (e.g. `ConsumerTooSlow`) are
+    /// resolved by reconnecting; the engine decides based on the name.
+    pub fn is_fatal(&self) -> bool {
+        matches!(
+            self,
+            Error::InvalidConfig(_)
+                | Error::InvalidFrame(_)
+                | Error::UnsupportedSegmentVersion { .. }
+        )
+    }
+}
+
+/// Truncate `s` to at most `max` bytes, cutting on a UTF-8 char boundary so the
+/// result is always valid UTF-8.
+pub(crate) fn truncate_on_char_boundary(s: &mut String, max: usize) {
+    if s.len() <= max {
+        return;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
 }
 
 /// Convenience alias for results carrying a Jetstream [`Error`].

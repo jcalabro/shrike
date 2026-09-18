@@ -102,9 +102,10 @@ backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand",
 
 # Jetstream v2 replay/live client. Deliberately separate from the legacy
 # `streaming` Jetstream client, which is left untouched. Dependencies are added
-# per milestone as they come into use; M0 covers only the portable segment codec
-# (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash).
-jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd"]
+# per milestone as they come into use; M0 covers the portable segment codec
+# (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash), M1 adds the
+# protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros).
+jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "api"]
 
 # Everything
 full = [
@@ -162,6 +163,13 @@ async-trait = { workspace = true, optional = true }
 # jetstream (cross-target): xxh3 segment checksums. No default features keeps
 # this off `rand`/`std`-random and portable to wasm32-unknown-unknown.
 twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64", "alloc"], optional = true }
+# jetstream (cross-target): reference-counted record backing so archive rows
+# share one decompressed slab without `unsafe` or self-referential structs.
+bytes = { version = "1", optional = true }
+# jetstream (cross-target): exact RFC-3339 <-> Unix-microsecond conversion for
+# live timestamps vs archive witnessed time. No default features avoids the
+# bundled tzdb and system-clock code; we only parse and format instants.
+jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"], optional = true }
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 # Native modules use Tokio networking and timers. Keeping these features off the

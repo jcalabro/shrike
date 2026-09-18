@@ -522,15 +522,15 @@ Acceptance: record dependency, API, and target decisions. Decode and checksum a 
 
 ### M1 — Protocol DTOs and public value model
 
-- [ ] Add `network.bsky` to lexgen configuration and regenerate with `just lexgen`.
-- [ ] Add v2 filter/config validation and host normalization.
-- [ ] Add event, payload, record backing, batch, info, stats, and error types.
-- [ ] Implement atproto JSON-to-DAG-CBOR canonicalization for live records.
-- [ ] Unit-test proposal-0015 envelopes, all payload variants, invalid unions, timestamp conversion, CID parity, and JSON/CBOR parity.
-- [ ] Document legacy/v2 type separation.
-- [ ] Add Jiff-backed exact conversion between live RFC 3339 timestamps and archive Unix microseconds.
+- [x] Add `network.bsky` to lexgen configuration and regenerate with `just lexgen`. (`lexgen.json` gains the `network.bsky` package; `src/api/network/bsky` is generated. lexgen `load_config` count test updated to 5.)
+- [x] Add v2 filter/config validation and host normalization. (`filter.rs`: `Filter`/`Kind` with count limits + cross-field validation; `config.rs`: `normalize_host`, `Cursor` with live/archive validation and the 10^15 timestamp threshold.)
+- [x] Add event, payload, record backing, batch, info, stats, and error types. (`event.rs`: `Event`/`EventPayload`/`Commit`/`Operation`/`Batch`/`Info`/`Delivery`/`Stats`/`LiveFrame`; `record.rs`: `Record` with `Bytes` backing and lazy cached CID; `error.rs` variants.)
+- [x] Implement atproto JSON-to-DAG-CBOR canonicalization for live records. (`json_cbor.rs`: `record_json_to_dag_cbor`, `$bytes`/`$link` forms, canonical key order, integer-only numeric model.)
+- [x] Unit-test proposal-0015 envelopes, all payload variants, invalid unions, timestamp conversion, CID parity, and JSON/CBOR parity. (64 jetstream unit tests: envelope dispatch, commit/identity/account/sync, unknown-$type skip, error/InvalidFrame, byte-for-byte JSON/CBOR + CID parity, generated-API decode.)
+- [x] Document legacy/v2 type separation. (Module docstrings in `mod.rs` and per-file headers spell out the v1-vs-v2 boundary and the relay-`seq`-is-not-the-cursor rule.)
+- [x] Add Jiff-backed exact conversion between live RFC 3339 timestamps and archive Unix microseconds. (`time.rs`: `rfc3339_to_micros`/`micros_to_rfc3339` via jiff `Timestamp`, six-digit fractional precision.)
 
-Acceptance: map every live lexicon example to the event model. Typed-decode archive records with generated APIs. Public builders cannot create invalid states.
+Acceptance: map every live lexicon example to the event model. Typed-decode archive records with generated APIs. Public builders cannot create invalid states. **Met.**
 
 ### M2 — Segment/block decoder
 
