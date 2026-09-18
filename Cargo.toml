@@ -243,6 +243,10 @@ required-features = ["sync", "streaming", "identity"]
 name = "sync_1_1_verifier"
 required-features = ["sync", "identity"]
 
+[[test]]
+name = "jetstream_property_tests"
+required-features = ["jetstream"]
+
 [[bench]]
 name = "cbor_benchmarks"
 harness = false

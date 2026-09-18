@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0 complete
+Status: in progress; M0, M1, M2 complete (M2 `/roast` pass pending — needs gateway)
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -18,8 +18,8 @@ Jetstream reference baseline: `58c4d7f7a9130e53b40348ad3d1f7aafed0e4843`
 - [x] Select Jiff as the date/time library.
 - [x] Define the native/WASM test strategy.
 - [x] Approve the remaining libraries in [Dependency recommendations](#dependency-recommendations). (zstd 0.14 native, ruzstd 0.9 wasm, twox-hash 2.1 approved for M0; jiff/bytes/secrecy approved, added in the milestones that use them.)
-- [ ] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
-- [ ] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
+- [x] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
+- [x] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
 - [ ] Implement the authenticated planner and bounded archive downloads.
 - [ ] Implement proposal-0015 live streaming, optional dictionary zstd, and reconnect behavior.
 - [ ] Implement the ordered archive-to-live engine, batching, cursor semantics, and re-backfill.
@@ -534,13 +534,13 @@ Acceptance: map every live lexicon example to the event model. Typed-decode arch
 
 ### M2 — Segment/block decoder
 
-- [ ] Decode raw `getBlock` frames with strict compressed/decompressed limits.
-- [ ] Parse whole-segment header, footer, block index, length-prefixed frames, and checksum.
-- [ ] Decode every event kind and exact filter it.
-- [ ] Preserve valid sibling rows around recoverable row failures.
-- [ ] Add Go golden block/segment cross-language tests.
-- [ ] Add fuzz targets for header, footer, frame, decompression, column lengths, payload decode, and filter wildcard logic.
-- [ ] Add property tests for overflow-free layout calculations and ordered/filter equivalence.
+- [x] Decode raw `getBlock` frames with strict compressed/decompressed limits. (`block.rs`: `decode_block_frame`/`decode_block` over `decompress_bounded` with `MAX_DECODED_BLOCK_BYTES`; columnar layout validated with checked arithmetic — capped event count, fixed region fit, exact blob accounting.)
+- [x] Parse whole-segment header, footer, block index, length-prefixed frames, and checksum. (`segment.rs`: `SegmentReader::open` → `read_sealed_header` (256-byte header, xxh3 over `header[12..256] ++ file[footer_offset..]`) → `decode_block_index` (52-byte LE entries) → `validate_block_offsets` (monotonic, non-overlapping, in-bounds); `block_frame` strips the 8-byte length prefix and cross-checks the declared compressed size.)
+- [x] Decode every event kind and exact filter it. (`decode.rs`: `decode_segment_filtered`/`raw_event_to_event` map wire kinds 1–7 to public commit/identity/account/sync events; `built_segment_round_trips_every_kind` covers all seven, wildcard/DID/kind filters covered by dedicated tests.)
+- [x] Preserve valid sibling rows around recoverable row failures. (`convert_rows` drops only the offending row as `MalformedEvent`; `sibling_recovery_preserves_valid_rows` and the golden-seal sibling-drop test confirm valid neighbors survive an invalid `rev`/`did`.)
+- [x] Add Go golden block/segment cross-language tests. (`golden_seal_iterates_raw_rows_matching_manifest` iterates the Go-produced `.jss` seal at the raw-row level against the manifest; the wasm suite decodes the golden block and dictionary frame byte-for-byte.)
+- [x] Add fuzz targets for header, footer, frame, decompression, column lengths, payload decode, and filter wildcard logic. (`fuzz/fuzz_targets/jetstream_*.rs`: `read_header`, `decode_segment`, `decode_block_frame`, `decode_block_body`, `decompress` (asserts the `max_out` bound), `raw_event`, `filter_wildcard` — all compile-verified against the real public API via `cargo check --bins`. Instrumented `cargo fuzz run` requires the nightly toolchain from `just dev`.)
+- [x] Add property tests for overflow-free layout calculations and ordered/filter equivalence. (`tests/jetstream_property_tests.rs`: `layout_validation_never_panics`, `block_offset_validation_never_panics`, `row_filter_equals_event_filter` — pre-conversion `matches_segment` selects exactly the post-conversion `matches` set, order-sensitive.)
 
 Acceptance: malformed input cannot panic or exceed configured allocation limits. Golden output matches Go event for event.
 

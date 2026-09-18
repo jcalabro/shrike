@@ -13,6 +13,8 @@
 
 use super::compression::{MAX_DECODED_BLOCK_BYTES, decompress_bounded};
 use super::error::{Error, Result};
+use super::event::Operation;
+use super::filter::Kind;
 
 /// Go's `maxBlockEventsLimit`: the maximum rows a single block may declare.
 pub const MAX_BLOCK_EVENTS: usize = 1 << 18; // 262_144
@@ -67,6 +69,30 @@ impl SegmentKind {
             Self::Account => 5,
             Self::Sync => 6,
             Self::CreateResync => 7,
+        }
+    }
+
+    /// The public [`Kind`] this row is delivered as. Every commit-ish kind
+    /// (create, update, delete, and create-resync) collapses to
+    /// [`Kind::Commit`]; the three DID-level kinds map to themselves.
+    pub fn public_kind(self) -> Kind {
+        match self {
+            Self::Create | Self::Update | Self::Delete | Self::CreateResync => Kind::Commit,
+            Self::Identity => Kind::Identity,
+            Self::Account => Kind::Account,
+            Self::Sync => Kind::Sync,
+        }
+    }
+
+    /// The commit [`Operation`] for a commit-ish kind, or `None` for a DID-level
+    /// kind. `create-resync` (wire code 7) folds into [`Operation::Create`],
+    /// matching the Go client.
+    pub fn to_operation(self) -> Option<Operation> {
+        match self {
+            Self::Create | Self::CreateResync => Some(Operation::Create),
+            Self::Update => Some(Operation::Update),
+            Self::Delete => Some(Operation::Delete),
+            Self::Identity | Self::Account | Self::Sync => None,
         }
     }
 }

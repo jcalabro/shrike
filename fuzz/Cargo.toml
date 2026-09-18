@@ -20,7 +20,7 @@ bumpalo = "3"
 path = ".."
 features = [
     "syntax", "cbor", "mst", "car", "repo", "crypto",
-    "lexicon", "streaming", "sync", "labeling",
+    "lexicon", "streaming", "sync", "labeling", "jetstream",
 ]
 
 # Seed-corpus generator (a normal binary, not a fuzz target).
@@ -141,6 +141,56 @@ bench = false
 [[bin]]
 name = "lexicon_validate"
 path = "fuzz_targets/lexicon_validate.rs"
+test = false
+doc = false
+bench = false
+
+# --- Jetstream v2 segment codec ---
+[[bin]]
+name = "jetstream_read_header"
+path = "fuzz_targets/jetstream_read_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_decode_segment"
+path = "fuzz_targets/jetstream_decode_segment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_decode_block_frame"
+path = "fuzz_targets/jetstream_decode_block_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_decode_block_body"
+path = "fuzz_targets/jetstream_decode_block_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_decompress"
+path = "fuzz_targets/jetstream_decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_raw_event"
+path = "fuzz_targets/jetstream_raw_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jetstream_filter_wildcard"
+path = "fuzz_targets/jetstream_filter_wildcard.rs"
 test = false
 doc = false
 bench = false

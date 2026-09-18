@@ -221,6 +221,48 @@ impl Filter {
         }
     }
 
+    /// Whether a raw segment row passes the kind/DID/collection predicates,
+    /// working directly from the decoded column values so a filtered-out row need
+    /// never be converted into an [`Event`]. Mirrors the Go client's `rowSelector`
+    /// (the seq-range check is the planner's and engine's concern, not the
+    /// filter's): the kind and DID predicates apply to every row; the collection
+    /// predicate applies only to commits, and a DID-level row — or a commit whose
+    /// collection is empty (v1 parity) — bypasses it.
+    ///
+    /// `did` and `collection` are the raw column bytes reinterpreted as `&str`;
+    /// callers pass `""` for a column that is not valid UTF-8, which correctly
+    /// fails a constrained DID/collection predicate while still admitting the row
+    /// when that dimension is unfiltered (the row is then dropped, not silently
+    /// kept, when its typed conversion fails).
+    pub fn matches_segment(&self, kind: Kind, did: &str, collection: &str) -> bool {
+        // Kind predicate (empty means all).
+        if !self.kinds.is_empty() && !self.kinds.contains(&kind) {
+            return false;
+        }
+        // DID predicate (empty means all), applied to every kind. The filter's
+        // DID set only ever holds syntactically valid DIDs, so a row DID that
+        // fails to parse can never be a member and correctly fails the predicate.
+        if !self.dids.is_empty() {
+            match Did::try_from(did) {
+                Ok(d) if self.dids.contains(&d) => {}
+                _ => return false,
+            }
+        }
+        // Collection predicate (empty means all), applied to commits only.
+        if self.collections.is_empty() {
+            return true;
+        }
+        if kind != Kind::Commit || collection.is_empty() {
+            return true;
+        }
+        match Nsid::try_from(collection) {
+            Ok(nsid) => self.collections.iter().any(|c| c.matches(&nsid)),
+            // A commit whose collection is not a valid NSID cannot satisfy any
+            // exact or wildcard predicate, so a constrained subscription drops it.
+            Err(_) => false,
+        }
+    }
+
     /// The kinds as wire tokens, for building the `kinds` query parameter.
     pub fn kind_wire_tokens(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.kinds.iter().map(|k| k.as_wire())
