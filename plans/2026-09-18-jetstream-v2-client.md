@@ -103,7 +103,7 @@ It cannot consume `subscribeEvents`, proposal-0015 envelopes, sequence cursors, 
 
 Other relevant constraints:
 
-- `src/xrpc::Client` buffers up to 512 MiB, adds its bearer to every request, and lacks range/ETag streaming. It cannot safely handle archive auth or 1 GiB segments.
+- `src/xrpc::Client` buffers whole response bodies (5 MiB JSON, 512 MiB raw, and the cap is enforced only when the server sends `Content-Length`), adds its bearer to every request once set, and lacks range/ETag streaming. It cannot safely handle archive auth or large segments.
 - `reqwest` already has its `stream` feature, and native `tokio-tungstenite`, browser `gloo-net`, Tokio, futures, URL, and strict DAG-CBOR support already exist behind features.
 - Shrike's public DAG-CBOR `Value<'a>` borrows its input. The replay API needs an owning record-byte type.
 - The lexicon cache contains `network/bsky/jetstream`, but `lexgen.json` omits `network.bsky`. Lexgen skips subscription clients but can generate their associated object types.
@@ -215,6 +215,8 @@ The builder supports:
 
 - kinds, DIDs, and collections;
 - exclusive `after_seq`, inclusive `before_seq`, snapshot-only mode, and pure-live resume cursor;
+- `before_seq` is valid only with snapshot-only mode, as in Go: a live tail with an upper bound would silently drop every later event;
+- "start live at the tip" is an explicit builder state, not cursor `0`. Go's `WithLiveCursor(0)` means tip while wire cursor `0` means everything; do not copy that footgun;
 - maximum batch size and live partial-batch delay;
 - archive decode concurrency, sparse block fetch concurrency, whole-segment prefetch, and range stripes;
 - request attempt/backoff limits and size limits;
@@ -222,7 +224,7 @@ The builder supports:
 - live dictionary compression, enabled by default;
 - injectable portable transports for tests, WASI/embedded hosts, and advanced callers.
 
-Use conservative target-specific defaults. Start with batches of 64 and a 20 ms live partial flush. Use the Go concurrency and range values as provisional native caps. Use lower WASM concurrency and yield during long decode loops. Tune after measurement.
+Use conservative target-specific defaults. Start with batches of 64 and a 20 ms live partial flush, matching Go. The other Go native defaults, for reference: decode workers = CPU count clamped to [4, 32]; block fetch pool = min(2 × decode workers, 64); whole-segment prefetch depth 2; 8 range stripes with 16 MiB parts; live reconnect backoff 250 ms doubling to 30 s. Use lower WASM concurrency and yield during long decode loops. Tune after measurement.
 
 Each `Client` drives one event stream. Dropping the stream or client cancels tasks and closes sockets. Add an idempotent `close` or cancellation handle if the API stays simple.
 
@@ -246,6 +248,8 @@ EventPayload
 ```
 
 Use an enum so invalid payload combinations cannot be built. Map segment kind 7 (`create-resync`) to commit/create, as the Go client does.
+
+Identity, account, and sync payloads wrap the upstream `com.atproto.sync.subscribeRepos` event, which carries its own relay `seq` and `time`. Only the Jetstream envelope `seq` is the cursor; never persist or dedup on the wrapped values.
 
 `Record` owns or shares canonical DAG-CBOR bytes and exposes:
 
@@ -273,6 +277,7 @@ Fatal examples:
 - rejected or malformed snapshot plan that prevents guaranteed progress;
 - exhausted download/replan attempts for required archive work;
 - non-advancing pagination or re-backfill beyond its bound;
+- `CursorTooOld` on a pure-live stream, since there is no archive mode to re-enter;
 - an archive/live cutover invariant that can no longer be satisfied;
 - unsupported segment version or structural corruption when no safe retry/replan path remains.
 
@@ -281,7 +286,7 @@ Recoverable examples:
 - a malformed row when valid sibling rows can still be delivered in order;
 - a transient live read/dial failure while reconnect remains possible;
 - dictionary fetch, negotiation, or decompression setup failure when uncompressed fallback works;
-- advisory `#info`, represented as `Delivery::Info`, not an error.
+- advisory `#info`, represented as `Delivery::Info`, not an error. The Go client logs and skips `#info`; we deliver it because a clamped timestamp resume (`OutdatedCursor`) implies a gap the consumer may care about, and a library should not depend on a logger to surface it.
 
 Keep valid rows decoded before a later failure. Emit the rows, then the ordered error, then continue or stop based on its class. Never expose the API key in errors, `Debug`, tracing fields, URLs, or stats.
 
@@ -313,7 +318,7 @@ Validate before I/O: at most 4 kinds, 10,000 DIDs, and 100 collections; valid DI
 - A future cursor enters tip mode.
 - Sequence numbers can jump across registered crash vacancies. Never require `next == previous + 1`.
 - A cursor is local to a Jetstream server instance. Include the normalized host/instance identity in persistence guidance.
-- Validate values against the lexicon/XRPC signed-integer ceiling (`i64::MAX`) before serialization.
+- Validate values against the lexicon/XRPC signed-integer ceiling (`i64::MAX`) before serialization. A live sequence resume must additionally be below `10^15`, or the server would read it as a timestamp.
 
 ### Snapshot planning
 
@@ -324,8 +329,10 @@ For archive replay:
 3. Validate every plan entry: name, index, 16-char hex checksum, sequence range, known mode, and non-empty ordered/in-range block ranges.
 4. Process entries in returned order. For later pages send `afterSeq = plannedThroughSeq` and `beforeSeq = S`, even if the caller omitted `before_seq`.
 5. Treat `plannedThroughSeq` as coverage, not “last event returned”. Empty/sparse pages still advance.
-6. Reject regression, movement of the pinned sealed tip, or a non-advancing page before completion.
+6. Reject a non-advancing page, `plannedThroughSeq > S`, or a later page whose `sealedTipSeq` differs from the pin. Pinning `beforeSeq = S` prevents tip movement server-side; the check catches a misbehaving server.
 7. Finish when `plannedThroughSeq >= S`.
+
+Plan entries are over-approximate in seq as well as content: a unit that straddles `afterSeq` is included whole. Apply the window `(afterSeq, min(beforeSeq, S)]` per row after decode, and advance the floor to the resume seq on re-backfill so a straddling unit does not re-emit delivered rows.
 
 Snapshot-only excludes the active unsealed segment by definition. A replay that continues live cuts over exactly once at `max(S, last_processed_seq)`.
 
@@ -335,27 +342,27 @@ For `mode=blocks`, expand inclusive block ranges carefully, fetch `getBlock?segm
 
 For `mode=segment`:
 
-- probe range support and a strong ETag;
-- require the ETag generation to equal the plan checksum when supplied by the server;
+- probe range support and a strong ETag. `getSegment`'s ETag is the quoted 16-char hex plan checksum, so an ETag that differs from the plan checksum means the segment was rewritten after planning; treat that as a generation change;
+- pin the probe ETag and require it on every part via `If-Range`;
 - expose a common internal `SegmentSource`/compressed-frame stream so download strategy is independent of segment parsing and ordered decode;
 - use bounded parallel ranges with `If-Range`, a sequential streaming response, or metadata-plus-frame ranges according to target capabilities;
 - validate 200/206 status, `Content-Range`, total length, overlap/gaps, response length, and ETag consistency;
-- bound a segment at 1 GiB;
-- on a generation change, discard only that attempt, replan/restart at most twice, and never splice bytes from different generations;
-- honor bounded `Retry-After` for 429 and retry eligible 5xx/network failures;
+- bound a segment at 1 GiB. This is a client allocation cap, as in Go; real sealed segments target roughly 256–280 MB;
+- on a generation change, discard that attempt, restart the whole download with a fresh probe at most twice (Go's `maxGenerationAttempts = 2`; no replan is needed), and never splice bytes from different generations;
+- retry 429 and all 5xx with bounded attempts (Go defaults to 3, 500 ms exponential backoff capped at 30 s) honoring bounded `Retry-After`/`RateLimit-Reset`; other 4xx are permanent;
 - stream response bodies and decode per block instead of retaining multiple decoded segments.
 
 On WASM, fetch and validate header and footer/index ranges before bounded compressed frame ranges. Do not assemble a 1 GiB segment in linear memory. Without Range or exposed headers, use a sequential response only if its declared and observed sizes fit target limits. Otherwise return a capability or resource error. Native may use wider range striping behind the same `SegmentSource` API.
 
 Use separate policies for short control requests and bulk downloads. The general XRPC client's buffering and timeouts do not fit bulk downloads.
 
-The plan checksum/ETag identifies a segment generation. After a whole download, validate the header/footer and recompute xxh3 over `header[12..] || footer`. HTTP success does not prove integrity.
+The plan checksum/ETag identifies a segment generation. After a whole download, validate the header/footer and recompute xxh3 over `header[12..] || footer`. HTTP success does not prove integrity. The Go client skips this recompute; we keep it because the hash covers only the header and footer and is cheap.
 
 ### Segment and block decoding
 
-A `.jss` segment has a 256-byte reserved header, `jss0` magic, version 1, compressed blocks before `FooterOffset`, and footer indexes at or after it. Each file block has an 8-byte little-endian compressed-length prefix. `getBlock` returns the raw zstd frame without this prefix.
+A `.jss` segment has a fixed 256-byte header: `jss0` magic, a u64 xxh3 checksum, version 1, counts, seq/timestamp ranges, and five section offsets, with the trailing header bytes zero. A zero checksum marks an unsealed, still-active segment; reject it. Compressed blocks occupy `[256, FooterOffset)`. The footer runs from `FooterOffset` to end of file and its first section is the block index (`BlockIndexOffset` must equal `FooterOffset`). Each file block has an 8-byte little-endian compressed-length prefix. `getBlock` returns the raw zstd frame without this prefix.
 
-Validate offsets and counts before allocation or slicing. Use checked arithmetic. Reject offsets into the header, past `FooterOffset` or file length, or inconsistent with block indexes.
+Validate offsets and counts before allocation or slicing. Use checked arithmetic. Reject offsets into the header, past `FooterOffset` or file length, or inconsistent with block indexes. An empty block encodes as exactly four zero bytes.
 
 The decompressed columnar block is:
 
@@ -400,18 +407,20 @@ Dial:
 Sec-WebSocket-Protocol: xrpc.v1.json
 ```
 
-Use repeated `kinds`, `dids`, and `collections` query parameters, plus cursor, optional `maxMessageSizeBytes`, and optional `zstdDictionary`. Do not request or negotiate `permessage-deflate`.
+Use repeated `kinds`, `dids`, and `collections` query parameters, plus `cursor` and optional `zstdDictionary`. Verify the echoed subprotocol: accept `xrpc.v1.json` or an empty echo (the lexicon default, identical framing); fail on anything else. Do not request or negotiate `permessage-deflate`. The lexicon also defines `maxMessageSizeBytes`, but a nonzero value silently skips oversized events, markers included; never send it, matching the Go library.
 
-Uncompressed frames are proposal-0015 JSON:
+Uncompressed frames are proposal-0015 JSON. The envelope `$type` is only ever `message` or `error`; `#commit`, `#identity`, `#account`, `#sync`, and `#info` are payload `$type`s inside a `message` envelope:
 
 ```json
 {"$type":"message","payload":{"$type":"network.bsky.jetstream.subscribeEvents#commit"}}
 {"$type":"error","error":"ConsumerTooSlow","message":"..."}
 ```
 
-Dispatch payloads by exact `$type` and keep bounded context for unknown types. Parse pre-upgrade XRPC errors, including `CursorTooOld`, `UnknownZstdDictionary`, and `InvalidRequest`.
+Dispatch payloads by exact `$type`. A frame with no envelope `$type` is a hard error (likely a legacy v1 endpoint); an unknown non-empty envelope or payload `$type` is skipped for forward compatibility, with bounded context kept. An `error` frame is terminal for the connection; the server closes after sending it. Parse pre-upgrade XRPC 400 errors, including `CursorTooOld`, `UnknownZstdDictionary`, and generic `InvalidRequest`.
 
-Default to a 32 MiB live message/decompressed-frame limit, configurable within a hard maximum. Handle ping, pong, close, and cancellation correctly on each transport.
+Generated decoders do not enforce lexicon `required` fields; the client must. Reject frames with `seq <= 0`, an unparseable `time` (RFC 3339 UTC with exactly six fractional digits on the wire), or missing required commit fields, rather than emitting a zero-valued event that would advance the dedup cursor.
+
+Default to a 32 MiB read limit that also caps decompressed frame size, matching Go's `defaultLiveReadLimit`; make it configurable. Handle ping, pong, close, and cancellation correctly on each transport. The server pings every 30 seconds; a client that never answers is dropped.
 
 Reconnect from the last processed sequence. Server replay is inclusive, so drop `seq <= last_processed_seq`. Flush a partial batch before reporting a live error or returning to archive recovery.
 
@@ -419,12 +428,12 @@ Reconnect from the last processed sequence. Server replay is inclusive, so drop 
 
 Compression is an optimization and is enabled by default:
 
-1. Fetch the current raw structured dictionary from `getZstdDictionary` without auth.
-2. Parse and validate its embedded zstd dictionary ID.
+1. Fetch the current dictionary from `getZstdDictionary` without auth. The response is raw bytes (`application/octet-stream`). Omit the optional `id` parameter for the current dictionary; its lexicon minimum is 1, so do not send `id=0`.
+2. Parse and validate the embedded zstd dictionary ID from the RFC 8878 §5 structured-dictionary header (magic `0xEC30A437`, little-endian ID at bytes 4–8). Reject content-only blobs without the header.
 3. Dial with `zstdDictionary=<id>`.
-4. Treat each binary WebSocket message as one complete zstd frame and cap decompressed output before JSON parsing.
-5. Reject binary frames when compression was not successfully negotiated and reject text data frames when the compressed mode contract requires binary.
-6. On `UnknownZstdDictionary`, refetch once. If the fetch fails or returns the same rejected ID, fall back to an uncompressed dial.
+4. Treat each binary WebSocket message as one complete zstd frame whose decompressed bytes are exactly one JSON text frame (message, info, and error frames alike), and cap decompressed output at the read limit before JSON parsing.
+5. On an uncompressed connection, ignore stray binary frames; on a compressed connection, still accept text frames. This matches the Go client.
+6. On `UnknownZstdDictionary`, refetch the current dictionary and reconnect with the new ID. If the refetch fails or returns the very ID just rejected, fall back to uncompressed for the client's lifetime.
 7. On dictionary or decoder setup failure, log a redacted error and fall back to uncompressed mode. Treat a malformed compressed frame after upgrade as a stream error and recover within configured bounds.
 
 Never attach the archive bearer key to dictionary fetch or WebSocket upgrade.
@@ -446,7 +455,7 @@ validate config
                            flush batch, backfill from processed
 ```
 
-On `CursorTooOld`, flush valid pending rows, replay after the last processed seq, pin a new sealed tip, and retry cutover. Stop after a bounded number of cycles that neither advance the cursor nor extend archive coverage.
+On `CursorTooOld`, flush valid pending rows, replay after the last processed seq, pin a new sealed tip, and retry cutover. Stop after 5 consecutive cycles that neither advance the cursor nor extend archive coverage (matches the Go client's `maxRebackfillStalls`). On a pure-live stream (no archive credentials), `CursorTooOld` is immediately fatal — there is no archive loop to re-enter.
 
 The engine must not assume that a plan entry contains every sequence in its range, that a page contains events, or that the live cursor is adjacent to the sealed tip.
 
@@ -676,7 +685,7 @@ Use table-driven tests for small pure functions:
 - config conflicts, counts, syntax, cursor domains, host normalization, TLS policy, and checked integer conversions;
 - proposal-0015 message/error dispatch, pre-upgrade XRPC errors, and stable error classification;
 - Jiff RFC 3339/Unix-microsecond boundaries, offsets, precision, minimum/maximum supported instants, and rejected timestamps;
-- header/footer/index sizes, offsets, checksums, length prefixes, sentinel/kind 7 mapping, indexed/witnessed fallback, and malformed-row isolation;
+- header/footer/index sizes, offsets, checksums, length prefixes, kind-7 (create-resync) mapping, sentinel collection ids in the footer index, indexed/witnessed fallback, and malformed-row isolation;
 - pagination progress, retry eligibility, `Retry-After`, backoff caps, `Content-Range`, ETag/If-Range, and no-progress accounting;
 - batch partial/full flush, last-cursor semantics, inclusive-cursor deduplication, and cancellation precedence.
 
@@ -685,7 +694,7 @@ Test zero, one, limit−1, limit, limit+1, and integer maxima. Skip tests for tr
 ### Golden and differential tests
 
 - Decode every pinned Go raw block and whole segment and compare the complete normalized event log, segment metadata, checksum, and payload hashes with the manifest.
-- Include every durable kind, sentinels, empty fields, sparse/whole plans, dictionary frames, long valid identifiers, and malformed neighboring rows.
+- Include every durable kind, sentinel collection ids (`$account`/`$identity`/`$sync`), empty fields, sparse/whole plans, dictionary frames, long valid identifiers, and malformed neighboring rows.
 - Run the same zstd dictionary/frame/error corpus through native `zstd` and WASM `ruzstd`; accepted output and rejection class/limit behavior must agree even if exact error text differs.
 - Encode one logical history into both archive and live representations using fixture code independent from Shrike; after normalization and filtering, outputs must be identical.
 - Check live JSON record conversion to canonical DAG-CBOR against Go-produced CBOR/CID pairs and existing Shrike strict decoding.
