@@ -306,36 +306,49 @@
       v2status.textContent = `${v2count} events delivered · stopped`;
     }
 
-    $("v2-start").addEventListener("click", () => {
-      const collections = $("v2-collections").value.split(",").map(entry => entry.trim()).filter(Boolean);
-      const after = $("v2-after").value.trim();
-      const before = $("v2-before").value.trim();
-      const keyField = $("v2-key");
-      const options = {
-        host: $("v2-host").value.trim() || "jetstream.us-east.bsky.network",
-        collections,
-        insecure: $("v2-insecure").checked,
-        snapshotOnly: $("v2-snapshot").checked,
-        noCompression: $("v2-nocompress").checked,
-      };
-      if (after) options.afterSeq = Number(after);
-      if (before) options.beforeSeq = Number(before);
-      if (keyField.value) options.replayKey = keyField.value;
+    // Sequence cursors are i64 on the wire; parse them exactly. `Number()`
+    // silently rounds integers above 2^53 and turns junk into NaN/Infinity, so
+    // a mistyped or very large cursor would otherwise be sent as a *different*
+    // cursor with no error. Require plain non-negative safe integers instead.
+    function parseSeq(label, value) {
+      if (!/^\d+$/.test(value)) throw new Error(`${label} must be a non-negative integer`);
+      const seq = Number(value);
+      if (!Number.isSafeInteger(seq)) throw new Error(`${label} is too large for this demo`);
+      return seq;
+    }
 
+    $("v2-start").addEventListener("click", () => {
+      const keyField = $("v2-key");
       v2count = 0;
       v2events.replaceChildren();
       v2stats.replaceChildren();
       v2status.textContent = "Connecting…";
       try {
+        const collections = $("v2-collections").value.split(",").map(entry => entry.trim()).filter(Boolean);
+        const after = $("v2-after").value.trim();
+        const before = $("v2-before").value.trim();
+        const options = {
+          host: $("v2-host").value.trim() || "jetstream.us-east.bsky.network",
+          collections,
+          insecure: $("v2-insecure").checked,
+          snapshotOnly: $("v2-snapshot").checked,
+          noCompression: $("v2-nocompress").checked,
+        };
+        if (after) options.afterSeq = parseSeq("afterSeq", after);
+        if (before) options.beforeSeq = parseSeq("beforeSeq", before);
+        if (keyField.value) options.replayKey = keyField.value;
+
         v2sub = connectJetstreamV2(options, v2AddEvent, v2Info, v2Error);
-        // The engine now owns the key; clear the field so it does not linger.
-        keyField.value = "";
         $("v2-start").disabled = true;
         $("v2-stop").disabled = false;
         renderV2Stats();
         v2statsTimer = setInterval(renderV2Stats, 500);
       } catch (error) {
         v2Error(error);
+      } finally {
+        // The engine owns any key by now; clear the field on every path
+        // (success or a synchronous failure) so it never lingers in the DOM.
+        keyField.value = "";
       }
     });
 
