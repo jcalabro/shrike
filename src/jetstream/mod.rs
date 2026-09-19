@@ -6,26 +6,116 @@
 //! [`crate::streaming`] Jetstream client: the two share no protocol state, and
 //! the legacy `streaming::Client::jetstream()` API is left untouched.
 //!
-//! # Status
+//! # Overview
 //!
-//! The module is built milestone by milestone.
+//! The client is assembled from a few public pieces:
 //!
-//! - **M0** — the portable segment codec: bounded zstd decode
-//!   ([`compression`]), the columnar block decoder ([`block`]), and
-//!   sealed-segment header parsing plus xxh3 checksum verification
-//!   ([`segment`]).
-//! - **M1** — the protocol value model: the public [`Event`]/[`EventPayload`]
-//!   model and [`Record`] backing ([`event`], [`record`]); the three-dimension
-//!   [`Filter`] ([`filter`]); local [`config`] validation ([`normalize_host`],
-//!   [`Cursor`]); atproto dag-json → canonical DAG-CBOR canonicalization
-//!   ([`json_cbor`]); and exact RFC-3339 ↔ Unix-microsecond conversion
-//!   ([`time`]).
-//! - **M2** — the whole-segment decoder: block-index decoding and the
-//!   validating [`SegmentReader`] ([`segment`]), and archive row conversion
-//!   ([`decode`]) that turns filtered columnar rows into [`Event`]s while
-//!   preserving valid siblings around recoverable row failures.
+//! - [`Engine`] joins an optional sealed-archive replay with the live
+//!   WebSocket tail and emits one ordered, duplicate-free stream. Pass
+//!   `Some(archive)` for replay-then-cutover, or `None` for a pure-live tail.
+//! - [`EngineSink`] is the two-method consumer you implement: `deliver`
+//!   receives each ordered [`Delivery`] (a [`Batch`] of [`Event`]s or an
+//!   [`Info`] advisory), and `recoverable` receives in-order recoverable
+//!   errors. Returning `false` from either stops the engine cleanly.
+//! - [`Filter`] selects events by [`Kind`], collection (NSID prefix), and DID.
+//! - [`EngineConfig`] wraps a [`LiveConfig`] and adds the archive window
+//!   (`after_seq`, `before_seq`) and `snapshot_only`.
+//! - The transports are per-target: [`NativeHttpTransport`]/[`NativeWsTransport`]
+//!   on native, [`WasmHttpTransport`]/[`WasmWsTransport`] in the browser. The
+//!   archive is reached through [`ClientArchive`] over an [`ArchiveClient`], and
+//!   the zstd dictionary through [`HttpDictionarySource`].
+//! - [`CancelToken`] requests a prompt, cursor-safe stop; [`StatsHandle`]
+//!   snapshots replay and cutover progress.
 //!
-//! The planner, transports, and replay/live engine follow in later milestones.
+//! # Example: a live tail
+//!
+//! ```no_run
+//! # #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+//! # async fn tail() -> Result<(), Box<dyn std::error::Error>> {
+//! use shrike::jetstream::{
+//!     CancelToken, ClientArchive, Delivery, Engine, EngineConfig, EngineSink, Error, Filter,
+//!     HttpDictionarySource, Kind, LiveConfig, NativeHttpTransport, NativeWsTransport,
+//! };
+//!
+//! // A sink receives ordered deliveries. Returning `false` stops the engine.
+//! struct Printer;
+//! impl EngineSink for Printer {
+//!     async fn deliver(&mut self, delivery: Delivery) -> bool {
+//!         if let Delivery::Batch(batch) = delivery {
+//!             for event in batch.events() {
+//!                 println!("#{} {} {}", event.seq, event.kind().as_wire(), event.did.as_str());
+//!             }
+//!         }
+//!         true
+//!     }
+//!     // Keep tailing after a recoverable error (e.g. one malformed frame).
+//!     async fn recoverable(&mut self, _error: Error) -> bool {
+//!         true
+//!     }
+//! }
+//!
+//! let host = "jetstream.us-east.bsky.network";
+//! let mut live = LiveConfig::new(host, true);
+//! live.filter = Filter::new().kinds([Kind::Commit]);
+//! let read_limit = live.read_limit;
+//!
+//! let config = EngineConfig::new(live);
+//! let cancel = CancelToken::new();
+//!
+//! // Live-only: no archive replay, so the archive source is `None`. The turbofish
+//! // fixes the otherwise-unconstrained archive type parameter.
+//! let archive: Option<ClientArchive<NativeHttpTransport>> = None;
+//! let dict = HttpDictionarySource::new(NativeHttpTransport::new()?, host, true, cancel.clone());
+//! let ws = NativeWsTransport::new(read_limit);
+//!
+//! let engine = Engine::new(archive, ws, dict, config, cancel);
+//! engine.run(&mut Printer).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For archive replay, build a [`ClientArchive`] from an [`ArchiveClient`]
+//! ([`ArchiveConfig`] carries the host and [`ApiKey`]) and pass `Some(archive)`;
+//! set `config.after_seq`/`config.before_seq`/`config.snapshot_only` to bound
+//! the window. The `tools/shrike` CLI (`shrike jetstream`) wires all three modes
+//! end to end.
+//!
+//! # Cursors and resuming
+//!
+//! A cursor is a `u64` sequence number, exposed as [`StatsHandle`]'s
+//! `last_processed_seq` and on every [`Event`] as `seq`. Persisting and
+//! resuming from a cursor is the *caller's* responsibility — the engine holds no
+//! durable state — and a few rules keep a resume correct:
+//!
+//! - **Host identity.** A sequence number is only meaningful against the host
+//!   that issued it; v2 cursors do not transfer across hosts, and they are a
+//!   different domain from the legacy v1 client's cursors. Persist the
+//!   normalized host (see [`normalize_host`]) alongside the cursor and refuse to
+//!   resume a stored cursor against a different host.
+//! - **Marker folding.** Fold the highest delivered `seq` into durable storage
+//!   only after the [`Delivery`] has been handled, so a crash re-reads rather
+//!   than skips. Because [`Delivery`] is *moved* into `deliver`, the consumer
+//!   owns the events by the time the call returns; record the marker there (or
+//!   read [`StatsHandle`] `last_processed_seq`), then write it out.
+//! - **Resuming needs the archive.** To resume from a stored cursor set
+//!   `config.after_seq` to it and provide `Some(archive)`: any non-zero
+//!   `after_seq` (like `before_seq`/`snapshot_only`) requires an archive source,
+//!   because the engine replays the `(after_seq, tip]` gap from sealed segments
+//!   and then cuts over to the live tail exactly once at
+//!   `max(tip, last_processed_seq)`. A pure-live tail (`None` archive) must have
+//!   `after_seq == 0` and starts from the server's live position.
+//! - **Snapshot semantics.** `snapshot_only` replays the bounded archive window
+//!   and returns without ever dialing the live tail; `before_seq` is an
+//!   inclusive upper bound and is only valid together with `snapshot_only`.
+//! - **Resource knobs.** [`LiveConfig`] carries `read_limit` (the per-frame
+//!   decode cap), `max_batch`, `compression`, and the reconnect backoff; the
+//!   archive's [`Limits`] bound download sizes and concurrency; and
+//!   [`EngineConfig`]'s rebackfill-stall budget (see
+//!   [`DEFAULT_MAX_REBACKFILL_STALLS`]) bounds no-progress cutover recovery.
+//! - **Recoverable vs. fatal.** `recoverable` errors are delivered in order and
+//!   the stream continues while it returns `true`; a fatal error is never
+//!   delivered to the sink — it is [`Engine::run`]'s `Err` return, after which
+//!   the persisted cursor is still consistent with what was delivered.
 //!
 //! # Relationship to the legacy Jetstream client
 //!
