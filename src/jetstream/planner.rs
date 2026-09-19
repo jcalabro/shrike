@@ -181,7 +181,19 @@ pub async fn plan_snapshot<T: HttpTransport>(
                     "planSnapshot returned too many segments",
                 ));
             }
-            segments.push(validate_segment(raw, tip)?);
+            let segment = validate_segment(raw, tip)?;
+            // Segment indices must strictly increase across the whole plan (pages
+            // included). This rejects a duplicate or reordered entry, which would
+            // otherwise be downloaded again and double-count its events — the
+            // planner is the trust boundary, and window clipping does not dedupe.
+            if let Some(last) = segments.last()
+                && segment.index <= last.index
+            {
+                return Err(Error::PlanInvalid(
+                    "segment indices are not strictly increasing",
+                ));
+            }
+            segments.push(segment);
         }
 
         // Coverage must strictly advance unless the page already reaches the tip.

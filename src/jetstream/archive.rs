@@ -299,7 +299,15 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
         }
     };
     let bare = bare.to_ascii_lowercase();
-    bare == "localhost" || bare == "::1" || bare == "127.0.0.1" || bare.starts_with("127.")
+    // Accept the full 127.0.0.0/8 loopback block, but only as a numeric literal:
+    // a string prefix like `127.` would also match a DNS name such as
+    // `127.evil.example`, which can resolve to a remote host and would then
+    // receive the bearer key over cleartext. Parsing as an IPv4 address rejects
+    // any hostname while still accepting every real loopback address.
+    let numeric_loopback = bare
+        .parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|ip| ip.octets()[0] == 127);
+    bare == "localhost" || bare == "::1" || numeric_loopback
 }
 
 /// The outcome of a low-level send: either a transport failure or a caller
@@ -440,6 +448,13 @@ mod tests {
         assert!(!is_loopback_host("jetstream.us-east.bsky.network"));
         assert!(!is_loopback_host("example.com:443"));
         assert!(!is_loopback_host("10.0.0.1"));
+        // Regression: a DNS name that merely begins with "127." is not loopback;
+        // only a numeric address in 127.0.0.0/8 is. Otherwise an attacker-named
+        // host could receive the bearer key over cleartext.
+        assert!(!is_loopback_host("127.evil.example"));
+        assert!(!is_loopback_host("127.0.0.1.evil.example"));
+        assert!(!is_loopback_host("127x0"));
+        assert!(is_loopback_host("127.255.255.254"));
     }
 
     #[test]

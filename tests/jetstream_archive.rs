@@ -952,6 +952,54 @@ async fn planner_rejects_non_advancing_page() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn planner_rejects_duplicate_segment_index() {
+    let t = Scripted::new();
+    // Two entries share index 0 on one page: a duplicate that would double-count.
+    let segs = format!(
+        "{},{}",
+        seg_json("s0.jss", 0, 1, 50),
+        seg_json("s0-dup.jss", 0, 51, 100)
+    );
+    t.push("plan", plan_page(100, 100, &segs));
+    let c = client(t.clone());
+    let err = plan_snapshot(&c, &Filter::new(), 0, None, &CancelToken::new())
+        .await
+        .expect_err("duplicate index");
+    assert!(matches!(err, Error::PlanInvalid(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn planner_rejects_decreasing_segment_index_across_pages() {
+    let t = Scripted::new();
+    // Page 2's segment index goes backwards relative to page 1 — a reorder that
+    // could reintroduce already-covered events.
+    t.push("plan", plan_page(50, 100, &seg_json("s5.jss", 5, 1, 50)));
+    t.push("plan", plan_page(100, 100, &seg_json("s3.jss", 3, 51, 100)));
+    let c = client(t.clone());
+    let err = plan_snapshot(&c, &Filter::new(), 0, None, &CancelToken::new())
+        .await
+        .expect_err("decreasing index");
+    assert!(matches!(err, Error::PlanInvalid(_)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn planner_accepts_sparse_increasing_indices() {
+    let t = Scripted::new();
+    // Filtered plans can skip indices; strictly-increasing (not contiguous) is ok.
+    let segs = format!(
+        "{},{}",
+        seg_json("s0.jss", 0, 1, 50),
+        seg_json("s7.jss", 7, 51, 100)
+    );
+    t.push("plan", plan_page(100, 100, &segs));
+    let c = client(t.clone());
+    let plan = plan_snapshot(&c, &Filter::new(), 0, None, &CancelToken::new())
+        .await
+        .expect("sparse indices");
+    assert_eq!(plan.segments.len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn planner_rejects_bad_checksum() {
     let t = Scripted::new();
     let seg = r#"{"checksum":"NOTHEX","index":0,"maxSeq":100,"minSeq":1,"mode":"segment","name":"s0.jss"}"#;

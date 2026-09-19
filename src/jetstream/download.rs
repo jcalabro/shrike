@@ -282,7 +282,12 @@ async fn try_download_whole<T: HttpTransport>(
         .collect()
         .await;
 
-    let mut buf = vec![0u8; total as usize];
+    // `total` is bounded by the segment cap, but the cap is caller-configurable
+    // and `usize` is 32-bit on wasm; convert fallibly so an out-of-range length
+    // is a bounded error rather than a truncating cast and a later slice panic.
+    let total_len = usize::try_from(total)
+        .map_err(|_| Error::DownloadFailed("segment length does not fit the address space"))?;
+    let mut buf = vec![0u8; total_len];
     for outcome in outcomes {
         match outcome? {
             StripeOutcome::Restart => return Ok(WholeOutcome::Restart),
