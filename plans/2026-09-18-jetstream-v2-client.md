@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0, M1, M2 complete; M3 native complete (browser range/stream + CORS deferred to M6). M2/M3 `/roast` passes pending gateway.
+Status: in progress; M0, M1, M2, M3 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6). M4 in progress.
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
