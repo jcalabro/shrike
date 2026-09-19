@@ -386,11 +386,16 @@ async fn fetch_whole_body<T: HttpTransport>(
 }
 
 /// Compute inclusive `[start, end]` stripe ranges tiling `[0, total)`.
+///
+/// `stripe` is caller-configurable and can be near `u64::MAX`, so the endpoint
+/// is computed with saturating arithmetic: `start + stripe - 1` would otherwise
+/// overflow (a panic in debug builds). Saturating keeps the final `end` clamped
+/// to `total - 1`, so progress is preserved and the loop always terminates.
 fn compute_stripes(total: u64, stripe: u64) -> Vec<(u64, u64)> {
     let mut ranges = Vec::new();
     let mut start = 0u64;
     while start < total {
-        let end = (start + stripe - 1).min(total - 1);
+        let end = start.saturating_add(stripe - 1).min(total - 1);
         ranges.push((start, end));
         start = end + 1;
     }
@@ -596,6 +601,16 @@ mod tests {
             next = e + 1;
         }
         assert_eq!(next, total);
+    }
+
+    #[test]
+    fn stripe_tiling_does_not_overflow_on_huge_stripe() {
+        // Regression: `start + stripe - 1` overflowed u64 (a debug-build panic)
+        // when a caller-configured stripe was near u64::MAX. Saturating keeps
+        // the endpoint clamped to `total - 1`, producing a single stripe.
+        assert_eq!(compute_stripes(10, u64::MAX), vec![(0, 9)]);
+        // A stripe just under the max still tiles a small total in one range.
+        assert_eq!(compute_stripes(5, u64::MAX - 1), vec![(0, 4)]);
     }
 
     #[test]

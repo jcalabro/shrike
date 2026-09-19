@@ -63,15 +63,17 @@ impl RetryConfig {
     ///
     /// The computed backoff is `base_delay * 2^retry_index`, saturating and
     /// capped at `max_delay`. A server `hint` (from `Retry-After` /
-    /// `RateLimit-Reset`) acts as a floor: the effective delay is the larger of
-    /// the two, so the client never retries before the server said it may, even
-    /// if that exceeds `max_delay`.
+    /// `RateLimit-Reset`) acts as a floor, but is itself clamped to `max_delay`
+    /// first: the effective delay is the larger of the backoff and the clamped
+    /// hint. This keeps the client from retrying before the server said it may,
+    /// while bounding the wait so a hostile or buggy server cannot force an
+    /// arbitrarily long stall.
     pub fn delay_for(&self, retry_index: u32, hint: Option<Duration>) -> Duration {
         let shift = retry_index.min(16);
         let factor = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
         let backoff = self.base_delay.saturating_mul(factor).min(self.max_delay);
         match hint {
-            Some(h) => backoff.max(h),
+            Some(h) => backoff.max(h.min(self.max_delay)),
             None => backoff,
         }
     }
@@ -154,17 +156,23 @@ mod tests {
     }
 
     #[test]
-    fn hint_is_a_floor_even_above_cap() {
+    fn hint_is_a_floor_but_bounded_by_cap() {
         let cfg = RetryConfig::control();
         // Hint below the backoff: backoff wins.
         assert_eq!(
             cfg.delay_for(0, Some(Duration::from_millis(100))),
             Duration::from_millis(500)
         );
-        // Hint above the cap: the hint is honored.
+        // Hint between the backoff and the cap: the hint acts as a floor.
+        assert_eq!(
+            cfg.delay_for(0, Some(Duration::from_secs(5))),
+            Duration::from_secs(5)
+        );
+        // Regression: a hint above the cap is clamped to max_delay so a hostile
+        // or buggy server cannot force an unbounded stall.
         assert_eq!(
             cfg.delay_for(0, Some(Duration::from_secs(60))),
-            Duration::from_secs(60)
+            Duration::from_secs(30)
         );
     }
 
