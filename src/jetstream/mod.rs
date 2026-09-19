@@ -45,6 +45,7 @@ pub mod compression;
 pub mod config;
 pub mod decode;
 pub mod download;
+pub mod engine;
 pub mod error;
 pub mod event;
 pub mod filter;
@@ -71,6 +72,10 @@ pub use decode::{
     Decoded, decode_block_frame_filtered, decode_segment_filtered, raw_event_to_event,
 };
 pub use download::{DownloadedSegment, download_segment};
+pub use engine::{
+    ArchiveSource, ClientArchive, DEFAULT_MAX_REBACKFILL_STALLS, Engine, EngineConfig, EngineSink,
+    StatsHandle,
+};
 pub use error::{Error, MAX_PROTOCOL_MESSAGE_LEN, Result};
 pub use event::{
     Batch, Commit, Delivery, Event, EventPayload, Info, LiveFrame, Operation, Stats,

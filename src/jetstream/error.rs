@@ -149,6 +149,15 @@ pub enum Error {
     /// the engine uses it to shut a worker down cleanly. Never retryable.
     #[error("operation canceled")]
     Canceled,
+
+    /// The replay/live engine could not make forward progress across repeated
+    /// archive re-backfill cycles: after a bounded number of `CursorTooOld`
+    /// recoveries the cutover neither advanced the processed cursor nor extended
+    /// archive coverage, so re-backfilling can never catch the live tail. Fatal —
+    /// mirrors the Go client's `maxRebackfillStalls` guard against an infinite
+    /// backfill loop.
+    #[error("replay stalled: {0}")]
+    NoProgress(&'static str),
 }
 
 /// The maximum number of bytes retained from a server-supplied protocol
@@ -190,6 +199,7 @@ impl Error {
                 | Error::UnsupportedSegmentVersion { .. }
                 | Error::PlanInvalid(_)
                 | Error::Capability(_)
+                | Error::NoProgress(_)
         )
     }
 }

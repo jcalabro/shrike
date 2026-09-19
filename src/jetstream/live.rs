@@ -110,6 +110,11 @@ pub enum LiveCursor {
 
 /// The live tail's configuration. Built and validated by the client builder in a
 /// later milestone; the defaults here match the Go client.
+///
+/// `Clone` lets the replay/live engine derive a fresh live config (with an
+/// updated resume cursor) for each archive→live cutover without disturbing the
+/// original.
+#[derive(Clone)]
 pub struct LiveConfig {
     /// The normalized target authority (see [`super::normalize_host`]).
     pub host: String,
@@ -149,8 +154,10 @@ impl LiveConfig {
     }
 
     /// Validate the parts that must hold before any I/O: the filter and, when a
-    /// resume cursor is set, its live-domain bounds.
-    fn validate(&self) -> Result<()> {
+    /// resume cursor is set, its live-domain bounds. `pub(crate)` so the
+    /// replay/live engine can fail fast on an invalid live config up front,
+    /// before it does any archive work.
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.host.is_empty() {
             return Err(Error::InvalidConfig("live host is empty"));
         }
@@ -278,6 +285,11 @@ const MAX_DICT_ERROR_BODY: u64 = 64 << 10;
 /// (transport, non-2xx, oversized body, or an unparsable dictionary) is returned
 /// as an error; the live tail treats every dictionary failure as a safe,
 /// recoverable degrade to uncompressed frames.
+///
+/// `Clone` (when the transport is cloneable) lets the engine hand a fresh copy
+/// to each live tail it builds across cutovers; the transport clone shares its
+/// underlying connection pool.
+#[derive(Clone)]
 pub struct HttpDictionarySource<T> {
     transport: T,
     host: String,

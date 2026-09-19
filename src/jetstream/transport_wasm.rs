@@ -32,6 +32,7 @@ use gloo_net::websocket::{Message, WebSocketError};
 use super::live::{DialError, WsConnection, WsError, WsMessage, WsTransport};
 
 /// The browser live WebSocket transport backed by `gloo-net`.
+#[derive(Clone)]
 pub struct WasmWsTransport {
     read_limit: usize,
 }

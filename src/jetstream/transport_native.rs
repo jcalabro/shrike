@@ -33,6 +33,11 @@ use super::transport::{
 };
 
 /// A native archive HTTP transport backed by a shared [`reqwest::Client`].
+///
+/// Cloning is cheap: [`reqwest::Client`] is an `Arc` handle over one connection
+/// pool, so a clone shares that pool. The engine clones the transport to build a
+/// fresh live tail at each archive→live cutover.
+#[derive(Clone)]
 pub struct NativeHttpTransport {
     client: reqwest::Client,
 }
@@ -145,6 +150,7 @@ use super::live::{DialError, WsConnection, WsError, WsMessage, WsTransport};
 /// or misconfigured server cannot force an unbounded buffer), and — like the
 /// HTTP adapter — carries no authorization header, since the live endpoint is
 /// unauthenticated.
+#[derive(Clone)]
 pub struct NativeWsTransport {
     read_limit: usize,
 }

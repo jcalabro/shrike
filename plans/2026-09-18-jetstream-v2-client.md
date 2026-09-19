@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0, M1, M2, M3, M4 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6; M4 browser live headless testing deferred to M6, adapter compiles via wasm-check). M5 next.
+Status: in progress; M0, M1, M2, M3, M4, M5 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6; M4 browser live headless testing deferred to M6, adapter compiles via wasm-check; M5 engine + independent-oracle model tests complete, native cancellation covered, WASM future/listener cleanup deferred to M6 headless testing). M6 next.
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -21,8 +21,8 @@ Jetstream reference baseline: `58c4d7f7a9130e53b40348ad3d1f7aafed0e4843`
 - [x] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
 - [x] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
 - [x] Implement the authenticated planner and bounded archive downloads. (native complete; browser range/stream path + CORS deferred to M6.)
-- [ ] Implement proposal-0015 live streaming, optional dictionary zstd, and reconnect behavior.
-- [ ] Implement the ordered archive-to-live engine, batching, cursor semantics, and re-backfill.
+- [x] Implement proposal-0015 live streaming, optional dictionary zstd, and reconnect behavior.
+- [x] Implement the ordered archive-to-live engine, batching, cursor semantics, and re-backfill.
 - [ ] Add the `shrike jetstream` example/diagnostic command.
 - [ ] Add a separate Jetstream v2 binding and live/bounded-replay UI to the WASM demo. Preserve the legacy path.
 - [ ] Complete offline native/WASM integration, property, fault, fuzz, and compile coverage.
@@ -575,17 +575,19 @@ M4 roast fixes: a post-commit roast raised four confirmed findings, all fixed wi
 
 ### M5 — Replay/live engine
 
-- [ ] Build an independent synchronous replay model and normalized test event type. Do not reuse production filter, batch, retry, or engine logic.
-- [ ] Join planner, archive workers, ordered batching, and live tail.
-- [ ] Pin the first sealed tip and cut over at `max(S, last_processed_seq)`.
-- [ ] Implement snapshot-only completion.
-- [ ] Re-enter archive replay on cutover `CursorTooOld`.
-- [ ] Bound no-progress recovery cycles.
-- [ ] Expose atomic stats and make task cleanup observable in tests.
-- [ ] Test native task cancellation and WASM future/listener cleanup.
-- [ ] Add structured property tests, small exhaustive partition/schedule checks, and deterministic interaction swarms against the independent model.
+- [x] Build an independent synchronous replay model and normalized test event type. Do not reuse production filter, batch, retry, or engine logic. (`tests/jetstream_engine.rs`: the `oracle` function reimplements windowing/filtering/dedup/cutover over the normalized `Me` event type; it calls no production filter, batch, retry, or engine code.)
+- [x] Join planner, archive workers, ordered batching, and live tail. (`engine.rs`: `Engine::run` drives `replay_archive` (concurrent `buffered` segment downloads, order-preserving) then a `LiveBridge` over `LiveConsumer`; `ArchiveSource`/`EngineSink` traits seam the archive and sink.)
+- [x] Pin the first sealed tip and cut over at `max(S, last_processed_seq)`. (`fetch_max` pins `sealed_tip_seq`; `resume_from = tip.max(processed).saturating_add(1)` sets `LiveCursor::Resume`; `cutover_overlap_dedups_boundary` proves no boundary double-delivery.)
+- [x] Implement snapshot-only completion. (`config.snapshot_only` returns after replay; `snapshot_only_never_dials_live` asserts the live tail is never dialed.)
+- [x] Re-enter archive replay on cutover `CursorTooOld`. (`LiveBridge` maps a cutover `CursorTooOld` to `LiveOutcome::Backfill`; `repeated_cursor_too_old_rebackfills` proves re-plan → replay → successful cutover with a grown tip.)
+- [x] Bound no-progress recovery cycles. (`max_rebackfill_stalls` counts stalls where neither `processed` nor `tip` advanced, returning fatal `NoProgress`; `rebackfill_stall_returns_no_progress` proves the bound.)
+- [x] Expose atomic stats and make task cleanup observable in tests. (`StatsHandle` over `AtomicU64`/`AtomicUsize`; `WorkerGuard` makes `active_downloads()` observable; `stats_reflect_progress_and_mutation` checks the snapshot.)
+- [x] Test native task cancellation and WASM future/listener cleanup. (Native: `cancellation_cleans_up_workers` drives `tokio::join!` and asserts `active_downloads()` peaks then returns to zero; WASM future/listener cleanup deferred to the M6 headless browser suite alongside the browser transport work.)
+- [x] Add structured property tests, small exhaustive partition/schedule checks, and deterministic interaction swarms against the independent model. (`engine_matches_oracle_snapshot` and `engine_matches_oracle_with_cutover` proptests drive random worlds/splits/filters/schedules through both the engine and the oracle under a paused clock.)
 
-Acceptance: model tests prove ordered, duplicate-free delivery across pagination, parallel completion, retries, sparse filters, cutover overlap, seq gaps, repeated `CursorTooOld`, cancellation, and server mutation.
+Acceptance: model tests prove ordered, duplicate-free delivery across pagination, parallel completion, retries, sparse filters, cutover overlap, seq gaps, repeated `CursorTooOld`, cancellation, and server mutation. **Met.**
+
+M5 notes: `engine.rs` adds an `Engine<A, W, D>` that joins the sealed-archive replay (`ArchiveSource` — concurrent `buffered` downloads that preserve plan order and flush recoverable row drops in place) with the live tail (`LiveBridge` over the M4 `LiveConsumer`). The sink is a two-method `EngineSink` (`deliver` + `recoverable`) rather than the M4 `DeliverySink`, because `DeliverySink`'s "an Err is always terminal" contract conflicts with in-order recoverable errors; a fatal error is `Engine::run`'s return value only and is never delivered (the crate `Error` is not `Clone`). Cutover pins the first sealed tip and resumes the live cursor at `max(tip, last_processed_seq) + 1`. A cutover `CursorTooOld` re-enters archive replay, bounded by `max_rebackfill_stalls` (fatal `NoProgress` on repeated no-advance). `tests/jetstream_engine.rs` proves the acceptance list against an independent synchronous oracle over a normalized event type, plus two proptests; correctness holds under out-of-order download completion, sparse filters, sequence gaps, boundary overlap, server mutation across re-plans, and cancellation with observable worker teardown. The suite is gated `#![cfg(feature = "jetstream")]` (auto-discovered, matching `jetstream_archive.rs`).
 
 ### M6 — CLI, WASM demo, documentation, and smoke test
 
