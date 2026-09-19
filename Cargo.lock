@@ -2311,6 +2311,9 @@ dependencies = [
  "tower",
  "twox-hash",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "zeroize",
  "zstd",
 ]

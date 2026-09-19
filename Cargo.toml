@@ -106,9 +106,11 @@ backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand",
 # (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash), M1 adds the
 # protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros), M4
 # adds the live WebSocket transport (`tokio-tungstenite` native, `gloo-net`
-# browser, `url` for wire-URL construction) — all already declared optional deps
-# shared with `streaming`, so no new crate enters the tree.
-jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "dep:tokio-tungstenite", "dep:gloo-net", "dep:url", "api"]
+# browser, `url` for wire-URL construction), M6 adds the browser archive HTTP
+# transport (`gloo-net`'s `http` `fetch` wrapper plus `web-sys`/`wasm-bindgen`
+# for incremental `ReadableStream` body reads) — all already resolved in the tree
+# via `gloo-net` and the browser crypto backends, so no new crate is introduced.
+jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "dep:tokio-tungstenite", "dep:gloo-net", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:url", "api"]
 
 # Everything
 full = [
@@ -185,9 +187,19 @@ zstd = { version = "0.14", optional = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "macros", "io-util"] }
-gloo-net = { version = "0.6", features = ["websocket"], optional = true }
+# jetstream (wasm): `websocket` powers the live tail; `http` powers the archive
+# `fetch` transport. Both draw only on `web-sys` bindings already in the tree.
+gloo-net = { version = "0.6", features = ["websocket", "http"], optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 js-sys = { workspace = true, optional = true }
+# jetstream (wasm): the browser archive transport streams the `fetch` response
+# body incrementally through a `ReadableStream` reader, so `read_body_bounded`
+# enforces the caller's exact per-request byte cap chunk-by-chunk (matching the
+# native `reqwest` path) instead of buffering a whole response first. These
+# crates are already resolved via `gloo-net`; pinned to the workspace versions.
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+web-sys = { version = "=0.3.104", optional = true, features = ["ReadableStream", "ReadableStreamDefaultReader", "RequestRedirect", "RequestMode", "RequestCredentials"] }
 # Shrike currently reaches both getrandom 0.2 (elliptic-curve) and 0.3 (rand).
 # Opt both generations into their browser crypto backends.
 getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"], optional = true }

@@ -108,7 +108,7 @@ pub use transport_native::{
     NativeBody, NativeHttpTransport, NativeWsConnection, NativeWsTransport,
 };
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-pub use transport_wasm::{WasmWsConnection, WasmWsTransport};
+pub use transport_wasm::{WasmHttpBody, WasmHttpTransport, WasmWsConnection, WasmWsTransport};
 
 // The upstream `com.atproto.sync.subscribeRepos` events wrapped by the DID-level
 // payload variants, re-exported so callers need not reach into `crate::api`.
