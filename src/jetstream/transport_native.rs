@@ -52,12 +52,6 @@ impl NativeHttpTransport {
             .map_err(|_| TransportError::other("failed to build the HTTP client"))?;
         Ok(NativeHttpTransport { client })
     }
-
-    /// Build a transport over a caller-supplied client. The caller is
-    /// responsible for keeping redirects disabled if it shares this concern.
-    pub fn with_client(client: reqwest::Client) -> Self {
-        NativeHttpTransport { client }
-    }
 }
 
 impl HttpTransport for NativeHttpTransport {
@@ -125,6 +119,58 @@ fn map_reqwest_error(err: reqwest::Error) -> TransportError {
         TransportError::body("response body read failed")
     } else {
         TransportError::other("archive request failed")
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::result_large_err
+)]
+mod http_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// The transport's only construction path builds a client with redirects
+    /// disabled: a 3xx is surfaced verbatim to the caller instead of being
+    /// followed, so an authenticated archive request can never replay its bearer
+    /// key to the redirect target. Regression test guarding the removal of the
+    /// `with_client` escape hatch, which could have installed a
+    /// redirect-following client behind the same authenticated request path.
+    #[tokio::test]
+    async fn new_transport_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            // Drain the request head; we only need the client's write to complete.
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await.unwrap();
+            // Redirect to a port that is not listening: were the transport to
+            // follow it, the follow-up connect would fail and `send` would error
+            // instead of returning the 302 below.
+            let response = "HTTP/1.1 302 Found\r\n\
+                Location: http://127.0.0.1:1/elsewhere\r\n\
+                Content-Length: 0\r\n\
+                Connection: close\r\n\r\n";
+            stream.write_all(response.as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+        });
+
+        let transport = NativeHttpTransport::new().unwrap();
+        let request = HttpRequest::get(format!("http://{addr}/segment"));
+        let response = transport
+            .send(request)
+            .await
+            .unwrap_or_else(|e| panic!("send failed: {e:?}"));
+
+        // The redirect is surfaced as an ordinary response, not followed.
+        assert_eq!(response.status, 302);
+        server.await.unwrap();
     }
 }
 
