@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0, M1, M2, M3, M4, M5 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6; M4 browser live headless testing deferred to M6, adapter compiles via wasm-check; M5 engine + independent-oracle model tests complete and roasted/hardened, native cancellation covered, WASM future/listener cleanup deferred to M6 headless testing). M6 next.
+Status: in progress; M0, M1, M2, M3, M4, M5 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6; M4 browser live headless testing deferred to M6, adapter compiles via wasm-check; M5 engine + independent-oracle model tests complete and roasted/hardened, native cancellation covered, WASM future/listener cleanup deferred to M6 headless testing). M6 in progress: CLI subcommand, browser archive HTTP transport, and the `connectJetstreamV2` browser binding (with network-free headless node tests) are complete and roasted; remaining — the v2 demo UI, public rustdoc, and cursor-persistence docs.
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -594,7 +594,7 @@ M5 notes: `engine.rs` adds an `Engine<A, W, D>` that joins the sealed-archive re
 ### M6 — CLI, WASM demo, documentation, and smoke test
 
 - [x] Add `shrike jetstream` with JSON/stats modes and environment-only secret default. (`tools/shrike/src/jetstream.rs` drives `Engine` in live / replay-cutover / snapshot modes; `--json` emits newline-delimited JSON, `--stats` prints periodic `StatsHandle` snapshots; the archive key is read only from `JETSTREAM_API_KEY`, never a flag; ctrl-c wires to `CancelToken` for a clean stop. Unit tests cover kind/collection parsing and the sad paths.)
-- [ ] Keep the legacy `connectJetstream` WASM export and demo. Add a separate v2 export, such as `connectJetstreamV2`, backed only by `shrike::jetstream`.
+- [x] Keep the legacy `connectJetstream` WASM export and demo. Add a separate v2 export, such as `connectJetstreamV2`, backed only by `shrike::jetstream`. (`wasm/src/lib.rs`: a wasm-gated `jetstream_v2` module exports `connectJetstreamV2(options, onEvent, onInfo?, onError?)` returning a `JetstreamV2Subscription` with `stats()` + idempotent `close()`, wired only to `shrike::jetstream`'s `Engine`/`ClientArchive`/`WasmHttpTransport`/`WasmWsTransport`. The legacy `connectJetstream`/`connectFirehose` bindings are untouched. Headless node tests cover the network-free paths — see the next item.)
 - [ ] Add a v2 live demo for `jetstream.us-east.bsky.network` to `wasm/index.html` and `wasm/README.md`, with optional bounded archive replay.
 - [ ] Accept a replay key for the browser session without persisting it or adding it to the URL. Never embed a long-lived key in checked-in HTML, JavaScript, WASM, or examples.
 - [ ] Show v2 sequence cursors, event kinds, replay/cutover progress, cancellation, clear errors, and compression fallback in the demo.
