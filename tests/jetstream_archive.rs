@@ -1046,3 +1046,60 @@ fn built_segment_is_readable() {
     let reader = SegmentReader::open(&bytes).expect("open");
     assert_eq!(format!("{:016x}", reader.header().checksum), checksum);
 }
+
+// ---------------------------------------------------------------------------
+// Config validation: the host is normalized before it can misdirect the key.
+// ---------------------------------------------------------------------------
+
+/// Regression: `ArchiveClient::new` must normalize the host through
+/// `normalize_host`, so a URL-shaped authority cannot slip through and redirect
+/// the bearer key to a different origin than the leading label suggests. Before
+/// the fix, `new` interpolated the raw string straight into the request URL, so
+/// a host like `trusted.example@attacker.example` would send `authorization:
+/// <key>` to `attacker.example` (the part after `@` is the real authority).
+#[test]
+fn rejects_url_shaped_host_that_could_redirect_the_key() {
+    // Userinfo: the real authority is everything after `@`.
+    let config = ArchiveConfig::new("trusted.example@attacker.example", ApiKey::new(SECRET));
+    assert!(matches!(
+        ArchiveClient::new(Scripted::new(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+
+    // Userinfo carrying explicit credentials is likewise rejected.
+    let config = ArchiveConfig::new("user:pass@attacker.example", ApiKey::new(SECRET));
+    assert!(matches!(
+        ArchiveClient::new(Scripted::new(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+
+    // Whitespace inside the authority is not a valid host.
+    let config = ArchiveConfig::new("good.example evil.example", ApiKey::new(SECRET));
+    assert!(matches!(
+        ArchiveClient::new(Scripted::new(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+
+    // A disallowed scheme is rejected rather than silently coerced.
+    let config = ArchiveConfig::new("ftp://good.example", ApiKey::new(SECRET));
+    assert!(matches!(
+        ArchiveClient::new(Scripted::new(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+
+    // The empty host remains rejected.
+    let config = ArchiveConfig::new("", ApiKey::new(SECRET));
+    assert!(matches!(
+        ArchiveClient::new(Scripted::new(), config),
+        Err(Error::InvalidConfig(_))
+    ));
+}
+
+/// A well-formed host is accepted even when it carries a redundant scheme or
+/// mixed case: `new` normalizes it rather than rejecting it, so the client is
+/// built against the canonical authority.
+#[test]
+fn accepts_and_normalizes_well_formed_host() {
+    let config = ArchiveConfig::new("https://Archive.Example.com", ApiKey::new(SECRET));
+    ArchiveClient::new(Scripted::new(), config).expect("normalized host builds a client");
+}

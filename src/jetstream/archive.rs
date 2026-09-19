@@ -119,9 +119,13 @@ where
             limits,
         } = config;
 
-        if host.is_empty() {
-            return Err(Error::InvalidConfig("archive host is empty"));
-        }
+        // Normalize and validate the authority before it is interpolated into a
+        // request URL or measured by the cleartext-key rule. `normalize_host`
+        // rejects userinfo (`user@host`), an embedded scheme, a path, and other
+        // URL syntax that could otherwise redirect the bearer key to a different
+        // authority than the leading label suggests. It also rejects the empty
+        // host.
+        let host = super::config::normalize_host(&host)?;
         // Never send the bearer key in cleartext except to a loopback dev/test
         // host. A keyless insecure target is allowed (public, unauthenticated).
         if !secure && !key.is_empty() && !is_loopback_host(&host) {

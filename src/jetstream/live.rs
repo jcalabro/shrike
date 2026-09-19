@@ -158,9 +158,13 @@ impl LiveConfig {
     /// replay/live engine can fail fast on an invalid live config up front,
     /// before it does any archive work.
     pub(crate) fn validate(&self) -> Result<()> {
-        if self.host.is_empty() {
-            return Err(Error::InvalidConfig("live host is empty"));
-        }
+        // Reject a URL-shaped authority (userinfo, embedded scheme, path,
+        // whitespace) up front, so the host that reaches `subscribe_url` and the
+        // dictionary source is a bare authority. No bearer key rides the live or
+        // dictionary requests, so this is host-confusion defense-in-depth rather
+        // than a credential guard, but it also makes the "normalized" contract on
+        // `host` true. Empty is subsumed (rejected by `normalize_host`).
+        super::config::normalize_host(&self.host)?;
         if self.max_batch == 0 {
             return Err(Error::InvalidConfig("max_batch must be >= 1"));
         }
@@ -1931,6 +1935,18 @@ mod tests {
         let mut config = LiveConfig::new("", true);
         config.max_batch = 1;
         assert!(config.validate().is_err());
+        // A URL-shaped authority is rejected before any live I/O: userinfo could
+        // otherwise point the WebSocket dial at a different host than the leading
+        // label suggests. Empty is already covered above.
+        let config = LiveConfig::new("trusted.example@attacker.example", true);
+        assert!(config.validate().is_err());
+        // Whitespace inside the authority is not a valid host.
+        let config = LiveConfig::new("jetstream.test evil.example", true);
+        assert!(config.validate().is_err());
+        // A redundant `wss://` scheme and path are stripped, so a bare authority
+        // (optionally with a port) still validates.
+        let config = LiveConfig::new("wss://jetstream.test:443/xrpc/foo", true);
+        assert!(config.validate().is_ok());
     }
 
     // ---- Regression tests ---------------------------------------------------

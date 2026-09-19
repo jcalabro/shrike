@@ -15,12 +15,29 @@
 //!   object) triggers a clean whole-download restart rather than splicing two
 //!   generations together; the restart budget is bounded.
 //!
-//! Every downloaded segment is validated before it is trusted: [`SegmentReader`]
-//! re-verifies the sealed header and xxh3 checksum, and the downloader
-//! cross-checks that the recomputed checksum matches the one the plan named, so a
-//! substituted or corrupted object cannot pass as the planned segment. Sizes are
-//! capped at every step; a truncated, oversized, or inconsistent body is a
-//! bounded [`Error::DownloadFailed`], never an unbounded allocation.
+//! Integrity is enforced per mode, matching the sealed format: the xxh3 checksum
+//! covers `header[12..256] ++ footer`, not the compressed block region in
+//! between, so only a download that fetches the header and footer can recompute
+//! it.
+//!
+//! - **`segment` mode** re-verifies the whole object before it is trusted:
+//!   [`SegmentReader`] re-reads the sealed header and validates the block index,
+//!   then the downloader recomputes the xxh3 checksum and cross-checks it against
+//!   the one the plan named, so a truncated, corrupted, or substituted object
+//!   cannot pass as the planned segment.
+//! - **`blocks` mode** fetches only the requested block frames, so it never
+//!   retrieves the header or footer the checksum covers and does not recompute it
+//!   — pulling them would defeat the point of a sparse download, and the plan
+//!   carries no per-block metadata to cross-check a lone frame against. Each
+//!   frame is still fully validated on decode (bounded decompression, checked
+//!   columnar layout, capped counts), and only rows inside the snapshot window
+//!   are kept; the path relies on the authenticated plan and the transport (TLS
+//!   plus a bearer key to a first-party origin) for object authenticity. Note
+//!   the format carries no per-block content hash, so neither mode detects a
+//!   same-shape re-encoding substituted by a hostile origin.
+//!
+//! Sizes are capped at every step; a truncated, oversized, or inconsistent body
+//! is a bounded [`Error::DownloadFailed`], never an unbounded allocation.
 //!
 //! After decoding, the snapshot window `(after_seq, before_seq]` is applied to
 //! every row: a segment that straddles the window boundary contributes only the
