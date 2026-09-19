@@ -39,9 +39,19 @@
 //! construction.
 //!
 //! The live WebSocket adapter, below, carries no authorization header (the live
-//! endpoint is unauthenticated) and caps the size of an accepted message at the
-//! tail's read limit so a hostile or misconfigured server cannot force an
-//! unbounded buffer.
+//! endpoint is unauthenticated) and rejects any message larger than the tail's
+//! read limit before it is processed: the oversized frame never reaches
+//! decompression or decode, and the connection is torn down. Note the bound's
+//! reach, though. Unlike the native adapter — which configures
+//! `tokio-tungstenite`'s `max_message_size` / `max_frame_size` to bound receipt
+//! itself — the browser `WebSocket` API delivers each message fully buffered
+//! before any handler runs and exposes no receive-size cap. The read limit here
+//! therefore bounds what a single message costs *downstream*, not the transient
+//! buffer the browser allocates to receive it: one oversized message can be
+//! materialized by the browser before this check rejects it (and only one, since
+//! the connection is then dropped). That residual is a browser-platform limit —
+//! the same shape as the missing-CORS case above, a capability the browser does
+//! not expose rather than a gap the adapter can close.
 //!
 //! Two browser constraints shape the mapping, and both are deliberate:
 //!
@@ -245,7 +255,9 @@ pub struct WasmWsTransport {
 }
 
 impl WasmWsTransport {
-    /// Build a transport capping an accepted message at `read_limit` bytes.
+    /// Build a transport rejecting any message larger than `read_limit` bytes
+    /// before it is processed. See the module docs for why this bounds
+    /// downstream cost rather than the browser's transient receive buffer.
     pub fn new(read_limit: usize) -> Self {
         WasmWsTransport { read_limit }
     }
@@ -283,6 +295,10 @@ impl WsConnection for WasmWsConnection {
         let Some(ws) = self.ws.as_mut() else {
             return Ok(None);
         };
+        // The browser has already buffered the whole message by the time
+        // `ws.next()` yields it (see the module docs); this check bounds what
+        // reaches decompression/decode, not the receive buffer. Moving it into a
+        // match guard would not change that — the guard still runs post-receipt.
         match ws.next().await {
             // Stream ended: the socket is done; treat as a clean close.
             None => Ok(None),
