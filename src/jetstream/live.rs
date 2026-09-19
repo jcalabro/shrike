@@ -158,12 +158,14 @@ impl LiveConfig {
     /// replay/live engine can fail fast on an invalid live config up front,
     /// before it does any archive work.
     pub(crate) fn validate(&self) -> Result<()> {
-        // Reject a URL-shaped authority (userinfo, embedded scheme, path,
-        // whitespace) up front, so the host that reaches `subscribe_url` and the
-        // dictionary source is a bare authority. No bearer key rides the live or
-        // dictionary requests, so this is host-confusion defense-in-depth rather
-        // than a credential guard, but it also makes the "normalized" contract on
-        // `host` true. Empty is subsumed (rejected by `normalize_host`).
+        // Fail fast on a host that is not a bare authority (userinfo, embedded
+        // scheme, path, whitespace, or empty) before any archive work begins. The
+        // dialed/fetched authority is canonicalized again at the URL-construction
+        // boundary (`subscribe_url` and `HttpDictionarySource::url`), which is the
+        // actual enforcement point; this call only rejects a bad host early so the
+        // engine does not replay the archive before discovering the live host is
+        // unusable. No bearer key rides the live or dictionary requests, so this
+        // is host-confusion defense, not a credential guard.
         super::config::normalize_host(&self.host)?;
         if self.max_batch == 0 {
             return Err(Error::InvalidConfig("max_batch must be >= 1"));
@@ -319,15 +321,25 @@ impl<T: HttpTransport> HttpDictionarySource<T> {
     /// The `getZstdDictionary` URL, with an `id` query parameter when a specific
     /// dictionary is requested (omitted to fetch the server's current one).
     fn url(&self, id: Option<u32>) -> Result<String> {
-        let scheme = if self.secure { "https" } else { "http" };
-        let base = format!("{scheme}://{}/xrpc/{DICTIONARY_METHOD}", self.host);
-        let mut url =
-            url::Url::parse(&base).map_err(|_| Error::InvalidConfig("invalid dictionary host"))?;
-        if let Some(id) = id {
-            url.query_pairs_mut().append_pair("id", &id.to_string());
-        }
-        Ok(url.into())
+        dictionary_url(&self.host, self.secure, id)
     }
+}
+
+/// Build the `getZstdDictionary` URL for `host`, canonicalizing the authority so
+/// a URL-shaped host cannot smuggle a scheme, path, or userinfo into the fetched
+/// origin. [`HttpDictionarySource::new`] is infallible and stores the host
+/// verbatim, so this fetch boundary is where the host is validated. A free
+/// function (like [`subscribe_url`]) so it is testable without a transport.
+fn dictionary_url(host: &str, secure: bool, id: Option<u32>) -> Result<String> {
+    let host = super::config::normalize_host(host)?;
+    let scheme = if secure { "https" } else { "http" };
+    let base = format!("{scheme}://{host}/xrpc/{DICTIONARY_METHOD}");
+    let mut url =
+        url::Url::parse(&base).map_err(|_| Error::InvalidConfig("invalid dictionary host"))?;
+    if let Some(id) = id {
+        url.query_pairs_mut().append_pair("id", &id.to_string());
+    }
+    Ok(url.into())
 }
 
 impl<T: HttpTransport> DictionarySource for HttpDictionarySource<T> {
@@ -377,6 +389,11 @@ pub fn subscribe_url(
     wire_cursor: Option<i64>,
     dict_id: Option<u32>,
 ) -> Result<String> {
+    // Canonicalize the authority here (the dial boundary) so a URL-shaped host
+    // cannot smuggle a scheme, path, or userinfo into the dialed origin
+    // (CWE-601). This is the single enforcement point for the WebSocket dial,
+    // independent of how the caller built the config.
+    let host = super::config::normalize_host(host)?;
     let scheme = if secure { "wss" } else { "ws" };
     let base = format!("{scheme}://{host}/xrpc/{SUBSCRIBE_METHOD}");
     let mut url = url::Url::parse(&base).map_err(|_| Error::InvalidConfig("invalid live host"))?;
@@ -1907,6 +1924,76 @@ mod tests {
         assert!(!url.contains("cursor="));
     }
 
+    /// Regression (R-589dd4): `subscribe_url` is the dial boundary and must
+    /// canonicalize the host, not merely accept it. A URL-shaped host must not
+    /// leak a scheme/path into the dialed authority, and a userinfo host — which
+    /// could redirect the dial to a different origin than the leading label
+    /// suggests — must be rejected outright.
+    #[test]
+    fn subscribe_url_canonicalizes_the_dialed_authority() {
+        // A redundant scheme and path are stripped: the dialed authority is the
+        // bare host, not `wss://wss://.../xrpc/foo/...`. A non-default port is used
+        // so the assertion is meaningful (the `url` crate elides the default 443).
+        let url = subscribe_url(
+            "wss://jetstream.test:8443/xrpc/foo",
+            true,
+            &Filter::new(),
+            None,
+            None,
+        )
+        .expect("bare authority after normalization");
+        let parsed = url::Url::parse(&url).expect("valid url");
+        assert_eq!(parsed.host_str(), Some("jetstream.test"));
+        assert_eq!(parsed.port(), Some(8443));
+        assert_eq!(
+            parsed.path(),
+            "/xrpc/network.bsky.jetstream.subscribeEvents"
+        );
+
+        // Userinfo and whitespace are rejected rather than dialed.
+        assert!(matches!(
+            subscribe_url(
+                "trusted.example@attacker.example",
+                true,
+                &Filter::new(),
+                None,
+                None
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            subscribe_url(
+                "jetstream.test evil.example",
+                true,
+                &Filter::new(),
+                None,
+                None
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+
+    /// Regression (R-589dd4): the dictionary fetch boundary canonicalizes its
+    /// host the same way, since `HttpDictionarySource::new` is infallible and
+    /// stores the host verbatim.
+    #[test]
+    fn dictionary_url_canonicalizes_the_fetched_authority() {
+        let url = dictionary_url("https://archive.example/path", true, Some(7))
+            .expect("bare authority after normalization");
+        let parsed = url::Url::parse(&url).expect("valid url");
+        assert_eq!(parsed.host_str(), Some("archive.example"));
+        assert_eq!(
+            parsed.path(),
+            "/xrpc/network.bsky.jetstream.getZstdDictionary"
+        );
+        assert!(parsed.query_pairs().any(|(k, v)| k == "id" && v == "7"));
+
+        assert!(matches!(
+            dictionary_url("trusted.example@attacker.example", true, None),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+
     #[test]
     fn backoff_doubles_and_caps() {
         let backoff = LiveBackoff::default();
@@ -1943,9 +2030,8 @@ mod tests {
         // Whitespace inside the authority is not a valid host.
         let config = LiveConfig::new("jetstream.test evil.example", true);
         assert!(config.validate().is_err());
-        // A redundant `wss://` scheme and path are stripped, so a bare authority
-        // (optionally with a port) still validates.
-        let config = LiveConfig::new("wss://jetstream.test:443/xrpc/foo", true);
+        // A bare authority (optionally with a port) validates.
+        let config = LiveConfig::new("jetstream.test:443", true);
         assert!(config.validate().is_ok());
     }
 
