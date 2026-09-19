@@ -140,25 +140,46 @@ mod http_tests {
     /// key to the redirect target. Regression test guarding the removal of the
     /// `with_client` escape hatch, which could have installed a
     /// redirect-following client behind the same authenticated request path.
+    ///
+    /// The proof is a connection count owned by the test, not an assumption
+    /// about external host state: the server answers every connection with a
+    /// self-referential 302 and counts each one. A client with redirects
+    /// disabled connects exactly once and gets the 302 back; a client that
+    /// followed the redirect would connect again (looping until reqwest's cap,
+    /// then erroring), which this test would observe as either a non-302
+    /// result or a hit count above one.
     #[tokio::test]
     async fn new_transport_does_not_follow_redirects() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
 
+        let server_hits = Arc::clone(&hits);
         let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            // Drain the request head; we only need the client's write to complete.
-            let mut buf = [0u8; 1024];
-            let _ = stream.read(&mut buf).await.unwrap();
-            // Redirect to a port that is not listening: were the transport to
-            // follow it, the follow-up connect would fail and `send` would error
-            // instead of returning the 302 below.
-            let response = "HTTP/1.1 302 Found\r\n\
-                Location: http://127.0.0.1:1/elsewhere\r\n\
-                Content-Length: 0\r\n\
-                Connection: close\r\n\r\n";
-            stream.write_all(response.as_bytes()).await.unwrap();
-            stream.flush().await.unwrap();
+            loop {
+                let mut stream = match listener.accept().await {
+                    Ok((stream, _)) => stream,
+                    Err(_) => return,
+                };
+                server_hits.fetch_add(1, Ordering::SeqCst);
+                // Drain the request head; we only need the client's write to
+                // complete before answering.
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf).await;
+                // Point the redirect back at this same server: a following
+                // client would connect again and bump the hit count.
+                let response = format!(
+                    "HTTP/1.1 302 Found\r\n\
+                     Location: http://{addr}/loop\r\n\
+                     Content-Length: 0\r\n\
+                     Connection: close\r\n\r\n"
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+            }
         });
 
         let transport = NativeHttpTransport::new().unwrap();
@@ -168,9 +189,13 @@ mod http_tests {
             .await
             .unwrap_or_else(|e| panic!("send failed: {e:?}"));
 
-        // The redirect is surfaced as an ordinary response, not followed.
+        // The redirect is surfaced verbatim, not followed...
         assert_eq!(response.status, 302);
-        server.await.unwrap();
+        // ...and the client connected exactly once: no redirect hop occurred.
+        // The single accept strictly happens-before the response the client
+        // read, so this load is not racy.
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 }
 
