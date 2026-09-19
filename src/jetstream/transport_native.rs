@@ -1,4 +1,5 @@
-//! The native archive HTTP transport, backed by [`reqwest`].
+//! The native archive HTTP transport, backed by [`reqwest`], and the native live
+//! WebSocket transport, backed by [`tokio_tungstenite`].
 //!
 //! This adapter is the built-in [`HttpTransport`] for native Tokio targets. It
 //! is deliberately thin: it maps the portable [`HttpRequest`] onto a `reqwest`
@@ -119,5 +120,250 @@ fn map_reqwest_error(err: reqwest::Error) -> TransportError {
         TransportError::body("response body read failed")
     } else {
         TransportError::other("archive request failed")
+    }
+}
+
+// === Native live WebSocket transport ====================================
+
+use futures::SinkExt;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Error as TungError;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
+
+use super::live::{DialError, WsConnection, WsError, WsMessage, WsTransport};
+
+/// The native live WebSocket transport backed by `tokio-tungstenite`.
+///
+/// It dials the `subscribeEvents` endpoint with the negotiated subprotocol,
+/// caps both the message and frame size at the tail's read limit (so a hostile
+/// or misconfigured server cannot force an unbounded buffer), and — like the
+/// HTTP adapter — carries no authorization header, since the live endpoint is
+/// unauthenticated.
+pub struct NativeWsTransport {
+    read_limit: usize,
+}
+
+impl NativeWsTransport {
+    /// Build a transport capping incoming messages and frames at `read_limit`.
+    pub fn new(read_limit: usize) -> Self {
+        NativeWsTransport { read_limit }
+    }
+}
+
+impl WsTransport for NativeWsTransport {
+    type Conn = NativeWsConnection;
+
+    async fn dial(&self, url: String, subprotocol: &'static str) -> Result<Self::Conn, DialError> {
+        let mut request = url
+            .into_client_request()
+            .map_err(|_| DialError::Transport("invalid websocket request".to_owned()))?;
+        request.headers_mut().insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static(subprotocol),
+        );
+
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(self.read_limit))
+            .max_frame_size(Some(self.read_limit));
+
+        // `tokio-tungstenite` performs RFC 6455 step-6 subprotocol verification
+        // during the handshake: because we requested `subprotocol`, a server that
+        // echoes a different one — or none at all — fails the connect with a
+        // subprotocol protocol error, which `map_ws_dial_error` surfaces as the
+        // fatal `DialError::Subprotocol`. So a successful connect already implies
+        // the negotiated subprotocol is the one we asked for; no further check is
+        // needed here.
+        let (stream, _response) = connect_async_with_config(request, Some(config), true)
+            .await
+            .map_err(map_ws_dial_error)?;
+        Ok(NativeWsConnection { stream })
+    }
+}
+
+/// An established native live WebSocket connection.
+pub struct NativeWsConnection {
+    stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+}
+
+impl WsConnection for NativeWsConnection {
+    async fn read(&mut self) -> Result<Option<WsMessage>, WsError> {
+        loop {
+            match self.stream.next().await {
+                // Stream ended without a close frame: treat as a clean close.
+                None => return Ok(None),
+                Some(Ok(message)) => match message {
+                    Message::Text(text) => {
+                        return Ok(Some(WsMessage::Text(text.as_bytes().to_vec())));
+                    }
+                    Message::Binary(bytes) => return Ok(Some(WsMessage::Binary(bytes.to_vec()))),
+                    // Answer server pings transparently, then keep reading.
+                    Message::Ping(payload) => {
+                        if self.stream.send(Message::Pong(payload)).await.is_err() {
+                            return Err(WsError::new("failed to answer ping"));
+                        }
+                    }
+                    Message::Pong(_) => {}
+                    Message::Close(_) => return Ok(None),
+                    // Raw frames are never surfaced by the reader; ignore.
+                    Message::Frame(_) => {}
+                },
+                Some(Err(err)) => return Err(map_ws_read_error(err)),
+            }
+        }
+    }
+
+    async fn close(&mut self) {
+        // Best-effort: ignore errors on a connection we are discarding anyway.
+        let _ = self.stream.close(None).await;
+    }
+}
+
+/// Map a `tungstenite` dial error onto a portable [`DialError`]. A pre-upgrade
+/// HTTP rejection is surfaced with its status and (bounded) body so the tail can
+/// classify the XRPC error; a subprotocol negotiation failure is fatal; every
+/// other failure is a redacted, recoverable transport error.
+fn map_ws_dial_error(err: TungError) -> DialError {
+    match err {
+        TungError::Http(response) => {
+            let status = response.status().as_u16();
+            let body = response.into_body().unwrap_or_default();
+            DialError::Http { status, body }
+        }
+        // A server that echoes the wrong subprotocol — or none when one was
+        // requested — breaks the framing contract; fatal, not retryable. The
+        // variant carries no server-supplied text, so nothing can leak.
+        TungError::Protocol(ProtocolError::SecWebSocketSubProtocolError(_)) => {
+            DialError::Subprotocol("server negotiated an unexpected subprotocol".to_owned())
+        }
+        // Fixed per-kind text, never the error's own Display (which can embed the
+        // dialed URL): nothing host-specific leaks into the message.
+        TungError::Io(_) => DialError::Transport("websocket i/o error".to_owned()),
+        TungError::Tls(_) => DialError::Transport("websocket tls error".to_owned()),
+        TungError::Protocol(_) => DialError::Transport("websocket protocol error".to_owned()),
+        TungError::Url(_) => DialError::Transport("invalid websocket url".to_owned()),
+        _ => DialError::Transport("websocket connection failed".to_owned()),
+    }
+}
+
+/// Map a mid-stream `tungstenite` read error onto a redacted [`WsError`]. The
+/// tail treats any read failure as a recoverable disconnect and reconnects.
+fn map_ws_read_error(err: TungError) -> WsError {
+    match err {
+        TungError::Io(_) => WsError::new("websocket i/o error"),
+        TungError::Protocol(_) => WsError::new("websocket protocol error"),
+        TungError::Capacity(_) => WsError::new("websocket message exceeded read limit"),
+        _ => WsError::new("websocket read failed"),
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::result_large_err
+)]
+mod ws_tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_hdr_async;
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+    /// A loopback server accepts one connection, echoes the requested
+    /// subprotocol, sends a text then a binary frame, pings, waits for the
+    /// client's pong, and closes. Exercises the whole native adapter path —
+    /// dial, subprotocol negotiation, text/binary decode, transparent ping
+    /// answering, and clean-close mapping — against a real WebSocket peer.
+    #[tokio::test]
+    async fn native_ws_roundtrip() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            // Echo the client's requested subprotocol verbatim, mirroring a
+            // conforming Jetstream server.
+            let echo = |req: &Request, mut resp: Response| {
+                if let Some(proto) = req.headers().get(SEC_WEBSOCKET_PROTOCOL) {
+                    resp.headers_mut()
+                        .insert(SEC_WEBSOCKET_PROTOCOL, proto.clone());
+                }
+                Ok(resp)
+            };
+            let mut ws = accept_hdr_async(stream, echo).await.unwrap();
+            ws.send(Message::Text("hello".into())).await.unwrap();
+            ws.send(Message::Binary(vec![1, 2, 3].into()))
+                .await
+                .unwrap();
+            ws.send(Message::Ping(vec![9, 9].into())).await.unwrap();
+            // The client answers the ping only when it next reads; wait for it.
+            let mut got_pong = false;
+            while let Some(msg) = ws.next().await {
+                if let Ok(Message::Pong(payload)) = msg {
+                    assert_eq!(payload.to_vec(), vec![9, 9]);
+                    got_pong = true;
+                    break;
+                }
+            }
+            assert!(got_pong, "client never answered the ping");
+            ws.close(None).await.unwrap();
+        });
+
+        let transport = NativeWsTransport::new(1 << 20);
+        let url = format!("ws://{addr}/xrpc/{}", super::super::live::SUBSCRIBE_METHOD);
+        let mut conn = transport
+            .dial(url, super::super::live::XRPC_SUBPROTOCOL)
+            .await
+            .unwrap_or_else(|e| panic!("dial failed: {e:?}"));
+
+        match conn.read().await.unwrap() {
+            Some(WsMessage::Text(bytes)) => assert_eq!(bytes, b"hello"),
+            other => panic!("expected text frame, got {other:?}"),
+        }
+        match conn.read().await.unwrap() {
+            Some(WsMessage::Binary(bytes)) => assert_eq!(bytes, vec![1, 2, 3]),
+            other => panic!("expected binary frame, got {other:?}"),
+        }
+        // The ping is answered transparently; the next surfaced read is the
+        // clean close, reported as `None`.
+        assert!(conn.read().await.unwrap().is_none());
+        conn.close().await;
+        server.await.unwrap();
+    }
+
+    /// A server that negotiates a *different* subprotocol than the one requested
+    /// must be rejected as a fatal [`DialError::Subprotocol`] — the framing
+    /// contract cannot be assumed.
+    #[tokio::test]
+    async fn native_ws_wrong_subprotocol_is_rejected() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let wrong = |_req: &Request, mut resp: Response| {
+                resp.headers_mut().insert(
+                    SEC_WEBSOCKET_PROTOCOL,
+                    HeaderValue::from_static("something.else"),
+                );
+                Ok(resp)
+            };
+            // The handshake itself may fail once the client rejects; ignore.
+            let _ = accept_hdr_async(stream, wrong).await;
+        });
+
+        let transport = NativeWsTransport::new(1 << 20);
+        let url = format!("ws://{addr}/xrpc/{}", super::super::live::SUBSCRIBE_METHOD);
+        let result = transport
+            .dial(url, super::super::live::XRPC_SUBPROTOCOL)
+            .await;
+        assert!(matches!(result, Err(DialError::Subprotocol(_))));
+        let _ = server.await;
     }
 }

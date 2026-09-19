@@ -40,7 +40,28 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
     }
+
+    /// Resolve once cancellation has been requested.
+    ///
+    /// The live tail blocks on the next WebSocket frame, which may never arrive
+    /// on a silent connection; racing that read against this future lets a
+    /// cancelled stream shut down promptly instead of waiting out a stalled
+    /// socket. It polls the flag rather than depending on a runtime-specific
+    /// notification primitive, so it behaves identically on native and
+    /// `wasm32-unknown-unknown`. Under a paused test clock the poll sleeps are
+    /// auto-advanced, so a cancellation test does not wait real time.
+    pub(crate) async fn cancelled(&self) {
+        while !self.is_cancelled() {
+            crate::platform::sleep(core::time::Duration::from_millis(CANCEL_POLL_MILLIS)).await;
+        }
+    }
 }
+
+/// How often [`CancelToken::cancelled`] re-checks the flag. Cancellation is a
+/// rare, latency-tolerant event, so a coarse interval keeps the idle cost
+/// negligible while still winding a stalled read down within a fraction of a
+/// second.
+const CANCEL_POLL_MILLIS: u64 = 100;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

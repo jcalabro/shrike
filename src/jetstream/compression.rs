@@ -62,6 +62,44 @@ fn decompress_wasm(frame: &[u8], max_out: usize, dict: Option<&[u8]>) -> Result<
     drain(decoder, max_out)
 }
 
+/// The little-endian magic that opens a zstd *structured* dictionary
+/// (`ZSTD_MAGIC_DICTIONARY`, RFC 8878 §5). A raw-content dictionary has no such
+/// header; the live protocol only ever ships structured dictionaries, so we
+/// require it and read the framed dictionary ID that follows.
+const DICTIONARY_MAGIC: u32 = 0xEC30_A437;
+
+/// Parse the dictionary ID from a structured zstd dictionary.
+///
+/// A structured dictionary begins with a 4-byte little-endian magic
+/// (`0xEC30A437`) followed by a 4-byte little-endian dictionary ID (RFC 8878
+/// §5). The live tail compares this ID against the `zstdDictionary` value the
+/// server advertised in each frame envelope: a mismatch means the server
+/// rotated its dictionary, and the tail must refetch before it can decode
+/// further frames. Mirrors the Go client's `zstddict.ParseID`.
+///
+/// Returns [`Error::InvalidDictionary`] if the input is shorter than the 8-byte
+/// header, does not open with the structured-dictionary magic, or carries the
+/// reserved ID `0` (which a real dictionary never uses).
+pub fn parse_dictionary_id(dict: &[u8]) -> Result<u32> {
+    let header: [u8; 8] =
+        dict.get(..8)
+            .and_then(|s| s.try_into().ok())
+            .ok_or(Error::InvalidDictionary(
+                "dictionary shorter than 8-byte header",
+            ))?;
+    let magic = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    if magic != DICTIONARY_MAGIC {
+        return Err(Error::InvalidDictionary(
+            "not a structured zstd dictionary (bad magic)",
+        ));
+    }
+    let id = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    if id == 0 {
+        return Err(Error::InvalidDictionary("dictionary ID is zero"));
+    }
+    Ok(id)
+}
+
 /// Read `reader` to end into a fresh `Vec`, refusing to grow past `max_out`.
 fn drain(mut reader: impl Read, max_out: usize) -> Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -84,4 +122,55 @@ fn drain(mut reader: impl Read, max_out: usize) -> Result<Vec<u8>> {
         out.extend_from_slice(&buf[..n]);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal structured-dictionary header with the given ID.
+    fn dict_header(id: u32) -> Vec<u8> {
+        let mut v = DICTIONARY_MAGIC.to_le_bytes().to_vec();
+        v.extend_from_slice(&id.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn parse_dictionary_id_reads_framed_id() {
+        assert_eq!(parse_dictionary_id(&dict_header(1)).unwrap(), 1);
+        assert_eq!(
+            parse_dictionary_id(&dict_header(0xDEAD_BEEF)).unwrap(),
+            0xDEAD_BEEF
+        );
+        // Trailing dictionary body after the header is ignored.
+        let mut with_body = dict_header(42);
+        with_body.extend_from_slice(&[0u8; 64]);
+        assert_eq!(parse_dictionary_id(&with_body).unwrap(), 42);
+    }
+
+    #[test]
+    fn parse_dictionary_id_rejects_bad_input() {
+        // Too short to hold the 8-byte header.
+        assert!(matches!(
+            parse_dictionary_id(&[]),
+            Err(Error::InvalidDictionary(_))
+        ));
+        assert!(matches!(
+            parse_dictionary_id(&dict_header(1)[..7]),
+            Err(Error::InvalidDictionary(_))
+        ));
+        // Right length, wrong magic.
+        let mut wrong_magic = dict_header(1);
+        wrong_magic[0] ^= 0xFF;
+        assert!(matches!(
+            parse_dictionary_id(&wrong_magic),
+            Err(Error::InvalidDictionary(_))
+        ));
+        // Reserved ID zero.
+        assert!(matches!(
+            parse_dictionary_id(&dict_header(0)),
+            Err(Error::InvalidDictionary(_))
+        ));
+    }
 }

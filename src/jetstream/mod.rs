@@ -50,6 +50,7 @@ pub mod event;
 pub mod filter;
 pub mod json_cbor;
 pub mod key;
+pub mod live;
 pub mod planner;
 pub mod record;
 pub mod retry;
@@ -58,6 +59,8 @@ pub mod time;
 pub mod transport;
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub mod transport_native;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub mod transport_wasm;
 
 pub use archive::{ArchiveClient, ArchiveConfig, Limits};
 pub use block::{RawEvent, SegmentKind, decode_block, decode_block_frame};
@@ -76,6 +79,13 @@ pub use event::{
 pub use filter::{Filter, Kind};
 pub use json_cbor::record_json_to_dag_cbor;
 pub use key::ApiKey;
+pub use live::{
+    DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_MAX, DEFAULT_FLUSH_DELAY, DEFAULT_LIVE_READ_LIMIT,
+    DEFAULT_MAX_BATCH, DICTIONARY_METHOD, DeliverySink, DialError, DictionarySource,
+    HttpDictionarySource, LiveBackoff, LiveConfig, LiveConsumer, LiveCursor, MAX_DICTIONARY_BYTES,
+    SUBSCRIBE_METHOD, WsConnection, WsError, WsMessage, WsTransport, XRPC_SUBPROTOCOL,
+    subscribe_url,
+};
 pub use planner::{BlockSpan, PlanSegment, SegmentMode, SnapshotPlan, plan_snapshot};
 pub use record::Record;
 pub use retry::{Attempt, RetryConfig};
@@ -89,7 +99,11 @@ pub use transport::{
     TransportErrorKind,
 };
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-pub use transport_native::{NativeBody, NativeHttpTransport};
+pub use transport_native::{
+    NativeBody, NativeHttpTransport, NativeWsConnection, NativeWsTransport,
+};
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub use transport_wasm::{WasmWsConnection, WasmWsTransport};
 
 // The upstream `com.atproto.sync.subscribeRepos` events wrapped by the DID-level
 // payload variants, re-exported so callers need not reach into `crate::api`.

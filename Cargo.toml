@@ -104,8 +104,11 @@ backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand",
 # `streaming` Jetstream client, which is left untouched. Dependencies are added
 # per milestone as they come into use; M0 covers the portable segment codec
 # (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash), M1 adds the
-# protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros).
-jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "api"]
+# protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros), M4
+# adds the live WebSocket transport (`tokio-tungstenite` native, `gloo-net`
+# browser, `url` for wire-URL construction) — all already declared optional deps
+# shared with `streaming`, so no new crate enters the tree.
+jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "dep:tokio-tungstenite", "dep:gloo-net", "dep:url", "api"]
 
 # Everything
 full = [

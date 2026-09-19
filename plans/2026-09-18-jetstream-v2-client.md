@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0, M1, M2, M3 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6). M4 in progress.
+Status: in progress; M0, M1, M2, M3, M4 complete (M3 native complete + roasted/hardened; browser range/stream + CORS deferred to M6; M4 browser live headless testing deferred to M6, adapter compiles via wasm-check). M5 next.
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -559,15 +559,17 @@ Acceptance: the scripted native server covers whole, sparse, ranged, non-ranged,
 
 ### M4 — Live v2 transport
 
-- [ ] Dial with the exact path and `xrpc.v1.json` subprotocol.
-- [ ] Parse proposal-0015 message and error frames.
-- [ ] Parse pre-upgrade XRPC errors.
-- [ ] Implement cursor deduplication, reconnect/backoff, partial batch flush, ping/pong/close, and cancellation.
-- [ ] Fetch/validate zstd dictionaries unauthenticated and decode bounded binary frames.
-- [ ] Implement rejected/stale dictionary recovery and uncompressed fallback.
-- [ ] Implement native and browser/JS-hosted WebSocket adapters with the same frame/error fixtures.
+- [x] Dial with the exact path and `xrpc.v1.json` subprotocol.
+- [x] Parse proposal-0015 message and error frames.
+- [x] Parse pre-upgrade XRPC errors.
+- [x] Implement cursor deduplication, reconnect/backoff, partial batch flush, ping/pong/close, and cancellation.
+- [x] Fetch/validate zstd dictionaries unauthenticated and decode bounded binary frames.
+- [x] Implement rejected/stale dictionary recovery and uncompressed fallback.
+- [x] Implement native and browser/JS-hosted WebSocket adapters with the same frame/error fixtures.
 
 Acceptance: local native and browser/JS fixtures cover text and compressed frames, every event/info/error kind, duplicates, gaps, future/old cursors, slow consumers, malformed frames, disconnects, and dictionary rotation.
+
+M4 notes: the portable `LiveConsumer` in `live.rs` drives a `WsTransport`/`WsConnection`/`DictionarySource`/`DeliverySink` set of RPITIT traits (no `Send` bound, so the browser's `!Send` socket satisfies them). Tail behavior is covered by the in-module tests over mock transports (dedup, gaps, slow consumer, malformed/corrupt frames, dirty disconnect, dictionary rotation, pre-upgrade HTTP error, unsupported subprotocol, uncompressed-fallback). The native adapter (`transport_native.rs`) adds a hermetic loopback tokio-tungstenite server test exercising dial + subprotocol negotiation + text/binary + transparent ping/pong + clean close, plus a wrong-subprotocol → fatal `DialError::Subprotocol` case. tokio-tungstenite enforces RFC-6455 step-6 subprotocol verification itself, so the adapter maps `SecWebSocketSubProtocolError` to the fatal variant rather than checking response headers by hand. The browser adapter (`transport_wasm.rs`, `gloo-net`) compiles under `just wasm-check`; headless browser live testing is deferred to M6 (with the deferred browser range/stream + CORS work), since the browser owns the handshake and exposes neither the pre-upgrade HTTP status (so a rejected upgrade degrades to a retryable `DialError::Transport`) nor a synchronous negotiated-subprotocol value (it relies on the browser's own RFC-6455 enforcement).
 
 ### M5 — Replay/live engine
 
