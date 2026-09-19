@@ -2,7 +2,7 @@
 
 Date: 2026-09-18
 
-Status: in progress; M0, M1, M2 complete (M2 `/roast` pass pending — needs gateway)
+Status: in progress; M0, M1, M2 complete; M3 native complete (browser range/stream + CORS deferred to M6). M2/M3 `/roast` passes pending gateway.
 
 Shrike baseline: `56edf291116fe789e4af210b7872e19debe6ca73`
 
@@ -20,7 +20,7 @@ Jetstream reference baseline: `58c4d7f7a9130e53b40348ad3d1f7aafed0e4843`
 - [x] Approve the remaining libraries in [Dependency recommendations](#dependency-recommendations). (zstd 0.14 native, ruzstd 0.9 wasm, twox-hash 2.1 approved for M0; jiff/bytes/secrecy approved, added in the milestones that use them.)
 - [x] Add generated `network.bsky.jetstream` DTOs without hand-editing generated files.
 - [x] Implement the segment and block decoders with limits, golden fixtures, fuzzing, and checksum verification.
-- [ ] Implement the authenticated planner and bounded archive downloads.
+- [x] Implement the authenticated planner and bounded archive downloads. (native complete; browser range/stream path + CORS deferred to M6.)
 - [ ] Implement proposal-0015 live streaming, optional dictionary zstd, and reconnect behavior.
 - [ ] Implement the ordered archive-to-live engine, batching, cursor semantics, and re-backfill.
 - [ ] Add the `shrike jetstream` example/diagnostic command.
@@ -546,16 +546,16 @@ Acceptance: malformed input cannot panic or exceed configured allocation limits.
 
 ### M3 — Planner and archive transport
 
-- [ ] Build a scripted local protocol server with deterministic gates, a request/fault ledger, CORS controls, and anti-vacuity checks.
-- [ ] Implement scoped-auth `planSnapshot` calls and strict response validation.
-- [ ] Implement pinned pagination and empty-page progress.
-- [ ] Implement `getBlock` pooling with ordered reassembly.
-- [ ] Implement streamed whole downloads, range probing, striping, ETag/If-Range, resume, integrity validation, and generation restart.
-- [ ] Add bounded Retry-After-aware retries for network, 429, and eligible 5xx failures.
-- [ ] Add cancellation and clean worker shutdown.
-- [ ] Implement the browser range/stream capability path and clear CORS/resource errors.
+- [x] Build a scripted local protocol server with deterministic gates, a request/fault ledger, and anti-vacuity checks. (`tests/jetstream_archive.rs`: a `Scripted` `HttpTransport` matching each request to a per-key FIFO of programmed responses, so retries, restarts, and concurrent stripe/block fetches are reproducible regardless of scheduling; a request ledger records URL/auth/range/if-range for assertions; each queue must be provisioned or the transport panics, so no case can silently no-op. CORS controls belong to the browser `fetch` transport and land with the WASM demo — `reqwest` ignores CORS.)
+- [x] Implement scoped-auth `planSnapshot` calls and strict response validation. (`planner.rs`: bearer-scoped `control_request`; `validate_segment`/`validate_block_spans`/`validate_segment_name`/`validate_checksum` reject bad checksums, path traversal, inverted/oversized spans; integration tests cover accept + each rejection.)
+- [x] Implement pinned pagination and empty-page progress. (`plan_snapshot` pins `sealedTipSeq` on the first page, advances `plannedThroughSeq`, and rejects tip drift, `plannedThroughSeq` past the tip, and non-advancing pages; `planner_pins_tip_and_accumulates_pages` and the rejection tests confirm.)
+- [x] Implement `getBlock` pooling with ordered reassembly. (`download_blocks`: `stream::iter(...).buffered(concurrency)` preserves block order; `blocks_mode_reassembles_in_order`/`blocks_mode_applies_window`.)
+- [x] Implement streamed whole downloads, range probing, striping, ETag/If-Range, resume, integrity validation, and generation restart. (`download_whole`/`try_download_whole`: `Range: bytes=0-0` probe, striped ranged reads pinned with `If-Range`, non-ranged/416 fallbacks, `SegmentReader` re-verification + plan-checksum cross-check, and a bounded generation-restart loop. A stripe that receives a non-206 success (an `If-Range` miss carrying the whole object) now restarts cleanly instead of failing the exact-length read — bugfix with regression test `generation_change_triggers_clean_restart`; budget bound covered by `generation_restart_budget_is_bounded`.)
+- [x] Add bounded Retry-After-aware retries for network, 429, and eligible 5xx failures. (`download_fetch` over `with_retry`; `rate_limited_download_honors_retry_after_then_succeeds`, `interrupted_body_is_retried_then_succeeds`, `stalled_download_exhausts_retries`, `permanent_4xx_is_fatal_without_retry`, all deterministic under `tokio` `start_paused`.)
+- [x] Add cancellation and clean worker shutdown. (`CancelToken` checked before every send and body read; `cancelled_download_never_touches_the_network` and `planner_cancellation_is_immediate`.)
+- [ ] Implement the browser range/stream capability path and clear CORS/resource errors. (Deferred to the WASM demo milestone (M6): the native `reqwest` transport is complete here; the browser `fetch`/streams transport and its CORS/resource-error surface land with the demo.)
 
-Acceptance: local native and browser-WASM servers cover whole, sparse, ranged, non-ranged, interrupted, rate-limited, generation-changing, corrupt, truncated, oversized, CORS, and stalled cases. Results are deterministic and leak no secrets.
+Acceptance: the scripted native server covers whole, sparse, ranged, non-ranged, interrupted, rate-limited, generation-changing, corrupt, truncated, oversized, and stalled cases; results are deterministic (paused-clock retries) and leak no secrets (the bearer key rides only the Authorization header — asserted absent from URLs, and redacted by construction from transport errors and `ApiKey`'s `Debug`). The browser-WASM server and CORS case are deferred with the browser transport to M6. **Met (native); browser deferred to M6.**
 
 ### M4 — Live v2 transport
 

@@ -105,7 +105,7 @@ backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand",
 # per milestone as they come into use; M0 covers the portable segment codec
 # (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash), M1 adds the
 # protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros).
-jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "api"]
+jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "api"]
 
 # Everything
 full = [

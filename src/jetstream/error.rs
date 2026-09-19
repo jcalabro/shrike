@@ -106,6 +106,49 @@ pub enum Error {
         /// The optional human-readable message, bounded in length.
         message: Option<String>,
     },
+
+    /// A snapshot plan the server returned is malformed or cannot guarantee
+    /// forward progress: a bad plan entry (name, index, checksum, sequence
+    /// range, mode, or block ranges), a non-advancing page, a page whose
+    /// `plannedThroughSeq` exceeds the pinned sealed tip, or a later page whose
+    /// `sealedTipSeq` drifted from the pin. Fatal — there is no safe way to
+    /// continue downloading against an untrustworthy plan.
+    #[error("invalid snapshot plan: {0}")]
+    PlanInvalid(&'static str),
+
+    /// A transport-level failure reaching an archive endpoint: a connect,
+    /// timeout, or body error, or an HTTP status the client cannot resolve into
+    /// a structured XRPC error. The message is redacted and never contains the
+    /// API key or an authorization header. `retryable` records whether a
+    /// bounded retry could plausibly succeed; the engine decides whether
+    /// exhausting the retry budget is ultimately fatal.
+    #[error("archive transport error: {message}")]
+    Transport {
+        /// A redacted, bounded description of the failure. Never the API key.
+        message: String,
+        /// Whether a bounded retry could plausibly succeed.
+        retryable: bool,
+    },
+
+    /// The target cannot satisfy a capability an archive download requires:
+    /// HTTP range requests, exposed generation headers (`ETag`,
+    /// `Content-Range`), or the CORS exposure a browser needs. Reported as a
+    /// capability error rather than misinterpreted as corrupt data. Fatal on
+    /// this target.
+    #[error("archive capability unavailable: {0}")]
+    Capability(&'static str),
+
+    /// A whole-segment or block download could not be completed within its
+    /// bounds: a `Content-Range`/length inconsistency, an unexpected status, a
+    /// truncated or oversized body, or exhausted generation-restart attempts
+    /// after the object was rewritten mid-download. The engine may replan.
+    #[error("archive download failed: {0}")]
+    DownloadFailed(&'static str),
+
+    /// The caller cancelled the operation before it completed. Not a data error:
+    /// the engine uses it to shut a worker down cleanly. Never retryable.
+    #[error("operation canceled")]
+    Canceled,
 }
 
 /// The maximum number of bytes retained from a server-supplied protocol
@@ -145,7 +188,29 @@ impl Error {
             Error::InvalidConfig(_)
                 | Error::InvalidFrame(_)
                 | Error::UnsupportedSegmentVersion { .. }
+                | Error::PlanInvalid(_)
+                | Error::Capability(_)
         )
+    }
+}
+
+impl From<super::transport::TransportError> for Error {
+    /// Lift a transport failure into the client error space. A missing-capability
+    /// transport failure becomes a fatal [`Error::Capability`]; every other
+    /// transport failure becomes an [`Error::Transport`] carrying the redacted
+    /// message and the transport's retryable classification. The message is
+    /// already bounded and free of the API key.
+    fn from(err: super::transport::TransportError) -> Self {
+        use super::transport::TransportErrorKind;
+        match err.kind() {
+            TransportErrorKind::Capability => {
+                Error::Capability("transport lacks a required capability")
+            }
+            _ => Error::Transport {
+                retryable: err.is_retryable(),
+                message: err.message().to_owned(),
+            },
+        }
     }
 }
 

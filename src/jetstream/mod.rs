@@ -38,24 +38,36 @@
 //!
 //! [Jetstream]: https://github.com/bluesky-social/jetstream
 
+pub mod archive;
 pub mod block;
+pub mod cancel;
 pub mod compression;
 pub mod config;
 pub mod decode;
+pub mod download;
 pub mod error;
 pub mod event;
 pub mod filter;
 pub mod json_cbor;
+pub mod key;
+pub mod planner;
 pub mod record;
+pub mod retry;
 pub mod segment;
 pub mod time;
+pub mod transport;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub mod transport_native;
 
+pub use archive::{ArchiveClient, ArchiveConfig, Limits};
 pub use block::{RawEvent, SegmentKind, decode_block, decode_block_frame};
+pub use cancel::CancelToken;
 pub use compression::decompress_bounded;
 pub use config::{Cursor, TIMESTAMP_CURSOR_THRESHOLD, normalize_host};
 pub use decode::{
     Decoded, decode_block_frame_filtered, decode_segment_filtered, raw_event_to_event,
 };
+pub use download::{DownloadedSegment, download_segment};
 pub use error::{Error, MAX_PROTOCOL_MESSAGE_LEN, Result};
 pub use event::{
     Batch, Commit, Delivery, Event, EventPayload, Info, LiveFrame, Operation, Stats,
@@ -63,12 +75,21 @@ pub use event::{
 };
 pub use filter::{Filter, Kind};
 pub use json_cbor::record_json_to_dag_cbor;
+pub use key::ApiKey;
+pub use planner::{BlockSpan, PlanSegment, SegmentMode, SnapshotPlan, plan_snapshot};
 pub use record::Record;
+pub use retry::{Attempt, RetryConfig};
 pub use segment::{
     BlockIndexEntry, SealedHeader, SegmentReader, decode_block_index, read_sealed_header,
     validate_block_offsets,
 };
 pub use time::{micros_to_rfc3339, rfc3339_to_micros};
+pub use transport::{
+    HttpBody, HttpRequest, HttpResponse, HttpTransport, Method, ResponseHeaders, TransportError,
+    TransportErrorKind,
+};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub use transport_native::{NativeBody, NativeHttpTransport};
 
 // The upstream `com.atproto.sync.subscribeRepos` events wrapped by the DID-level
 // payload variants, re-exported so callers need not reach into `crate::api`.

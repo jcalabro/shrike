@@ -46,7 +46,8 @@ pub(crate) fn unix_time_micros() -> u64 {
     feature = "streaming",
     feature = "oauth",
     feature = "sync",
-    feature = "backfill"
+    feature = "backfill",
+    feature = "jetstream"
 ))]
 pub(crate) async fn sleep(duration: std::time::Duration) {
     tokio::time::sleep(duration).await;
@@ -59,7 +60,8 @@ pub(crate) async fn sleep(duration: std::time::Duration) {
     feature = "streaming",
     feature = "oauth",
     feature = "sync",
-    feature = "backfill"
+    feature = "backfill",
+    feature = "jetstream"
 ))]
 pub(crate) async fn sleep(duration: std::time::Duration) {
     let millis = u32::try_from(duration.as_millis()).unwrap_or(u32::MAX);
