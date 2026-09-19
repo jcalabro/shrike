@@ -100,6 +100,27 @@ bench:
 shrike *ARGS:
     cargo run -p shrike-cli --bin shrike-cli -- {{ARGS}}
 
+# Explicit production smoke test for the Jetstream v2 client. This is never run
+# by `just test` or `just check`; it hits a live server and must be invoked by
+# hand. It requires a reachable host and an API key, and replays a small,
+# bounded, filtered snapshot, printing only progress stats — no event payloads
+# or credentials are recorded.
+#
+# Usage:
+#   JETSTREAM_HOST=jetstream.us-east.bsky.network \
+#   JETSTREAM_API_KEY=... \
+#   just jetstream-smoke <after_seq> <before_seq>
+jetstream-smoke AFTER BEFORE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${JETSTREAM_HOST:?set JETSTREAM_HOST to a reachable Jetstream v2 host}"
+    : "${JETSTREAM_API_KEY:?set JETSTREAM_API_KEY to an archive access key}"
+    cargo run -p shrike-cli --bin shrike-cli -- jetstream \
+        --host "$JETSTREAM_HOST" \
+        --collection app.bsky.feed.post \
+        --after-seq "{{AFTER}}" --before-seq "{{BEFORE}}" \
+        --snapshot-only --stats
+
 # Publish to crates.io (must be logged in with `cargo login`)
 # Usage:
 #   just publish           # publish

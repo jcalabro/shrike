@@ -593,7 +593,7 @@ M5 notes: `engine.rs` adds an `Engine<A, W, D>` that joins the sealed-archive re
 
 ### M6 — CLI, WASM demo, documentation, and smoke test
 
-- [ ] Add `shrike jetstream` with JSON/stats modes and environment-only secret default.
+- [x] Add `shrike jetstream` with JSON/stats modes and environment-only secret default. (`tools/shrike/src/jetstream.rs` drives `Engine` in live / replay-cutover / snapshot modes; `--json` emits newline-delimited JSON, `--stats` prints periodic `StatsHandle` snapshots; the archive key is read only from `JETSTREAM_API_KEY`, never a flag; ctrl-c wires to `CancelToken` for a clean stop. Unit tests cover kind/collection parsing and the sad paths.)
 - [ ] Keep the legacy `connectJetstream` WASM export and demo. Add a separate v2 export, such as `connectJetstreamV2`, backed only by `shrike::jetstream`.
 - [ ] Add a v2 live demo for `jetstream.us-east.bsky.network` to `wasm/index.html` and `wasm/README.md`, with optional bounded archive replay.
 - [ ] Accept a replay key for the browser session without persisting it or adding it to the URL. Never embed a long-lived key in checked-in HTML, JavaScript, WASM, or examples.
@@ -601,7 +601,7 @@ M5 notes: `engine.rs` adds an `Engine<A, W, D>` that joins the sealed-archive re
 - [ ] Test the v2 binding and UI in a local headless browser: live frames, bounded replay, CORS/header errors, cancellation, listener cleanup, and compression fallback.
 - [ ] Add public rustdoc and a minimal README example.
 - [ ] Document cursor persistence with host identity, marker folding responsibility, snapshot semantics, resource knobs, and recoverable/fatal handling.
-- [ ] Add an ignored/explicit smoke target or documented command that requires both a host and `JETSTREAM_API_KEY`.
+- [x] Add an ignored/explicit smoke target or documented command that requires both a host and `JETSTREAM_API_KEY`. (`just jetstream-smoke <after> <before>` replays a small bounded, filtered snapshot and prints only progress stats; it requires `JETSTREAM_HOST` + `JETSTREAM_API_KEY`, is never run by `just test`/`just check`, and records no payloads or credentials.)
 - [ ] When production is reachable, run small filtered live and bounded snapshot tests from the CLI and browser. Record no payloads or credentials.
 
 Acceptance: compare the CLI with `cmd/client` against a local server. The browser demo runs v2 live and user-authorized bounded replay without changing the legacy binding or storing a key. Headless tests cover UI state and cleanup. `just test` and `just check` never run production smoke tests.
