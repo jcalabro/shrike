@@ -40,7 +40,7 @@
 //!
 //! The live WebSocket adapter, below, carries no authorization header (the live
 //! endpoint is unauthenticated) and rejects any message larger than the tail's
-//! read limit before it is processed: the oversized frame never reaches
+//! read limit before it is processed: the oversized message never reaches
 //! decompression or decode, and the connection is torn down. Note the bound's
 //! reach, though. Unlike the native adapter — which configures
 //! `tokio-tungstenite`'s `max_message_size` / `max_frame_size` to bound receipt
