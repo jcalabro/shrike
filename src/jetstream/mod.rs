@@ -17,7 +17,8 @@
 //!   receives each ordered [`Delivery`] (a [`Batch`] of [`Event`]s or an
 //!   [`Info`] advisory), and `recoverable` receives in-order recoverable
 //!   errors. Returning `false` from either stops the engine cleanly.
-//! - [`Filter`] selects events by [`Kind`], collection (NSID prefix), and DID.
+//! - [`Filter`] selects events by [`Kind`], collection (an exact NSID or a
+//!   terminal `.*` namespace wildcard), and DID.
 //! - [`EngineConfig`] wraps a [`LiveConfig`] and adds the archive window
 //!   (`after_seq`, `before_seq`) and `snapshot_only`.
 //! - The transports are per-target: [`NativeHttpTransport`]/[`NativeWsTransport`]
@@ -101,8 +102,10 @@
 //!   `config.after_seq` to it and provide `Some(archive)`: any non-zero
 //!   `after_seq` (like `before_seq`/`snapshot_only`) requires an archive source,
 //!   because the engine replays the `(after_seq, tip]` gap from sealed segments
-//!   and then cuts over to the live tail exactly once at
-//!   `max(tip, last_processed_seq)`. A pure-live tail (`None` archive) must have
+//!   and then cuts over to the live tail exactly once: with the highest sequence
+//!   already covered being `B = max(tip, last_processed_seq)`, the live tail
+//!   resumes at the next sequence `B + 1` (the first event it will accept). A
+//!   pure-live tail (`None` archive) must have
 //!   `after_seq == 0` and starts from the server's live position.
 //! - **Snapshot semantics.** `snapshot_only` replays the bounded archive window
 //!   and returns without ever dialing the live tail; `before_seq` is an
