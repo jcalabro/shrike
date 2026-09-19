@@ -479,7 +479,11 @@ where
             last_seq: initial_last_seq(&self.config.cursor),
             seen_any: false,
         };
-        let mut dict = self.initial_dict_state().await;
+        let mut dict = match self.initial_dict_state().await {
+            Some(dict) => dict,
+            // Cancelled while fetching the starting dictionary.
+            None => return Ok(()),
+        };
         let mut backoff_n: u32 = 0;
 
         loop {
@@ -503,7 +507,9 @@ where
                 DialAttempt::RecoverDict => {
                     // A pre-upgrade dictionary rejection: refetch the current
                     // dictionary (or degrade to uncompressed) and redial at once.
-                    recover_dict(&self.dict, &mut dict).await;
+                    if !self.recover_dict(&mut dict).await {
+                        return Ok(());
+                    }
                     backoff_n = 0;
                     continue;
                 }
@@ -531,12 +537,52 @@ where
         }
     }
 
-    /// Fetch and validate the starting dictionary state.
-    async fn initial_dict_state(&self) -> DictState {
+    /// Fetch and validate the starting dictionary state, racing cancellation so
+    /// a stalled fetch cannot wedge shutdown. Returns `None` if cancelled.
+    async fn initial_dict_state(&self) -> Option<DictState> {
         if !self.config.compression {
-            return DictState::Off;
+            return Some(DictState::Off);
         }
-        fetch_dict_state(&self.dict, None).await
+        self.fetch_dict_cancelable(None).await
+    }
+
+    /// Fetch dictionary state, racing cancellation. `None` means cancelled; a
+    /// fetch/parse failure still resolves to `Some(DictState::Off)` (degrade to
+    /// uncompressed), matching [`fetch_dict_state`]. This is the one place the
+    /// engine races a dictionary fetch, so it covers every [`DictionarySource`]
+    /// impl — the dial, read, and backoff paths already race cancellation.
+    async fn fetch_dict_cancelable(&self, id: Option<u32>) -> Option<DictState> {
+        if self.cancel.is_cancelled() {
+            return None;
+        }
+        let fetch = fetch_dict_state(&self.dict, id);
+        let cancelled = self.cancel.cancelled();
+        futures::pin_mut!(fetch, cancelled);
+        match select(fetch, cancelled).await {
+            Either::Left((state, _)) => Some(state),
+            Either::Right(_) => None,
+        }
+    }
+
+    /// Recover from a rejected dictionary, racing cancellation. Returns `false`
+    /// if cancelled (the caller stops). Otherwise refetches the current
+    /// dictionary and adopts it only if it differs from the one just rejected;
+    /// a same-ID refetch or a fetch/parse failure degrades to uncompressed for
+    /// the tail's lifetime.
+    async fn recover_dict(&self, dict: &mut DictState) -> bool {
+        let rejected = dict.id();
+        let next = match self.fetch_dict_cancelable(None).await {
+            Some(next) => next,
+            None => return false,
+        };
+        *dict = match next {
+            DictState::Active { id, bytes } if Some(id) != rejected => {
+                DictState::Active { id, bytes }
+            }
+            // Same ID back (or a fetch/parse failure): uncompressed for good.
+            _ => DictState::Off,
+        };
+        true
     }
 
     /// Attempt one dial, mapping a pre-upgrade rejection or dictionary rotation
@@ -642,10 +688,16 @@ where
                     }
                 }
                 ReadStep::Closed | ReadStep::Failed => {
-                    deliver_batch(&mut batch, sink).await;
+                    // Flush the pending batch; if the consumer has gone away the
+                    // tail must stop rather than reconnect (matches FlushTimer).
+                    let alive = deliver_batch(&mut batch, sink).await;
                     conn.close().await;
                     return SessionResult {
-                        outcome: SessionOutcome::Reconnect,
+                        outcome: if alive {
+                            SessionOutcome::Reconnect
+                        } else {
+                            SessionOutcome::Stop
+                        },
                         progressed,
                     };
                 }
@@ -707,7 +759,12 @@ where
                                     }
                                 }
                                 ProtoAction::DictRotation => {
-                                    recover_dict(&self.dict, dict).await;
+                                    if !self.recover_dict(dict).await {
+                                        return SessionResult {
+                                            outcome: SessionOutcome::Stop,
+                                            progressed,
+                                        };
+                                    }
                                     SessionResult {
                                         outcome: SessionOutcome::ReconnectNow,
                                         progressed,
@@ -826,19 +883,6 @@ async fn fetch_dict_state<D: DictionarySource>(source: &D, id: Option<u32>) -> D
     }
 }
 
-/// Recover from a rejected dictionary: refetch the current dictionary and adopt
-/// it only if it differs from the one just rejected; otherwise fall back to
-/// uncompressed for the tail's lifetime.
-async fn recover_dict<D: DictionarySource>(source: &D, dict: &mut DictState) {
-    let rejected = dict.id();
-    let next = fetch_dict_state(source, None).await;
-    *dict = match next {
-        DictState::Active { id, bytes } if Some(id) != rejected => DictState::Active { id, bytes },
-        // Same ID back (or a fetch/parse failure): uncompressed for good.
-        _ => DictState::Off,
-    };
-}
-
 /// How a protocol error name maps onto the tail's next action.
 enum ProtoAction {
     /// Terminal for the whole tail (e.g. `CursorTooOld` on a pure-live stream).
@@ -858,7 +902,14 @@ fn classify_protocol(err: &Error) -> ProtoAction {
         Error::InvalidFrame(_) => ProtoAction::Fatal,
         Error::Protocol { name, .. } => match name.as_str() {
             "UnknownZstdDictionary" => ProtoAction::DictRotation,
-            "CursorTooOld" => ProtoAction::Fatal,
+            // Permanent errors: retrying replays the same rejection forever.
+            // `CursorTooOld` is terminal for the credential-free tail (no
+            // archive loop to re-enter); a malformed request (`InvalidRequest`,
+            // e.g. a bad filter) never succeeds on redial.
+            "CursorTooOld" | "InvalidRequest" => ProtoAction::Fatal,
+            // Transient (e.g. `ConsumerTooSlow`) and unknown names: reconnect.
+            // An unknown name is treated as transient so a future error type is
+            // never wrongly made terminal.
             _ => ProtoAction::Reconnect,
         },
         _ => ProtoAction::Reconnect,
@@ -883,7 +934,16 @@ enum MsgDecode {
 /// Decode one WebSocket message into a frame or an action.
 fn decode_message(message: WsMessage, dict: &DictState, read_limit: usize) -> MsgDecode {
     match message {
-        WsMessage::Text(bytes) => classify_frame(parse_live_frame(&bytes)),
+        WsMessage::Text(bytes) => {
+            // The built-in transports cap accepted messages, but `WsTransport`
+            // is public and injectable: bound the text frame here too so a
+            // custom adapter cannot force an oversized parse. The binary path is
+            // bounded by `decompress_bounded` below.
+            if bytes.len() > read_limit {
+                return MsgDecode::StreamError;
+            }
+            classify_frame(parse_live_frame(&bytes))
+        }
         WsMessage::Binary(bytes) => match dict.bytes() {
             // Uncompressed connection: ignore stray binary frames (Go parity).
             None => MsgDecode::Skip,
@@ -1123,6 +1183,43 @@ mod tests {
         }
     }
 
+    /// A source that cancels the tail on its first fetch and then never
+    /// completes, modeling a stalled fetch. If the engine did not race the
+    /// dictionary fetch against cancellation, `run` would hang here.
+    struct StallingDict {
+        cancel: CancelToken,
+        fetches: Rc<RefCell<u32>>,
+    }
+
+    impl DictionarySource for StallingDict {
+        async fn fetch(&self, _id: Option<u32>) -> Result<Vec<u8>> {
+            *self.fetches.borrow_mut() += 1;
+            self.cancel.cancel();
+            // Never resolves: the engine must abandon this via cancellation.
+            core::future::pending::<Result<Vec<u8>>>().await
+        }
+    }
+
+    /// Yields a valid dictionary on the first fetch, then cancels and stalls on
+    /// the second — modeling a stalled rotation refetch. Proves the recovery
+    /// path also races cancellation and stops rather than wedging.
+    struct StallOnSecondFetch {
+        first: RefCell<Option<Vec<u8>>>,
+        cancel: CancelToken,
+        fetches: Rc<RefCell<u32>>,
+    }
+
+    impl DictionarySource for StallOnSecondFetch {
+        async fn fetch(&self, _id: Option<u32>) -> Result<Vec<u8>> {
+            *self.fetches.borrow_mut() += 1;
+            if let Some(bytes) = self.first.borrow_mut().take() {
+                return Ok(bytes);
+            }
+            self.cancel.cancel();
+            core::future::pending::<Result<Vec<u8>>>().await
+        }
+    }
+
     // ---- Sinks --------------------------------------------------------------
 
     /// A sink that records every item and cancels the tail once it has collected
@@ -1190,6 +1287,20 @@ mod tests {
                 return false;
             }
             true
+        }
+    }
+
+    /// A sink that reports the consumer has gone away on its first delivery
+    /// (returning `false`) but never cancels the token — isolating the tail's
+    /// response to the sink's own stop signal from cancellation.
+    struct StopImmediatelySink {
+        items: Vec<core::result::Result<Delivery, Error>>,
+    }
+
+    impl DeliverySink for StopImmediatelySink {
+        async fn deliver(&mut self, item: core::result::Result<Delivery, Error>) -> bool {
+            self.items.push(item);
+            false
         }
     }
 
@@ -1786,6 +1897,127 @@ mod tests {
         let mut config = LiveConfig::new("", true);
         config.max_batch = 1;
         assert!(config.validate().is_err());
+    }
+
+    // ---- Regression tests ---------------------------------------------------
+
+    #[tokio::test(start_paused = true)]
+    async fn invalid_request_is_fatal_not_reconnect_loop() {
+        // Regression: a malformed-request error is permanent — retrying replays
+        // the same rejection forever. The tail must deliver it as terminal and
+        // stop after a single dial rather than reconnect indefinitely.
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![vec![Action::Text(error_text("InvalidRequest"))]]);
+        let consumer =
+            LiveConsumer::new(ws.clone(), NoDict, live_config(), cancel.clone()).unwrap();
+        let mut sink = CollectingSink::new(10, cancel);
+        consumer.run(&mut sink).await.unwrap();
+        match sink.error() {
+            Some(Error::Protocol { name, .. }) => assert_eq!(name, "InvalidRequest"),
+            other => panic!("expected InvalidRequest, got {other:?}"),
+        }
+        assert_eq!(ws.dialed.borrow().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consumer_gone_on_disconnect_stops_without_reconnect() {
+        // Regression: the pending batch flushes on the dirty-disconnect path;
+        // if the sink reports the consumer has gone away, the tail must stop
+        // rather than reconnect. A second session is scripted so a wrongful
+        // reconnect would show up as a second dial.
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![
+            vec![
+                Action::Text(commit_text(1, "app.bsky.feed.post")),
+                Action::Fail,
+            ],
+            vec![Action::Text(commit_text(2, "app.bsky.feed.post"))],
+        ]);
+        let consumer = LiveConsumer::new(ws.clone(), NoDict, live_config(), cancel).unwrap();
+        let mut sink = StopImmediatelySink { items: Vec::new() };
+        consumer.run(&mut sink).await.unwrap();
+        // Exactly one dial: the tail stopped on the sink's signal, no reconnect.
+        assert_eq!(ws.dialed.borrow().len(), 1);
+        // The pending batch was flushed before stopping.
+        assert_eq!(sink.items.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn oversized_text_frame_is_bounded_by_read_limit() {
+        // Regression: a custom transport could deliver a text frame larger than
+        // the read limit; decode must reject it (stream error → reconnect)
+        // rather than parse an unbounded buffer. Whitespace padding keeps the
+        // JSON valid, so the size guard — not a parse failure — is what rejects
+        // it. The tail then reconnects and delivers the in-bounds frame.
+        let base = commit_text(1, "app.bsky.feed.post");
+        let padded = format!("{{{}{}", " ".repeat(4096), &base[1..]);
+        assert!(padded.len() > 1024);
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![
+            vec![Action::Text(padded)],
+            vec![Action::Text(commit_text(2, "app.bsky.feed.post"))],
+        ]);
+        let mut config = live_config();
+        config.read_limit = 1024;
+        let consumer = LiveConsumer::new(ws.clone(), NoDict, config, cancel.clone()).unwrap();
+        let mut sink = CollectingSink::new(1, cancel);
+        consumer.run(&mut sink).await.unwrap();
+        assert_eq!(sink.seqs(), vec![2]);
+        assert_eq!(ws.dialed.borrow().len(), 2);
+        assert!(sink.error().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_initial_dict_fetch_stops_without_dialing() {
+        // Regression: a stalled initial dictionary fetch must not wedge
+        // shutdown. The fetch cancels the token then never completes; the engine
+        // must race it against cancellation, return cleanly, and never dial.
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![vec![Action::Text(commit_text(
+            1,
+            "app.bsky.feed.post",
+        ))]]);
+        let fetches = Rc::new(RefCell::new(0u32));
+        let dict = StallingDict {
+            cancel: cancel.clone(),
+            fetches: fetches.clone(),
+        };
+        let mut config = LiveConfig::new("jetstream.test", true);
+        config.compression = true;
+        let consumer = LiveConsumer::new(ws.clone(), dict, config, cancel.clone()).unwrap();
+        let mut sink = CollectingSink::new(10, cancel);
+        consumer.run(&mut sink).await.unwrap();
+        assert_eq!(*fetches.borrow(), 1);
+        assert!(ws.dialed.borrow().is_empty(), "must not dial after cancel");
+        assert!(sink.items.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_rotation_refetch_stops() {
+        // Regression: a stalled dictionary *rotation* refetch must not wedge the
+        // session. The initial fetch succeeds and the tail dials; a mid-session
+        // UnknownZstdDictionary triggers recovery, whose refetch cancels and
+        // stalls. The engine must race it and stop rather than hang or reconnect.
+        let (dict1, _frame1) = make_dict_and_frame(1);
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![vec![Action::Text(error_text(
+            "UnknownZstdDictionary",
+        ))]]);
+        let fetches = Rc::new(RefCell::new(0u32));
+        let dict = StallOnSecondFetch {
+            first: RefCell::new(Some(dict1)),
+            cancel: cancel.clone(),
+            fetches: fetches.clone(),
+        };
+        let mut config = LiveConfig::new("jetstream.test", true);
+        config.compression = true;
+        let consumer = LiveConsumer::new(ws.clone(), dict, config, cancel.clone()).unwrap();
+        let mut sink = CollectingSink::new(10, cancel);
+        consumer.run(&mut sink).await.unwrap();
+        // Initial fetch + stalled rotation refetch; a single dial, no reconnect.
+        assert_eq!(*fetches.borrow(), 2);
+        assert_eq!(ws.dialed.borrow().len(), 1);
+        assert!(sink.error().is_none());
     }
 
     use super::super::filter::Kind;
