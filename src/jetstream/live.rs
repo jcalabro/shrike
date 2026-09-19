@@ -705,10 +705,16 @@ where
                     match decode_message(message, dict, self.config.read_limit) {
                         MsgDecode::Skip => {}
                         MsgDecode::StreamError => {
-                            deliver_batch(&mut batch, sink).await;
+                            // Flush the pending batch; a gone consumer stops the
+                            // tail rather than triggering a reconnect.
+                            let alive = deliver_batch(&mut batch, sink).await;
                             conn.close().await;
                             return SessionResult {
-                                outcome: SessionOutcome::Reconnect,
+                                outcome: if alive {
+                                    SessionOutcome::Reconnect
+                                } else {
+                                    SessionOutcome::Stop
+                                },
                                 progressed,
                             };
                         }
@@ -748,8 +754,19 @@ where
                             };
                         }
                         MsgDecode::Proto(err) => {
-                            deliver_batch(&mut batch, sink).await;
+                            // Flush pending events before acting on the protocol
+                            // error. If the consumer has gone away, stop now —
+                            // don't reconnect or recover a dictionary for a sink
+                            // that requested shutdown (the terminal Err in the
+                            // fatal case would also be unreceivable).
+                            let alive = deliver_batch(&mut batch, sink).await;
                             conn.close().await;
+                            if !alive {
+                                return SessionResult {
+                                    outcome: SessionOutcome::Stop,
+                                    progressed,
+                                };
+                            }
                             return match classify_protocol(&err) {
                                 ProtoAction::Fatal => {
                                     sink.deliver(Err(err)).await;
@@ -2018,6 +2035,73 @@ mod tests {
         assert_eq!(*fetches.borrow(), 2);
         assert_eq!(ws.dialed.borrow().len(), 1);
         assert!(sink.error().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consumer_gone_on_stream_error_stops_without_reconnect() {
+        // Regression: the stream-error flush must honor the sink's consumer-gone
+        // signal and stop, not reconnect. An oversized text frame (bounded by
+        // read_limit) yields the stream error after an event is already batched.
+        let base = commit_text(1, "app.bsky.feed.post");
+        let padded = format!("{{{}{}", " ".repeat(4096), &base[1..]);
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![
+            vec![
+                Action::Text(commit_text(1, "app.bsky.feed.post")),
+                Action::Text(padded),
+            ],
+            vec![Action::Text(commit_text(2, "app.bsky.feed.post"))],
+        ]);
+        let mut config = live_config();
+        config.read_limit = 1024;
+        let consumer = LiveConsumer::new(ws.clone(), NoDict, config, cancel).unwrap();
+        let mut sink = StopImmediatelySink { items: Vec::new() };
+        consumer.run(&mut sink).await.unwrap();
+        // The batch [1] flushed, the sink reported gone, the tail stopped: one dial.
+        assert_eq!(ws.dialed.borrow().len(), 1);
+        assert_eq!(sink.items.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consumer_gone_on_protocol_error_stops_without_reconnect() {
+        // Regression: a reconnectable protocol error still flushes the pending
+        // batch; if the sink reports the consumer is gone, the tail must stop
+        // rather than reconnect.
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![
+            vec![
+                Action::Text(commit_text(1, "app.bsky.feed.post")),
+                Action::Text(error_text("ConsumerTooSlow")),
+            ],
+            vec![Action::Text(commit_text(2, "app.bsky.feed.post"))],
+        ]);
+        let consumer = LiveConsumer::new(ws.clone(), NoDict, live_config(), cancel).unwrap();
+        let mut sink = StopImmediatelySink { items: Vec::new() };
+        consumer.run(&mut sink).await.unwrap();
+        assert_eq!(ws.dialed.borrow().len(), 1);
+        assert_eq!(sink.items.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consumer_gone_on_dict_rotation_stops_before_refetch() {
+        // Regression: when the consumer is gone, the dictionary-rotation path
+        // must stop before refetching — no wasted fetch, no reconnect.
+        let (dict1, _frame1) = make_dict_and_frame(1);
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![vec![
+            Action::Text(commit_text(1, "app.bsky.feed.post")),
+            Action::Text(error_text("UnknownZstdDictionary")),
+        ]]);
+        let dict_src = ScriptedDict::new(vec![dict1]);
+        let fetches = dict_src.fetches.clone();
+        let mut config = LiveConfig::new("jetstream.test", true);
+        config.compression = true;
+        let consumer = LiveConsumer::new(ws.clone(), dict_src, config, cancel).unwrap();
+        let mut sink = StopImmediatelySink { items: Vec::new() };
+        consumer.run(&mut sink).await.unwrap();
+        // Only the initial dictionary fetch happened; no rotation refetch.
+        assert_eq!(*fetches.borrow(), 1);
+        assert_eq!(ws.dialed.borrow().len(), 1);
     }
 
     use super::super::filter::Kind;
