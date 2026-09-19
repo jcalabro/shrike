@@ -745,8 +745,13 @@ where
                             }
                         }
                         MsgDecode::Fatal(err) => {
-                            deliver_batch(&mut batch, sink).await;
-                            sink.deliver(Err(err)).await;
+                            // Flush pending events, then deliver the terminal
+                            // error — but only if the consumer is still there.
+                            // Per the DeliverySink contract, once `deliver`
+                            // returns false the sink must not be called again.
+                            if deliver_batch(&mut batch, sink).await {
+                                sink.deliver(Err(err)).await;
+                            }
                             conn.close().await;
                             return SessionResult {
                                 outcome: SessionOutcome::Stop,
@@ -2101,6 +2106,26 @@ mod tests {
         consumer.run(&mut sink).await.unwrap();
         // Only the initial dictionary fetch happened; no rotation refetch.
         assert_eq!(*fetches.borrow(), 1);
+        assert_eq!(ws.dialed.borrow().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn consumer_gone_on_fatal_error_is_not_delivered_to() {
+        // Regression: the fatal-error path flushes the pending batch and then
+        // delivers the terminal error, but must not call the sink again once the
+        // flush reports the consumer is gone (DeliverySink contract). A non-v2
+        // frame after a batched event drives the fatal path.
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![vec![
+            Action::Text(commit_text(1, "app.bsky.feed.post")),
+            Action::Text(r#"{"seq":1,"kind":"commit"}"#.to_owned()),
+        ]]);
+        let consumer = LiveConsumer::new(ws.clone(), NoDict, live_config(), cancel).unwrap();
+        let mut sink = StopImmediatelySink { items: Vec::new() };
+        consumer.run(&mut sink).await.unwrap();
+        // Only the batch flush reached the sink; the terminal Err was withheld
+        // because the consumer had already gone away.
+        assert_eq!(sink.items.len(), 1);
         assert_eq!(ws.dialed.borrow().len(), 1);
     }
 
