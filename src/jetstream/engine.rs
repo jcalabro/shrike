@@ -68,8 +68,15 @@ pub const DEFAULT_MAX_REBACKFILL_STALLS: u32 = 5;
 /// as a delivery here. Every method returns `false` to ask the engine to stop
 /// early because the consumer has gone away; an early stop is clean and makes
 /// [`Engine::run`] return `Ok(())`.
+///
+/// The delivered item is moved into the callback, so it has reached the consumer
+/// by the time the callback returns: `false` is a request to stop *future*
+/// deliveries, not a rejection of the item just handed over. Engine progress
+/// counters ([`StatsHandle`]) therefore account for that final item too — they
+/// report what was delivered, not what the consumer chose to do next.
 pub trait EngineSink {
-    /// Deliver one ordered batch or advisory. Returns `false` to stop.
+    /// Deliver one ordered batch or advisory. Returns `false` to stop; the item
+    /// is still consumed (see the trait-level contract).
     fn deliver(&mut self, delivery: Delivery) -> impl Future<Output = bool>;
 
     /// Report one ordered, recoverable error. The stream continues after it.
@@ -184,12 +191,21 @@ impl EngineConfig {
 
     /// Validate the archive-independent parts of the config before any I/O.
     fn validate(&self) -> Result<()> {
-        if let Some(before) = self.before_seq
-            && before <= self.after_seq
-        {
-            return Err(Error::InvalidConfig(
-                "before_seq must be greater than after_seq",
-            ));
+        if let Some(before) = self.before_seq {
+            if before <= self.after_seq {
+                return Err(Error::InvalidConfig(
+                    "before_seq must be greater than after_seq",
+                ));
+            }
+            // A bounded upper window is only meaningful for a snapshot: an
+            // archive-plus-live run would honor `before_seq` for replay and then
+            // stream the live tail unbounded, silently exceeding the caller's
+            // requested bound.
+            if !self.snapshot_only {
+                return Err(Error::InvalidConfig(
+                    "before_seq requires snapshot_only mode",
+                ));
+            }
         }
         if self.max_rebackfill_stalls == 0 {
             return Err(Error::InvalidConfig("max_rebackfill_stalls must be >= 1"));
@@ -455,10 +471,16 @@ where
 
 /// Download and deliver the archive snapshot for `plan` in order.
 ///
-/// Events are windowed and seq-ascending within each segment, and segments come
-/// back in plan order, so a running floor over the whole snapshot yields a
-/// strictly ascending, duplicate-free stream even if a straddling unit or a
-/// misbehaving source overlaps a boundary. Events are batched to `max_batch`;
+/// The [`ArchiveSource`] contract requires each segment's events to be
+/// seq-ascending and the segments themselves to be globally ordered and
+/// non-overlapping in plan order. Given that, a running floor over the whole
+/// snapshot yields a strictly ascending, duplicate-free stream: events at or
+/// below `after` (already delivered) are skipped, and a straddling unit that
+/// repeats the boundary seq is collapsed. If a segment violates the ordering
+/// contract — an in-window seq that regresses below one already delivered from
+/// an earlier segment — the plan is rejected as [`Error::PlanInvalid`] rather
+/// than silently dropping the out-of-order event, since merging arbitrary
+/// overlap would require unbounded buffering. Events are batched to `max_batch`;
 /// when a segment carries recoverable row drops, the pending batch is flushed
 /// first so the ordered errors follow the valid rows that preceded them.
 ///
@@ -505,12 +527,26 @@ where
         };
 
         for event in downloaded.events {
-            if event.seq > floor {
-                floor = event.seq;
-                buf.push(event);
-                if buf.len() >= max_batch && !flush_archive_batch(&mut buf, stats, sink).await {
-                    return Ok(true);
-                }
+            // Already delivered before this run, or the same boundary event
+            // repeated by a straddling unit or an inclusive segment boundary:
+            // collapse without advancing. These are duplicates of an event we
+            // have already emitted, not distinct data.
+            if event.seq <= after || event.seq == floor {
+                continue;
+            }
+            // A *lower* seq inside the window, arriving after a higher one, is a
+            // distinct event out of order: the source violated the global
+            // ordering contract. Merging arbitrary overlap would need unbounded
+            // buffering, so fail loud instead of silently dropping the event.
+            if event.seq < floor {
+                return Err(Error::PlanInvalid(
+                    "archive events are not strictly increasing across segments",
+                ));
+            }
+            floor = event.seq;
+            buf.push(event);
+            if buf.len() >= max_batch && !flush_archive_batch(&mut buf, stats, sink).await {
+                return Ok(true);
             }
         }
 
@@ -545,6 +581,10 @@ async fn flush_archive_batch<S: EngineSink>(
         return true;
     }
     let batch = Batch::new(core::mem::take(buf));
+    // The batch is moved into `deliver`, so the consumer has received it by the
+    // time this returns; a `false` return only asks us to stop sending more (see
+    // the `EngineSink` contract). Progress therefore reflects this batch whether
+    // or not the consumer wants further deliveries.
     stats
         .delivered_events
         .fetch_add(batch.len() as u64, Ordering::Relaxed);
@@ -586,6 +626,10 @@ impl<S: EngineSink> DeliverySink for LiveBridge<'_, S> {
     async fn deliver(&mut self, item: core::result::Result<Delivery, Error>) -> bool {
         match item {
             Ok(Delivery::Batch(batch)) => {
+                // The batch is moved into `deliver`, so it has reached the
+                // consumer regardless of the return value; `false` only asks us
+                // to stop sending more (see the `EngineSink` contract), so
+                // progress reflects this batch either way.
                 self.stats
                     .delivered_events
                     .fetch_add(batch.len() as u64, Ordering::Relaxed);

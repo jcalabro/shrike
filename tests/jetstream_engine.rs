@@ -234,7 +234,7 @@ impl ArchiveSource for MockArchive {
         &self,
         _filter: &Filter,
         _after_seq: u64,
-        _before_seq: Option<u64>,
+        before_seq: Option<u64>,
         _cancel: &CancelToken,
     ) -> core::result::Result<SnapshotPlan, Error> {
         let generation = {
@@ -250,10 +250,13 @@ impl ArchiveSource for MockArchive {
             }
         };
         *self.current.borrow_mut() = generation.segments.clone();
+        // Honor a caller-requested upper bound (snapshot-only), defaulting to the
+        // sealed tip when unbounded.
+        let before_seq = before_seq.unwrap_or(generation.tip).min(generation.tip);
         Ok(SnapshotPlan {
             sealed_tip_seq: generation.tip,
             after_seq: generation.after,
-            before_seq: generation.tip,
+            before_seq,
             segments: generation
                 .segments
                 .iter()
@@ -1113,6 +1116,105 @@ async fn stats_reflect_progress_and_mutation() {
     assert_eq!(snap.delivered_events, 5);
 }
 
+/// Regression (roast R-d57226 adjudication): the `EngineSink` contract is
+/// accept-and-stop — a batch is moved into `deliver` and thus reaches the
+/// consumer even when the call returns `false`, which only halts *future*
+/// deliveries. Progress counters must therefore account for that final,
+/// stop-triggering archive batch. (Pins the archive flush path; the live path is
+/// pinned by `stats_reflect_progress_and_mutation`.)
+#[tokio::test(start_paused = true)]
+async fn stopping_batch_counted_in_progress() {
+    let world = vec![
+        Me::new(1, COLLS[0]),
+        Me::new(2, COLLS[0]),
+        Me::new(3, COLLS[0]),
+        Me::new(4, COLLS[0]),
+    ];
+    // max_batch 2 over a single segment yields batches [1,2] then [3,4]; the sink
+    // stops after 3 events, so the [3,4] batch is the one that returns false.
+    let archive = MockArchive::new(
+        vec![Generation {
+            tip: 4,
+            after: 0,
+            segments: segments_from(&world, 1),
+        }],
+        Vec::new(),
+        1,
+    );
+    let mut config = EngineConfig::new(live_config(build_filter(&[]), 2));
+    config.snapshot_only = true;
+    let cancel = CancelToken::new();
+    let engine = Engine::new(
+        Some(archive),
+        ScriptedWs::new(vec![]),
+        NoDict,
+        config,
+        cancel,
+    );
+    let stats = engine.stats();
+    let mut sink = RecordingSink::new(3, None);
+    let res = engine.run(&mut sink).await;
+
+    assert!(res.is_ok());
+    // The stop-triggering batch [3,4] was delivered in full and is counted.
+    assert_eq!(sink.seqs(), vec![1, 2, 3, 4]);
+    let snap = stats.snapshot();
+    assert_eq!(snap.delivered_events, 4);
+    assert_eq!(snap.last_processed_seq, 4);
+}
+
+/// Regression (roast R-8eb742): a distinct lower-seq event arriving after a
+/// higher one — a source that violates the global-ordering contract with
+/// overlapping segments — is rejected as `PlanInvalid`, never silently dropped.
+#[tokio::test(start_paused = true)]
+async fn overlapping_segments_out_of_order_rejected() {
+    // Two segments whose windows overlap: [1,3] then [2,4]. Seq 2 is a distinct
+    // event that would be lost by a running-floor dedup; the engine must instead
+    // reject the plan.
+    let seg_a = Segment {
+        name: "seg-a.jss".to_owned(),
+        index: 0,
+        min_seq: 1,
+        max_seq: 3,
+        raw: vec![Me::new(1, COLLS[0]), Me::new(3, COLLS[0])],
+        dropped: Vec::new(),
+        delay_ms: 0,
+    };
+    let seg_b = Segment {
+        name: "seg-b.jss".to_owned(),
+        index: 1,
+        min_seq: 2,
+        max_seq: 4,
+        raw: vec![Me::new(2, COLLS[0]), Me::new(4, COLLS[0])],
+        dropped: Vec::new(),
+        delay_ms: 0,
+    };
+    let archive = MockArchive::new(
+        vec![Generation {
+            tip: 4,
+            after: 0,
+            segments: vec![seg_a, seg_b],
+        }],
+        Vec::new(),
+        1,
+    );
+    let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    config.snapshot_only = true;
+    let cancel = CancelToken::new();
+    let engine = Engine::new(
+        Some(archive),
+        ScriptedWs::new(vec![]),
+        NoDict,
+        config,
+        cancel,
+    );
+    let mut sink = RecordingSink::new(usize::MAX, None);
+    assert!(matches!(
+        engine.run(&mut sink).await,
+        Err(Error::PlanInvalid(_))
+    ));
+}
+
 // ===========================================================================
 // Config validation
 // ===========================================================================
@@ -1156,6 +1258,66 @@ async fn rejects_zero_stalls() {
         engine.run(&mut sink).await,
         Err(Error::InvalidConfig(_))
     ));
+}
+
+/// Regression (roast R-e96dad): `before_seq` bounds only the archive replay, so
+/// pairing it with a live tail would silently stream past the requested upper
+/// bound. It is valid only in snapshot-only mode.
+#[tokio::test]
+async fn rejects_before_seq_without_snapshot_only() {
+    let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    config.after_seq = 0;
+    config.before_seq = Some(5);
+    // snapshot_only left false: archive-plus-live.
+    let archive = MockArchive::new(Vec::new(), Vec::new(), 1);
+    let cancel = CancelToken::new();
+    let engine = Engine::new(
+        Some(archive),
+        ScriptedWs::new(vec![]),
+        NoDict,
+        config,
+        cancel,
+    );
+    let mut sink = RecordingSink::new(usize::MAX, None);
+    assert!(matches!(
+        engine.run(&mut sink).await,
+        Err(Error::InvalidConfig(_))
+    ));
+}
+
+/// Regression (roast R-e96dad): the same `before_seq` bound is accepted once
+/// snapshot-only is set, and it windows the delivered snapshot.
+#[tokio::test(start_paused = true)]
+async fn before_seq_allowed_with_snapshot_only() {
+    let world = vec![
+        Me::new(1, COLLS[0]),
+        Me::new(2, COLLS[0]),
+        Me::new(3, COLLS[0]),
+        Me::new(4, COLLS[0]),
+    ];
+    let archive = MockArchive::new(
+        vec![Generation {
+            tip: 4,
+            after: 0,
+            segments: segments_from(&world, 1),
+        }],
+        Vec::new(),
+        1,
+    );
+    let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    config.snapshot_only = true;
+    config.before_seq = Some(2);
+    let cancel = CancelToken::new();
+    let engine = Engine::new(
+        Some(archive),
+        ScriptedWs::new(vec![]),
+        NoDict,
+        config,
+        cancel,
+    );
+    let mut sink = RecordingSink::new(usize::MAX, None);
+    assert!(engine.run(&mut sink).await.is_ok());
+    assert_eq!(sink.seqs(), vec![1, 2]);
 }
 
 #[tokio::test]
