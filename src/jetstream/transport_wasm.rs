@@ -22,8 +22,10 @@
 //!   never attached; the only authenticator is the explicit `Authorization`
 //!   header the caller sets. Combined with `mode: "cors"`, a cross-origin
 //!   archive host that does not return the required CORS headers makes `fetch`
-//!   reject, which surfaces here as a [`TransportErrorKind::Capability`] error
-//!   (never an opaque, silently-empty response).
+//!   reject rather than hand back an opaque, silently-empty response. That
+//!   rejection is indistinguishable from a transient network fault (the browser
+//!   exposes no detail), so it surfaces as a retryable transport error and the
+//!   caller's bounded retry decides when to give up — see [`map_fetch_error`].
 //! - **The body streams under the caller's bound.** The response body is read
 //!   incrementally through a `ReadableStream` reader, one chunk per
 //!   [`HttpBody::chunk`], so `read_body_bounded` enforces the caller's exact
@@ -216,16 +218,24 @@ impl HttpBody for WasmHttpBody {
 
 /// Map a `gloo-net` `fetch` failure onto a portable, redacted [`TransportError`].
 ///
-/// A rejected `fetch` in the browser is opaque by design — a network fault, a
-/// missing-CORS rejection, and a blocked redirect all surface as the same
-/// `TypeError`, and the message can embed the URL — so this reports a fixed,
-/// capability-classed string that names the likely causes without echoing the
-/// underlying text or the URL. Capability is non-retryable: the dominant browser
-/// failure (missing CORS on the archive host) will not fix itself on a retry,
-/// and a genuinely transient fault is recovered at a coarser grain by the
-/// engine's replan/reconnect rather than by hammering the same request.
+/// A rejected `fetch` in the browser is opaque by design — a transient network
+/// fault, a missing-CORS rejection, and a blocked redirect all surface as the
+/// same `TypeError`, and the message can embed the URL — so this reports a
+/// fixed, redacted string that names the likely causes without echoing the
+/// underlying text or the URL.
+///
+/// The failure is classified [`TransportErrorKind::Connect`], which is
+/// **retryable**, and that classification is load-bearing: because the browser
+/// cannot tell a transient fault apart from a permanent one, the safe default is
+/// to let the caller's bounded retry run. A genuinely transient blip then
+/// recovers, while a permanent cause (missing CORS, a refused redirect) costs
+/// only a bounded handful of retries before it surfaces. Classifying every
+/// failure non-retryable (`Capability`) would instead abort an archive download
+/// on the first network blip — the strictly worse trade — since `Capability` is
+/// terminal for both control requests (`archive.rs`) and page downloads
+/// (`download.rs`). Do not narrow this back to `Capability`.
 fn map_fetch_error(_err: gloo_net::Error) -> TransportError {
-    TransportError::capability("archive fetch failed (network error, missing CORS, or redirect)")
+    TransportError::connect("archive fetch failed (network error, missing CORS, or redirect)")
 }
 
 /// The browser live WebSocket transport backed by `gloo-net`.
