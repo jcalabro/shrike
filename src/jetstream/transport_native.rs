@@ -206,7 +206,7 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Error as TungError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::error::ProtocolError;
+use tokio_tungstenite::tungstenite::error::{ProtocolError, SubProtocolError};
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -238,6 +238,7 @@ impl WsTransport for NativeWsTransport {
 
     async fn dial(&self, url: String, subprotocol: &'static str) -> Result<Self::Conn, DialError> {
         let mut request = url
+            .clone()
             .into_client_request()
             .map_err(|_| DialError::Transport("invalid websocket request".to_owned()))?;
         request.headers_mut().insert(
@@ -251,15 +252,29 @@ impl WsTransport for NativeWsTransport {
 
         // `tokio-tungstenite` performs RFC 6455 step-6 subprotocol verification
         // during the handshake: because we requested `subprotocol`, a server that
-        // echoes a different one — or none at all — fails the connect with a
-        // subprotocol protocol error, which `map_ws_dial_error` surfaces as the
-        // fatal `DialError::Subprotocol`. So a successful connect already implies
-        // the negotiated subprotocol is the one we asked for; no further check is
-        // needed here.
-        let (stream, _response) = connect_async_with_config(request, Some(config), true)
-            .await
-            .map_err(map_ws_dial_error)?;
-        Ok(NativeWsConnection { stream })
+        // echoes a *different* one fails the connect with a subprotocol error,
+        // which `map_ws_dial_error` surfaces as the fatal `DialError::Subprotocol`.
+        // A server that echoes *nothing* is a different case: the lexicon default
+        // is identical framing and both the Go client and the plan accept an
+        // empty echo, but tungstenite (stricter than RFC 6455, which only
+        // mandates failure on an un-requested echo) also fails that handshake.
+        // Redial once without offering the subprotocol — such a server speaks
+        // the lexicon-default framing whether or not one is offered.
+        match connect_async_with_config(request, Some(config), true).await {
+            Ok((stream, _response)) => Ok(NativeWsConnection { stream }),
+            Err(TungError::Protocol(ProtocolError::SecWebSocketSubProtocolError(
+                SubProtocolError::NoSubProtocol,
+            ))) => {
+                let request = url
+                    .into_client_request()
+                    .map_err(|_| DialError::Transport("invalid websocket request".to_owned()))?;
+                let (stream, _response) = connect_async_with_config(request, Some(config), true)
+                    .await
+                    .map_err(map_ws_dial_error)?;
+                Ok(NativeWsConnection { stream })
+            }
+            Err(err) => Err(map_ws_dial_error(err)),
+        }
     }
 }
 
@@ -312,9 +327,10 @@ fn map_ws_dial_error(err: TungError) -> DialError {
             let body = response.into_body().unwrap_or_default();
             DialError::Http { status, body }
         }
-        // A server that echoes the wrong subprotocol — or none when one was
-        // requested — breaks the framing contract; fatal, not retryable. The
-        // variant carries no server-supplied text, so nothing can leak.
+        // A server that echoes the wrong subprotocol breaks the framing
+        // contract; fatal, not retryable. (The empty-echo case never reaches
+        // here — `dial` retries it without an offer first.) The variant carries
+        // no server-supplied text, so nothing can leak.
         TungError::Protocol(ProtocolError::SecWebSocketSubProtocolError(_)) => {
             DialError::Subprotocol("server negotiated an unexpected subprotocol".to_owned())
         }
@@ -410,6 +426,53 @@ mod ws_tests {
         // The ping is answered transparently; the next surfaced read is the
         // clean close, reported as `None`.
         assert!(conn.read().await.unwrap().is_none());
+        conn.close().await;
+        server.await.unwrap();
+    }
+
+    /// Regression: a conforming server that *omits* the subprotocol echo (the
+    /// lexicon default — identical framing) must be accepted, as the Go client
+    /// and the plan require. tungstenite is stricter than RFC 6455 and fails
+    /// that handshake, so the adapter redials once without offering; the second
+    /// handshake succeeds and frames flow normally.
+    #[tokio::test]
+    async fn native_ws_empty_subprotocol_echo_is_accepted() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            // First connection: the client offered a subprotocol we never echo;
+            // its handshake check fails client-side, so this session ends early.
+            let (stream, _) = listener.accept().await.unwrap();
+            let no_echo = |_req: &Request, resp: Response| Ok(resp);
+            let _ = accept_hdr_async(stream, no_echo).await;
+
+            // Second connection: no subprotocol offered, none echoed — serve.
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut offered_protocol = false;
+            let observe = |req: &Request, resp: Response| {
+                offered_protocol = req.headers().contains_key(SEC_WEBSOCKET_PROTOCOL);
+                Ok(resp)
+            };
+            let mut ws = accept_hdr_async(stream, observe).await.unwrap();
+            assert!(
+                !offered_protocol,
+                "the no-echo redial must not offer a subprotocol"
+            );
+            ws.send(Message::Text("hello".into())).await.unwrap();
+            ws.close(None).await.unwrap();
+        });
+
+        let transport = NativeWsTransport::new(1 << 20);
+        let url = format!("ws://{addr}/xrpc/{}", super::super::live::SUBSCRIBE_METHOD);
+        let mut conn = transport
+            .dial(url, super::super::live::XRPC_SUBPROTOCOL)
+            .await
+            .unwrap_or_else(|e| panic!("empty-echo dial failed: {e:?}"));
+        match conn.read().await.unwrap() {
+            Some(WsMessage::Text(bytes)) => assert_eq!(bytes, b"hello"),
+            other => panic!("expected text frame, got {other:?}"),
+        }
         conn.close().await;
         server.await.unwrap();
     }

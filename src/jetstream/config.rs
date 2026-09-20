@@ -69,11 +69,16 @@ pub fn normalize_host(raw: &str) -> Result<String> {
 ///
 /// The two are different domains, not interchangeable numbers. "Start at the
 /// current tip" is deliberately *not* representable here — it is a separate
-/// builder state — so that a `Seq(0)` footgun (wire `0` means "everything",
-/// while Go's `WithLiveCursor(0)` means "tip") cannot arise.
+/// builder state — so the Go `WithLiveCursor(0)`-means-tip footgun cannot
+/// arise. A sequence resume is **exclusive**, exactly like Go's
+/// `WithLiveCursor`: delivery resumes *after* `Seq(n)` (the server's inclusive
+/// replay of `n` itself is deduplicated by the client), so persisting
+/// [`super::Batch::last_cursor`] and passing it straight back never
+/// re-delivers the last processed event. `Seq(0)` therefore means "everything
+/// the server retains".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
-    /// A 1-based Jetstream sequence. The server replays inclusively from it.
+    /// A Jetstream sequence. Delivery resumes strictly after it.
     Seq(u64),
     /// A Unix-microsecond timestamp. An old value is clamped by the server.
     Timestamp(i64),
@@ -82,16 +87,13 @@ pub enum Cursor {
 impl Cursor {
     /// Validate the cursor for use as a **live** subscription resume position.
     ///
-    /// A sequence must be `>= 1` (use tip mode to start at the tip), must not
-    /// exceed the XRPC signed-integer ceiling, and must stay below
-    /// [`TIMESTAMP_CURSOR_THRESHOLD`] or the server would misread it as a
-    /// timestamp. A timestamp must be non-negative; being an `i64` it is already
-    /// within the signed ceiling.
+    /// A sequence must not exceed the XRPC signed-integer ceiling and must stay
+    /// below [`TIMESTAMP_CURSOR_THRESHOLD`] or the server would misread it as a
+    /// timestamp. A timestamp must be at or above the threshold for the mirror
+    /// reason: the server reads any smaller wire value as a *sequence*, which
+    /// would silently resume from a bogus position instead of a point in time.
     pub fn validate_live(&self) -> Result<()> {
         match self {
-            Cursor::Seq(0) => Err(Error::InvalidConfig(
-                "live resume sequence must be >= 1; use tip mode to start at the tip",
-            )),
             Cursor::Seq(n) => {
                 if *n > i64::MAX as u64 {
                     return Err(Error::InvalidConfig("cursor sequence exceeds i64::MAX"));
@@ -104,9 +106,9 @@ impl Cursor {
                 Ok(())
             }
             Cursor::Timestamp(us) => {
-                if *us < 0 {
+                if *us < TIMESTAMP_CURSOR_THRESHOLD {
                     return Err(Error::InvalidConfig(
-                        "timestamp cursor must be non-negative",
+                        "timestamp cursor must be >= 10^15 or the server reads it as a sequence",
                     ));
                 }
                 Ok(())
@@ -180,7 +182,9 @@ mod tests {
     #[test]
     fn live_seq_cursor_bounds() {
         assert!(Cursor::Seq(1).validate_live().is_ok());
-        assert!(Cursor::Seq(0).validate_live().is_err());
+        // Exclusive resume semantics make Seq(0) "everything the server
+        // retains" — a valid, unambiguous position (tip stays a separate state).
+        assert!(Cursor::Seq(0).validate_live().is_ok());
         // At or above the timestamp threshold is rejected for a live sequence.
         assert!(
             Cursor::Seq(TIMESTAMP_CURSOR_THRESHOLD as u64)
@@ -197,7 +201,15 @@ mod tests {
 
     #[test]
     fn live_timestamp_cursor_bounds() {
-        assert!(Cursor::Timestamp(0).validate_live().is_ok());
+        // Regression: a timestamp below 10^15 would be read by the server as a
+        // *sequence* — the exact domain confusion the two-variant cursor exists
+        // to prevent — so it is rejected up front.
+        assert!(Cursor::Timestamp(0).validate_live().is_err());
+        assert!(
+            Cursor::Timestamp(TIMESTAMP_CURSOR_THRESHOLD - 1)
+                .validate_live()
+                .is_err()
+        );
         assert!(
             Cursor::Timestamp(TIMESTAMP_CURSOR_THRESHOLD)
                 .validate_live()

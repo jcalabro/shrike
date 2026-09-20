@@ -184,7 +184,10 @@ pub use live::{
     SUBSCRIBE_METHOD, WsConnection, WsError, WsMessage, WsTransport, XRPC_SUBPROTOCOL,
     subscribe_url,
 };
-pub use planner::{BlockSpan, PlanSegment, SegmentMode, SnapshotPlan, plan_snapshot};
+pub use planner::{
+    BlockSpan, PlanPage, PlanSegment, PlanSweep, SegmentMode, SnapshotPlan, plan_page,
+    plan_snapshot,
+};
 pub use record::Record;
 pub use retry::{Attempt, RetryConfig};
 pub use segment::{
@@ -389,11 +392,16 @@ mod tests {
     #[test]
     fn decompress_respects_output_limit() {
         // The golden block decompresses to more than one byte; a 1-byte cap
-        // must trip the limit rather than allocate.
-        assert!(matches!(
-            decompress_bounded(GOLDEN_BLOCK, 1, None),
-            Err(Error::LimitExceeded { .. })
-        ));
+        // must trip a bound rather than allocate. With the cap this small the
+        // frame's declared window already exceeds it, so the rejection fires at
+        // the pre-decode window check (klauspost's ErrWindowSizeExceeded);
+        // caps between the window and the decompressed size trip the output
+        // limit instead (covered in the compression module's tests).
+        match decompress_bounded(GOLDEN_BLOCK, 1, None) {
+            Err(Error::LimitExceeded { .. }) => {}
+            Err(Error::Compression(m)) if m.contains("window") => {}
+            other => panic!("expected a bound rejection, got {other:?}"),
+        }
     }
 
     #[test]

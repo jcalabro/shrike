@@ -661,8 +661,9 @@ async fn generation_restart_budget_is_bounded() {
     // Every probe succeeds but every stripe 0 returns 200 (perpetual generation
     // change). The client must give up after the bounded restart budget rather
     // than loop forever. Provide enough entries for probe + both stripes across
-    // the initial attempt and two restarts (3 generations).
-    for _ in 0..3 {
+    // the initial attempt and one restart (2 generations — Go's
+    // maxGenerationAttempts of two total attempts).
+    for _ in 0..2 {
         t.push(
             "seg:probe",
             Resp::ok(206, bytes[0..1].to_vec())
@@ -686,12 +687,124 @@ async fn generation_restart_budget_is_bounded() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn corrupt_segment_fails_integrity() {
+async fn stripe_without_etag_is_not_spliced() {
+    // A 206 stripe that arrives without a validator is indistinguishable from a
+    // different generation (e.g. a proxy honoring Range but stripping ETag), so
+    // it must trigger a clean restart, never a splice — Go treats a missing
+    // ETag the same as a mismatch.
+    let (bytes, checksum) = seal(&[vec![row(1), row(2), row(3), row(4)]]);
+    let total = bytes.len();
+    let stripe = total / 2 + 1;
+    let end0 = stripe - 1;
+    let end1 = total - 1;
+    let t = Scripted::new();
+
+    t.push(
+        "seg:probe",
+        Resp::ok(206, bytes[0..1].to_vec())
+            .with_header("content-range", &format!("bytes 0-0/{total}"))
+            .with_header("etag", "\"gen-A\""),
+    );
+    // Stripe 0 comes back valid-looking but with no ETag: restart, not splice.
+    t.push(
+        "seg:range:0",
+        Resp::ok(206, bytes[0..stripe].to_vec())
+            .with_header("content-range", &format!("bytes 0-{end0}/{total}")),
+    );
+    t.push(
+        &format!("seg:range:{stripe}"),
+        Resp::ok(206, bytes[stripe..total].to_vec())
+            .with_header("content-range", &format!("bytes {stripe}-{end1}/{total}"))
+            .with_header("etag", "\"gen-A\""),
+    );
+
+    // The fresh generation is consistent and succeeds.
+    t.push(
+        "seg:probe",
+        Resp::ok(206, bytes[0..1].to_vec())
+            .with_header("content-range", &format!("bytes 0-0/{total}"))
+            .with_header("etag", "\"gen-B\""),
+    );
+    t.push(
+        "seg:range:0",
+        Resp::ok(206, bytes[0..stripe].to_vec())
+            .with_header("content-range", &format!("bytes 0-{end0}/{total}"))
+            .with_header("etag", "\"gen-B\""),
+    );
+    t.push(
+        &format!("seg:range:{stripe}"),
+        Resp::ok(206, bytes[stripe..total].to_vec())
+            .with_header("content-range", &format!("bytes {stripe}-{end1}/{total}"))
+            .with_header("etag", "\"gen-B\""),
+    );
+
+    let c = client_with_stripe(t.clone(), stripe as u64);
+    let seg = whole_segment("seg-0012.jss", checksum);
+    let out = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
+        .await
+        .expect("restart after unverifiable stripe");
+    assert_eq!(out.events.len(), 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn short_stripe_body_is_retried_then_succeeds() {
+    // A stripe whose body ends cleanly short of its Content-Range is a
+    // transient truncation (Go's io.ReadFull path): retried per-part with the
+    // sibling stripe untouched, never classified permanent.
+    let (bytes, checksum) = seal(&[vec![row(1), row(2), row(3), row(4)]]);
+    let total = bytes.len();
+    let stripe = total / 2 + 1;
+    let end0 = stripe - 1;
+    let end1 = total - 1;
+    let t = Scripted::new();
+
+    t.push(
+        "seg:probe",
+        Resp::ok(206, bytes[0..1].to_vec())
+            .with_header("content-range", &format!("bytes 0-0/{total}"))
+            .with_header("etag", "\"gen\""),
+    );
+    // First stripe-0 answer ends short of the declared range (clean EOF).
+    t.push(
+        "seg:range:0",
+        Resp::ok(206, bytes[0..stripe / 2].to_vec())
+            .with_header("content-range", &format!("bytes 0-{end0}/{total}"))
+            .with_header("etag", "\"gen\""),
+    );
+    // The per-part retry serves the full stripe.
+    t.push(
+        "seg:range:0",
+        Resp::ok(206, bytes[0..stripe].to_vec())
+            .with_header("content-range", &format!("bytes 0-{end0}/{total}"))
+            .with_header("etag", "\"gen\""),
+    );
+    t.push(
+        &format!("seg:range:{stripe}"),
+        Resp::ok(206, bytes[stripe..total].to_vec())
+            .with_header("content-range", &format!("bytes {stripe}-{end1}/{total}"))
+            .with_header("etag", "\"gen\""),
+    );
+
+    let c = client_with_stripe(t.clone(), stripe as u64);
+    let seg = whole_segment("seg-0013.jss", checksum);
+    let out = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
+        .await
+        .expect("per-part retry after short body");
+    assert_eq!(out.events.len(), 4);
+    // Probe + failed stripe 0 + retried stripe 0 + stripe 1 = four requests.
+    assert_eq!(t.log().len(), 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn corrupt_segment_is_redownloaded_then_fails_bounded() {
     let (mut bytes, checksum) = seal(&[vec![row(1), row(2)]]);
     // Flip a byte inside the checksum-protected footer region.
     let last = bytes.len() - 1;
     bytes[last] ^= 0xFF;
     let t = Scripted::new();
+    // An integrity failure is treated like a torn generation: redownloaded once
+    // within the bounded budget, then surfaced. Both attempts serve corruption.
+    t.push("seg:probe", Resp::ok(200, bytes.clone()));
     t.push("seg:probe", Resp::ok(200, bytes));
     let c = client(t.clone());
     let seg = whole_segment("seg-0009.jss", checksum);
@@ -699,34 +812,45 @@ async fn corrupt_segment_fails_integrity() {
         .await
         .expect_err("integrity failure");
     assert!(matches!(err, Error::DownloadFailed(_)));
+    // Exactly two attempts: the initial download plus one bounded redownload.
+    assert_eq!(t.log().len(), 2);
 }
 
 #[tokio::test(start_paused = true)]
-async fn truncated_segment_fails_integrity() {
+async fn truncated_segment_is_redownloaded_then_succeeds() {
+    // Regression (the 2026-06-28 oracle shape): a clean-EOF truncation that
+    // still parses as a complete HTTP body must be classified transient — the
+    // segment is redownloaded and the retry succeeds, never misreported as a
+    // permanent failure.
     let (bytes, checksum) = seal(&[vec![row(1), row(2)]]);
     let truncated = bytes[..bytes.len() - 10].to_vec();
     let t = Scripted::new();
     t.push("seg:probe", Resp::ok(200, truncated));
+    t.push("seg:probe", Resp::ok(200, bytes));
     let c = client(t.clone());
     let seg = whole_segment("seg-0010.jss", checksum);
-    let err = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
+    let out = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
         .await
-        .expect_err("truncation failure");
-    assert!(matches!(err, Error::DownloadFailed(_)));
+        .expect("redownload after truncation");
+    assert_eq!(out.events.len(), 2);
+    assert_eq!(t.log().len(), 2);
 }
 
 #[tokio::test(start_paused = true)]
-async fn checksum_mismatch_against_plan_is_rejected() {
+async fn plan_checksum_mismatch_is_accepted_as_new_generation() {
+    // The plan checksum is a generation identity, not an integrity bind: a
+    // structurally valid segment whose checksum differs from the plan's (e.g.
+    // rewritten by compaction between planning and download) is delivered, as
+    // in Go, rather than failed.
     let (bytes, _checksum) = seal(&[vec![row(1)]]);
     let t = Scripted::new();
     t.push("seg:probe", Resp::ok(200, bytes));
     let c = client(t.clone());
-    // A structurally valid segment, but the plan names a different checksum.
     let seg = whole_segment("seg-0011.jss", "0000000000000000".to_owned());
-    let err = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
+    let out = download_segment(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new())
         .await
-        .expect_err("plan checksum mismatch");
-    assert!(matches!(err, Error::DownloadFailed(_)));
+        .expect("new generation accepted");
+    assert_eq!(out.events.len(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -952,20 +1076,50 @@ async fn planner_rejects_non_advancing_page() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn planner_rejects_duplicate_segment_index() {
+async fn planner_accepts_block_truncation_index_continuation() {
+    // Regression: the server's per-page entry cap truncates block-mode plans
+    // *mid-segment*, and the next page re-plans that segment's remaining blocks
+    // under the same index. The Go client accepts this; rejecting it (as a
+    // "duplicate index") made every large sparse plan fatally unplannable.
+    let blocks_seg = |name: &str, index: i64, min: i64, max: i64, first: i64, last: i64| {
+        format!(
+            r#"{{"checksum":"0123456789abcdef","index":{index},"maxSeq":{max},"minSeq":{min},"mode":"blocks","name":"{name}","blocks":[{{"first":{first},"last":{last}}}]}}"#
+        )
+    };
     let t = Scripted::new();
-    // Two entries share index 0 on one page: a duplicate that would double-count.
-    let segs = format!(
-        "{},{}",
-        seg_json("s0.jss", 0, 1, 50),
-        seg_json("s0-dup.jss", 0, 51, 100)
+    t.push(
+        "plan",
+        plan_page(50, 100, &blocks_seg("s7.jss", 7, 1, 100, 0, 2)),
     );
-    t.push("plan", plan_page(100, 100, &segs));
+    t.push(
+        "plan",
+        plan_page(100, 100, &blocks_seg("s7.jss", 7, 1, 100, 3, 5)),
+    );
     let c = client(t.clone());
-    let err = plan_snapshot(&c, &Filter::new(), 0, None, &CancelToken::new())
+    let plan = plan_snapshot(&c, &Filter::new(), 0, None, &CancelToken::new())
         .await
-        .expect_err("duplicate index");
-    assert!(matches!(err, Error::PlanInvalid(_)));
+        .expect("block-truncation continuation accepted");
+    assert_eq!(plan.segments.len(), 2);
+    assert_eq!(plan.segments[0].index, 7);
+    assert_eq!(plan.segments[1].index, 7);
+}
+
+#[tokio::test(start_paused = true)]
+async fn planner_accepts_before_seq_inside_a_segment() {
+    // Regression: with a caller beforeSeq landing inside a segment, the server
+    // caps sealedTipSeq at beforeSeq but reports the segment's *true* maxSeq.
+    // The plan must be accepted (the download window clips the extra rows) —
+    // rejecting it made every non-boundary --before-seq snapshot fatally
+    // unplannable against the real server.
+    let t = Scripted::new();
+    t.push("plan", plan_page(100, 100, &seg_json("s0.jss", 0, 50, 150)));
+    let c = client(t.clone());
+    let plan = plan_snapshot(&c, &Filter::new(), 0, Some(100), &CancelToken::new())
+        .await
+        .expect("straddling segment accepted");
+    assert_eq!(plan.sealed_tip_seq, 100);
+    assert_eq!(plan.before_seq, 100);
+    assert_eq!(plan.segments[0].max_seq, 150);
 }
 
 #[tokio::test(start_paused = true)]

@@ -14,6 +14,8 @@
 //! `JETSTREAM_API_KEY` environment variable — never a flag, so it stays out of
 //! shell history and process listings. The live tail needs no key.
 
+use std::io::{self, Write};
+
 use anyhow::{Context, Result, bail};
 
 use shrike::jetstream::{
@@ -25,7 +27,9 @@ use shrike::jetstream::{
 #[derive(clap::Args)]
 pub struct Args {
     /// Jetstream host, without a scheme (e.g. jetstream.us-east.bsky.network).
-    #[arg(long, default_value = "jetstream.us-east.bsky.network")]
+    /// Required: with no default, an accidental invocation cannot silently start
+    /// a production full replay.
+    #[arg(long)]
     pub host: String,
 
     /// Use ws:// and http:// instead of wss:// and https:// (loopback testing).
@@ -105,12 +109,17 @@ pub async fn run(args: Args) -> Result<()> {
     let engine = Engine::new(archive, ws, dict, config, cancel.clone());
     let stats = engine.stats();
 
-    // Ctrl-C requests a clean stop: the engine finishes the batch in flight and
-    // returns Ok(()), so a persisted cursor stays consistent.
+    // The first Ctrl-C requests a clean stop: the engine finishes the batch in
+    // flight and returns Ok(()), so a persisted cursor stays consistent. A second
+    // Ctrl-C forces an immediate exit for a run that is wedged mid-batch.
     let cancel_on_signal = cancel.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             cancel_on_signal.cancel();
+        }
+        if tokio::signal::ctrl_c().await.is_ok() {
+            // 130 = 128 + SIGINT, the conventional shell exit status for Ctrl-C.
+            std::process::exit(130);
         }
     });
 
@@ -130,9 +139,10 @@ pub async fn run(args: Args) -> Result<()> {
         .context("jetstream engine failed")?;
 
     // A final snapshot so a stats run always ends with the totals, even if the
-    // last batch did not trigger a periodic print.
+    // last batch did not trigger a periodic print. A broken pipe here is a clean
+    // exit, not an error, so the write result is intentionally discarded.
     if args.stats {
-        emit_stats(&stats, args.json);
+        let _ = emit_stats(&stats, args.json);
     }
     Ok(())
 }
@@ -195,15 +205,21 @@ struct CliSink {
 
 impl EngineSink for CliSink {
     async fn deliver(&mut self, delivery: Delivery) -> bool {
-        match delivery {
+        let result = match delivery {
             Delivery::Batch(batch) => match self.output {
                 Output::Events { json } => emit_batch(&batch, json),
                 Output::Stats { json } => emit_stats(&self.stats, json),
             },
             // Advisories go to stderr so stdout stays a clean event/stats stream.
-            Delivery::Info(info) => emit_info(&info),
-        }
-        true
+            Delivery::Info(info) => {
+                emit_info(&info);
+                Ok(())
+            }
+        };
+        // A broken stdout pipe (e.g. `shrike jetstream … | head`) is a clean stop,
+        // not a failure — the same as Go's client exiting when `enc.Encode`
+        // returns an error. Returning `false` ends the run with Ok(()).
+        !is_broken_pipe(&result)
     }
 
     async fn recoverable(&mut self, error: shrike::jetstream::Error) -> bool {
@@ -214,24 +230,34 @@ impl EngineSink for CliSink {
     }
 }
 
-fn emit_batch(batch: &Batch, json: bool) {
-    for event in batch.events() {
-        emit_event(event, json);
-    }
+/// Whether an emit result is a broken-pipe error (downstream reader closed).
+fn is_broken_pipe(result: &io::Result<()>) -> bool {
+    matches!(result, Err(e) if e.kind() == io::ErrorKind::BrokenPipe)
 }
 
-fn emit_event(event: &Event, json: bool) {
+fn emit_batch(batch: &Batch, json: bool) -> io::Result<()> {
+    // Lock stdout once for the whole batch so lines are not interleaved and the
+    // per-line lock overhead is paid once.
+    let mut out = io::stdout().lock();
+    for event in batch.events() {
+        emit_event(&mut out, event, json)?;
+    }
+    out.flush()
+}
+
+fn emit_event(out: &mut impl Write, event: &Event, json: bool) -> io::Result<()> {
     if json {
         match event_to_json(event) {
             Ok(value) => match serde_json::to_string(&value) {
-                Ok(line) => println!("{line}"),
+                Ok(line) => writeln!(out, "{line}")?,
                 Err(e) => eprintln!("failed to serialize event seq={}: {e}", event.seq),
             },
             Err(e) => eprintln!("failed to convert event seq={}: {e}", event.seq),
         }
     } else {
-        println!("{}", event_human(event));
+        writeln!(out, "{}", event_human(event))?;
     }
+    Ok(())
 }
 
 fn event_to_json(event: &Event) -> Result<serde_json::Value> {
@@ -297,9 +323,10 @@ fn operation_str(op: Operation) -> &'static str {
     }
 }
 
-fn emit_stats(stats: &StatsHandle, json: bool) {
+fn emit_stats(stats: &StatsHandle, json: bool) -> io::Result<()> {
     let s = stats.snapshot();
     let downloads = stats.active_downloads();
+    let mut out = io::stdout().lock();
     if json {
         let value = serde_json::json!({
             "pages": s.pages,
@@ -311,11 +338,12 @@ fn emit_stats(stats: &StatsHandle, json: bool) {
             "active_downloads": downloads,
         });
         match serde_json::to_string(&value) {
-            Ok(line) => println!("{line}"),
+            Ok(line) => writeln!(out, "{line}")?,
             Err(e) => eprintln!("failed to serialize stats: {e}"),
         }
     } else {
-        println!(
+        writeln!(
+            out,
             "pages={} tip={} planned={} gap={} delivered={} processed={} downloads={}",
             s.pages,
             s.sealed_tip_seq,
@@ -324,8 +352,9 @@ fn emit_stats(stats: &StatsHandle, json: bool) {
             s.delivered_events,
             s.last_processed_seq,
             downloads,
-        );
+        )?;
     }
+    out.flush()
 }
 
 fn emit_info(info: &Info) {

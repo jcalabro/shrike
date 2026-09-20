@@ -9,14 +9,19 @@
 //! 2. **Pure live** (no [`ArchiveSource`]): run the live tail from the
 //!    configured cursor. `CursorTooOld` is immediately fatal — there is no
 //!    archive loop to re-enter.
-//! 3. **Archive replay**: pin the sealed tip `S`, download the planned segments
-//!    under bounded concurrency, and deliver their windowed events in ordered
-//!    batches.
+//! 3. **Archive replay**: pin the sealed tip `S` on the first plan page, then
+//!    interleave planning and downloading page by page — plan a page, download
+//!    its segments under bounded concurrency, deliver their windowed events in
+//!    ordered batches, then plan the next page — exactly as the Go client
+//!    does. A failed segment download is a *recoverable* per-entry error: it is
+//!    reported in order through [`EngineSink::recoverable`] and the sweep
+//!    continues with the next entry.
 //! 4. **Snapshot-only** completion ends here.
-//! 5. **Cutover** to the live tail exactly once at `max(S, last_processed_seq)`.
-//!    Because `subscribeEvents` resumes *inclusively* and the archive already
-//!    covered `(after, S]`, the live subscription resumes from
-//!    `max(S, processed) + 1` so the boundary sequence is never delivered twice.
+//! 5. **Cutover** to the live tail exactly once at
+//!    `max(S, last_processed_seq, live_seen_seq)`: the live subscription resumes
+//!    *exclusively* from that boundary (the server's inclusive replay of the
+//!    boundary itself is deduplicated), so the boundary sequence is never
+//!    delivered twice — the Go cutover's `max(S, lastSeq)` floor exactly.
 //! 6. On `CursorTooOld` **at cutover** the live tail flushes its pending batch,
 //!    and the engine re-enters archive replay from the last processed sequence,
 //!    pinning a fresh tip. This repeats until progress stalls: after
@@ -50,7 +55,7 @@ use super::filter::Filter;
 use super::live::{
     DeliverySink, DictionarySource, LiveConfig, LiveConsumer, LiveCursor, WsTransport,
 };
-use super::planner::{PlanSegment, SnapshotPlan, plan_snapshot};
+use super::planner::{PlanPage, PlanSegment, PlanSweep, plan_page};
 use super::transport::HttpTransport;
 
 /// The default bound on consecutive no-progress re-backfill cycles before the
@@ -84,22 +89,26 @@ pub trait EngineSink {
     fn recoverable(&mut self, error: Error) -> impl Future<Output = bool>;
 }
 
-/// A source of archive snapshot plans and segment downloads.
+/// A source of archive snapshot plan pages and segment downloads.
 ///
 /// The production implementation ([`ClientArchive`]) delegates to
-/// [`plan_snapshot`] and [`download_segment`]; the seam lets the engine's
+/// [`plan_page`] and [`download_segment`]; the seam lets the engine's
 /// orchestration be driven by in-memory data in tests without scripting the full
-/// `.jss` HTTP protocol.
+/// `.jss` HTTP protocol. The engine drives planning page by page, interleaved
+/// with downloads, and owns the sweep bookkeeping ([`PlanSweep`]).
 pub trait ArchiveSource {
-    /// Build a validated snapshot plan for `filter` over `(after_seq, before_seq]`
-    /// (an open `before_seq` means up to the sealed tip), pinning the sealed tip.
-    fn plan(
+    /// Fetch and validate one `planSnapshot` page for `filter`. `after_seq` is
+    /// the page's exclusive floor; `pinned_tip` is `None` for a sweep's first
+    /// page (send the caller's `before_seq`) and `Some(S)` afterwards (freeze
+    /// `beforeSeq` at `S`).
+    fn plan_page(
         &self,
         filter: &Filter,
         after_seq: u64,
         before_seq: Option<u64>,
+        pinned_tip: Option<u64>,
         cancel: &CancelToken,
-    ) -> impl Future<Output = Result<SnapshotPlan>>;
+    ) -> impl Future<Output = Result<PlanPage>>;
 
     /// Download one planned segment and return its windowed, ordered events plus
     /// any recoverable row-level drops.
@@ -114,6 +123,11 @@ pub trait ArchiveSource {
 
     /// The maximum number of segment downloads to run concurrently.
     fn concurrency(&self) -> usize;
+
+    /// The bound on plan pages per sweep before the plan is rejected.
+    fn max_plan_pages(&self) -> u32 {
+        100_000
+    }
 }
 
 /// The production [`ArchiveSource`], backed by an [`ArchiveClient`].
@@ -129,14 +143,22 @@ impl<T> ClientArchive<T> {
 }
 
 impl<T: HttpTransport> ArchiveSource for ClientArchive<T> {
-    fn plan(
+    fn plan_page(
         &self,
         filter: &Filter,
         after_seq: u64,
         before_seq: Option<u64>,
+        pinned_tip: Option<u64>,
         cancel: &CancelToken,
-    ) -> impl Future<Output = Result<SnapshotPlan>> {
-        plan_snapshot(&self.client, filter, after_seq, before_seq, cancel)
+    ) -> impl Future<Output = Result<PlanPage>> {
+        plan_page(
+            &self.client,
+            filter,
+            after_seq,
+            before_seq,
+            pinned_tip,
+            cancel,
+        )
     }
 
     fn download(
@@ -152,6 +174,10 @@ impl<T: HttpTransport> ArchiveSource for ClientArchive<T> {
 
     fn concurrency(&self) -> usize {
         self.client.limits().concurrency
+    }
+
+    fn max_plan_pages(&self) -> u32 {
+        self.client.limits().max_plan_pages
     }
 }
 
@@ -217,7 +243,8 @@ impl EngineConfig {
 /// The engine's shared, atomically-updated progress counters.
 #[derive(Debug, Default)]
 struct AtomicStats {
-    /// Archive plan/replan cycles processed.
+    /// Server plan pages fully downloaded and delivered (counted after emit, so
+    /// a monitor never sees a page claimed before its work reached the sink).
     pages: AtomicU64,
     /// The pinned sealed-tip sequence `S` (highest seen across replans).
     sealed_tip_seq: AtomicU64,
@@ -371,10 +398,17 @@ where
         let max_batch = config.live.max_batch;
         let can_backfill = archive.is_some();
 
+        // The live "seen" watermark: the highest sequence the live tail has
+        // *accepted* (pre-filter), matching the Go consumer's LastSeq. It drives
+        // re-backfill resume points and stall detection, so a live stream whose
+        // events all fail the filter still counts as forward progress.
+        let seen = Arc::new(AtomicU64::new(config.after_seq));
+
         // Re-backfill state: the current archive floor and the last cutover's
         // progress markers, used to bound no-progress cycles.
         let mut after = config.after_seq;
         let mut prev_processed = stats.last_processed_seq.load(Ordering::Relaxed);
+        let mut prev_seen = seen.load(Ordering::Relaxed);
         let mut prev_tip = 0u64;
         let mut stalls = 0u32;
 
@@ -383,27 +417,59 @@ where
                 return Ok(());
             }
 
-            // === Archive phase ===
+            // === Archive phase: plan a page, download it, plan the next ===
             if let Some(arch) = &archive {
-                stats.pages.fetch_add(1, Ordering::Relaxed);
-                let plan = match arch.plan(filter, after, config.before_seq, &cancel).await {
-                    Ok(plan) => plan,
-                    Err(Error::Canceled) => return Ok(()),
-                    Err(err) => return Err(err),
-                };
-                stats
-                    .sealed_tip_seq
-                    .fetch_max(plan.sealed_tip_seq, Ordering::Relaxed);
-                stats
-                    .planned_through_seq
-                    .fetch_max(plan.before_seq, Ordering::Relaxed);
+                let mut sweep = PlanSweep::new(after, config.before_seq, arch.max_plan_pages());
+                // The ascending-delivery floor persists across the whole sweep.
+                let mut floor = after;
+                loop {
+                    if cancel.is_cancelled() {
+                        return Ok(());
+                    }
+                    let (page_after, page_before, pinned) = sweep.bounds();
+                    let page = match arch
+                        .plan_page(filter, page_after, page_before, pinned, &cancel)
+                        .await
+                    {
+                        Ok(page) => page,
+                        Err(Error::Canceled) => return Ok(()),
+                        Err(err) => return Err(err),
+                    };
+                    sweep.absorb(&page)?;
+                    let tip = sweep.tip().unwrap_or_default();
+                    // The tip is published as soon as it is known (a monitor may
+                    // see the goal before any download); pages and coverage are
+                    // published only after the page's work is delivered, so a
+                    // shrinking residual gap never claims undelivered work.
+                    stats.sealed_tip_seq.fetch_max(tip, Ordering::Relaxed);
 
-                match replay_archive(arch, &plan, after, filter, max_batch, &cancel, &stats, sink)
+                    match replay_page(
+                        arch,
+                        &page.segments,
+                        page_after,
+                        tip,
+                        filter,
+                        max_batch,
+                        &cancel,
+                        &stats,
+                        sink,
+                        &mut floor,
+                    )
                     .await
-                {
-                    Ok(true) => return Ok(()), // consumer gone or cancelled
-                    Ok(false) => {}
-                    Err(err) => return Err(err),
+                    {
+                        Ok(true) => return Ok(()), // consumer gone or cancelled
+                        Ok(false) => {}
+                        Err(err) => return Err(err),
+                    }
+
+                    stats.pages.fetch_add(1, Ordering::Relaxed);
+                    stats
+                        .planned_through_seq
+                        .fetch_max(sweep.planned_through(), Ordering::Relaxed);
+
+                    if sweep.done() {
+                        break;
+                    }
                 }
 
                 if config.snapshot_only {
@@ -419,9 +485,15 @@ where
             let live_config = if can_backfill {
                 let tip = stats.sealed_tip_seq.load(Ordering::Relaxed);
                 let processed = stats.last_processed_seq.load(Ordering::Relaxed);
-                // Resume inclusively from the sequence *after* the covered
-                // boundary so the boundary seq is never delivered twice.
-                let resume_from = tip.max(processed).saturating_add(1);
+                let seen_seq = seen.load(Ordering::Relaxed);
+                // Resume exclusively from the covered boundary — the pinned
+                // tip, the delivered cursor, or the live seen watermark,
+                // whichever is highest. `Resume(Seq(n))` delivers strictly
+                // after `n` (the server's inclusive replay of `n` is
+                // deduplicated), so the boundary seq is never delivered twice
+                // and an empty archive (`n == 0`) replays from the start —
+                // exactly the Go cutover's `max(S, lastSeq)` floor.
+                let resume_from = tip.max(processed).max(seen_seq);
                 let mut live = config.live.clone();
                 live.cursor = LiveCursor::Resume(Cursor::Seq(resume_from));
                 live
@@ -436,7 +508,8 @@ where
                 outcome: LiveOutcome::Open,
             };
             let consumer =
-                LiveConsumer::new(ws.clone(), dict.clone(), live_config, cancel.clone())?;
+                LiveConsumer::new(ws.clone(), dict.clone(), live_config, cancel.clone())?
+                    .with_seen_watermark(seen.clone());
             consumer.run(&mut bridge).await?;
 
             match bridge.outcome {
@@ -446,10 +519,13 @@ where
                     // `CursorTooOld` at cutover with an archive to fall back on.
                     // The live tail already flushed its pending batch (updating
                     // the processed cursor) before delivering the error, so
-                    // re-backfill resumes from the last processed sequence.
+                    // re-backfill resumes from the highest sequence the live
+                    // tail accepted — filtered-out events included, as in Go.
                     let processed = stats.last_processed_seq.load(Ordering::Relaxed);
+                    let seen_seq = seen.load(Ordering::Relaxed);
                     let tip = stats.sealed_tip_seq.load(Ordering::Relaxed);
-                    let advanced = processed > prev_processed || tip > prev_tip;
+                    let advanced =
+                        processed > prev_processed || seen_seq > prev_seen || tip > prev_tip;
                     if advanced {
                         stalls = 0;
                     } else {
@@ -461,53 +537,59 @@ where
                         }
                     }
                     prev_processed = processed;
+                    prev_seen = seen_seq;
                     prev_tip = tip;
-                    after = processed;
+                    after = processed.max(seen_seq);
                 }
             }
         }
     }
 }
 
-/// Download and deliver the archive snapshot for `plan` in order.
+/// Download and deliver one plan page's segments in order.
 ///
 /// The [`ArchiveSource`] contract requires each segment's events to be
 /// seq-ascending and the segments themselves to be globally ordered and
-/// non-overlapping in plan order. Given that, a running floor over the whole
-/// snapshot yields a strictly ascending, duplicate-free stream: events at or
-/// below `after` (already delivered) are skipped, and a straddling unit that
-/// repeats the boundary seq is collapsed. If a segment violates the ordering
-/// contract — an in-window seq that regresses below one already delivered from
-/// an earlier segment — the plan is rejected as [`Error::PlanInvalid`] rather
-/// than silently dropping the out-of-order event, since merging arbitrary
-/// overlap would require unbounded buffering. Events are batched to `max_batch`;
-/// when a segment carries recoverable row drops, the pending batch is flushed
-/// first so the ordered errors follow the valid rows that preceded them.
+/// non-overlapping in plan order. Given that, the running `floor` (persisting
+/// across a sweep's pages) yields a strictly ascending, duplicate-free stream:
+/// events at or below `after` (already covered) are skipped, and a straddling
+/// unit that repeats the boundary seq is collapsed. If a segment violates the
+/// ordering contract — an in-window seq that regresses below one already
+/// delivered — the plan is rejected as [`Error::PlanInvalid`] rather than
+/// silently dropping the out-of-order event, since merging arbitrary overlap
+/// would require unbounded buffering.
+///
+/// Events are batched to `max_batch` and the pending batch is flushed at each
+/// segment boundary, so delivery latency is bounded by a segment's download,
+/// mirroring the Go engine's block-aligned emission. A segment whose download or
+/// decode fails is a *recoverable* per-entry error, as in Go: its decoded prefix
+/// (blocks mode) is delivered, the ordered error follows through
+/// [`EngineSink::recoverable`], and the sweep continues with the next entry.
+/// Cancellation flushes the pending batch before stopping.
 ///
 /// Returns `Ok(true)` if the consumer asked to stop or the run was cancelled,
-/// `Ok(false)` on normal completion, or `Err` on a fatal download error.
+/// `Ok(false)` on normal completion, or `Err` on a fatal error.
 #[allow(clippy::too_many_arguments)]
-async fn replay_archive<A, S>(
+async fn replay_page<A, S>(
     arch: &A,
-    plan: &SnapshotPlan,
+    segments: &[PlanSegment],
     after: u64,
+    before: u64,
     filter: &Filter,
     max_batch: usize,
     cancel: &CancelToken,
     stats: &Arc<AtomicStats>,
     sink: &mut S,
+    floor: &mut u64,
 ) -> Result<bool>
 where
     A: ArchiveSource,
     S: EngineSink,
 {
-    let before = plan.before_seq;
     let concurrency = arch.concurrency().max(1);
     let mut buf: Vec<Event> = Vec::new();
-    // The dedup floor: only strictly-increasing sequences past it are delivered.
-    let mut floor = after;
 
-    let mut downloads = stream::iter(plan.segments.iter().map(|segment| {
+    let mut downloads = stream::iter(segments.iter().map(|segment| {
         let stats = stats.clone();
         async move {
             let _guard = WorkerGuard::new(stats);
@@ -518,12 +600,27 @@ where
 
     while let Some(result) = downloads.next().await {
         if cancel.is_cancelled() {
+            // Deliver what was already decoded before winding down, as in Go,
+            // where the final flush runs even after ctx cancellation.
+            let _ = flush_archive_batch(&mut buf, stats, sink).await;
             return Ok(true);
         }
         let downloaded = match result {
             Ok(downloaded) => downloaded,
-            Err(Error::Canceled) => return Ok(true),
-            Err(err) => return Err(err),
+            Err(Error::Canceled) => {
+                let _ = flush_archive_batch(&mut buf, stats, sink).await;
+                return Ok(true);
+            }
+            // A failed entry is recoverable: report it in order and keep the
+            // sweep going (Go's per-entry error contract). Later entries carry
+            // higher sequences, so ordering is preserved.
+            Err(err) => {
+                if !flush_archive_batch(&mut buf, stats, sink).await || !sink.recoverable(err).await
+                {
+                    return Ok(true);
+                }
+                continue;
+            }
         };
 
         for event in downloaded.events {
@@ -531,19 +628,19 @@ where
             // repeated by a straddling unit or an inclusive segment boundary:
             // collapse without advancing. These are duplicates of an event we
             // have already emitted, not distinct data.
-            if event.seq <= after || event.seq == floor {
+            if event.seq <= after || event.seq == *floor {
                 continue;
             }
             // A *lower* seq inside the window, arriving after a higher one, is a
             // distinct event out of order: the source violated the global
             // ordering contract. Merging arbitrary overlap would need unbounded
             // buffering, so fail loud instead of silently dropping the event.
-            if event.seq < floor {
+            if event.seq < *floor {
                 return Err(Error::PlanInvalid(
                     "archive events are not strictly increasing across segments",
                 ));
             }
-            floor = event.seq;
+            *floor = event.seq;
             buf.push(event);
             if buf.len() >= max_batch && !flush_archive_batch(&mut buf, stats, sink).await {
                 return Ok(true);
@@ -561,6 +658,22 @@ where
                     return Ok(true);
                 }
             }
+        }
+
+        // A blocks-mode entry that failed partway delivers its decoded prefix
+        // above, then its ordered per-entry error; the sweep continues.
+        if let Some(failure) = downloaded.failure {
+            if !flush_archive_batch(&mut buf, stats, sink).await || !sink.recoverable(failure).await
+            {
+                return Ok(true);
+            }
+            continue;
+        }
+
+        // Flush at the segment boundary so delivery latency is bounded by one
+        // segment, not by the whole sweep.
+        if !flush_archive_batch(&mut buf, stats, sink).await {
+            return Ok(true);
         }
     }
 
@@ -661,6 +774,17 @@ impl<S: EngineSink> DeliverySink for LiveBridge<'_, S> {
                 };
                 false
             }
+        }
+    }
+
+    async fn recoverable(&mut self, error: Error) -> bool {
+        // Ordered recoverable errors from the live tail (malformed frames,
+        // reconnect notices) flow straight through to the engine consumer.
+        if self.user.recoverable(error).await {
+            true
+        } else {
+            self.outcome = LiveOutcome::Stopped;
+            false
         }
     }
 }

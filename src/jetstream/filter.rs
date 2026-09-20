@@ -439,4 +439,58 @@ mod tests {
             .unwrap();
         f.validate().unwrap();
     }
+
+    const D: &str = "did:plc:abcdefghijklmnopqrstuvwx";
+
+    /// The collection predicate constrains commits only; DID-level markers
+    /// (identity/account/sync) bypass it. This is the consumer's only signal to
+    /// purge a dead account, so it must survive a narrow collection filter —
+    /// mirrors the Go client's `wants()` contract exercised end-to-end by the
+    /// engine's `collection_filter_passes_did_markers_across_archive_and_live`.
+    #[test]
+    fn collection_filter_constrains_commits_but_bypasses_markers() {
+        let f = Filter::new().collection("app.bsky.feed.post").unwrap();
+        // Commit: only the matching collection passes.
+        assert!(f.matches_segment(Kind::Commit, D, "app.bsky.feed.post"));
+        assert!(!f.matches_segment(Kind::Commit, D, "app.bsky.feed.like"));
+        // Every DID-level marker bypasses the collection predicate.
+        for kind in [Kind::Identity, Kind::Account, Kind::Sync] {
+            assert!(f.matches_segment(kind, D, ""));
+        }
+    }
+
+    /// A `kinds=[commit]` filter excludes the DID-level markers entirely, even
+    /// though those markers otherwise bypass the collection predicate.
+    #[test]
+    fn commit_only_kind_filter_excludes_markers() {
+        let f = Filter::new().kinds([Kind::Commit]);
+        assert!(f.matches_segment(Kind::Commit, D, "app.bsky.feed.post"));
+        for kind in [Kind::Identity, Kind::Account, Kind::Sync] {
+            assert!(!f.matches_segment(kind, D, ""));
+        }
+    }
+
+    /// The DID predicate applies to every kind, including markers, and a row DID
+    /// that is absent (or unparseable) fails a constrained subscription.
+    #[test]
+    fn did_predicate_applies_to_every_kind() {
+        let other = "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz";
+        let f = Filter::new().did(D).unwrap();
+        assert!(f.matches_segment(Kind::Commit, D, "app.bsky.feed.post"));
+        assert!(f.matches_segment(Kind::Account, D, ""));
+        assert!(!f.matches_segment(Kind::Account, other, ""));
+        // A row DID that is not even a valid DID cannot be a member.
+        assert!(!f.matches_segment(Kind::Sync, "not-a-did", ""));
+    }
+
+    /// An empty filter (the default) admits every kind, DID, and collection.
+    #[test]
+    fn empty_filter_admits_everything() {
+        let f = Filter::new();
+        assert!(f.matches_segment(Kind::Commit, D, "app.bsky.feed.post"));
+        assert!(f.matches_segment(Kind::Commit, D, ""));
+        for kind in [Kind::Identity, Kind::Account, Kind::Sync] {
+            assert!(f.matches_segment(kind, D, ""));
+        }
+    }
 }

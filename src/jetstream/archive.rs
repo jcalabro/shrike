@@ -43,7 +43,9 @@ pub struct Limits {
     pub max_plan_pages: u32,
     /// The maximum number of segments a single plan may contain.
     pub max_plan_segments: usize,
-    /// The maximum number of whole-segment generation restarts before failing.
+    /// The maximum number of whole-segment redownloads (after a generation
+    /// change or a failed integrity check) before failing. The default of 1
+    /// matches Go's `maxGenerationAttempts = 2` — two total attempts.
     pub max_generation_restarts: u32,
 }
 
@@ -57,7 +59,7 @@ impl Default for Limits {
             concurrency: 8,
             max_plan_pages: 100_000,
             max_plan_segments: 1_000_000,
-            max_generation_restarts: 2,
+            max_generation_restarts: 1,
         }
     }
 }
@@ -190,7 +192,7 @@ where
     ///
     /// `make` builds a fresh request per attempt (the authorization and user
     /// agent are added here, so callers never touch the key). Transient failures
-    /// — retryable transport faults, `408`/`429`/`5xx` — are retried with
+    /// — retryable transport faults, `429`, `5xx` — are retried with
     /// `Retry-After`/`RateLimit-Reset` as a floor; terminal `4xx` bodies become a
     /// structured [`Error::Protocol`]; cancellation short-circuits.
     pub(crate) async fn control_request<F>(&self, cancel: &CancelToken, make: F) -> Result<Vec<u8>>
@@ -232,6 +234,13 @@ where
                             Err(BodyReadError::TooLarge) => super::retry::Attempt::Fatal(
                                 Error::DownloadFailed("control response body exceeded limit"),
                             ),
+                            // Bounded reads have no expected length, so this
+                            // cannot occur here; classify defensively as a
+                            // retryable truncation.
+                            Err(BodyReadError::Truncated) => super::retry::Attempt::Retry {
+                                delay_hint: None,
+                                err: Error::DownloadFailed("control response body was truncated"),
+                            },
                             Err(BodyReadError::Transport(err)) => {
                                 let retryable = err.is_retryable();
                                 let err = Error::from(err);
@@ -328,17 +337,19 @@ pub(crate) enum SendError {
 pub(crate) enum StatusClass {
     /// 2xx.
     Success,
-    /// A status a bounded retry may clear (`408`, `429`, `5xx`).
+    /// A status a bounded retry may clear (`429`, `5xx`).
     Retryable,
     /// A terminal client error (other `4xx`).
     Terminal,
 }
 
-/// Classify an HTTP status for archive requests.
+/// Classify an HTTP status for archive requests. Mirrors the Go client's
+/// `retryableStatus`: only `429` and `5xx` are retryable; every other non-2xx
+/// (including `408`) is terminal.
 pub(crate) fn classify_status(status: u16) -> StatusClass {
     match status {
         200..=299 => StatusClass::Success,
-        408 | 429 => StatusClass::Retryable,
+        429 => StatusClass::Retryable,
         500..=599 => StatusClass::Retryable,
         _ => StatusClass::Terminal,
     }
@@ -371,6 +382,10 @@ pub(crate) enum BodyReadError {
     Transport(TransportError),
     /// The body exceeded the supplied cap.
     TooLarge,
+    /// The body ended (clean EOF) before the expected byte count arrived. As in
+    /// Go's `io.ReadFull`, a coherent-but-short response is a transient
+    /// truncation, not corruption: the caller retries it.
+    Truncated,
     /// Cancellation observed mid-body.
     Canceled,
 }
@@ -402,30 +417,34 @@ pub(crate) async fn read_body_bounded<B: HttpBody>(
     }
 }
 
-/// Read exactly `expected` bytes from a body (a range stripe), enforcing the
-/// exact length: a short body is a truncation, an over-long body is corruption.
+/// Read exactly `expected` bytes from a body (a range stripe), with Go's
+/// `io.ReadFull` semantics: a body that ends short is a retryable
+/// [`BodyReadError::Truncated`]; once `expected` bytes have arrived reading
+/// stops and any surplus the server sends is left unread and discarded.
 pub(crate) async fn read_body_exact<B: HttpBody>(
     mut body: B,
     expected: u64,
     cancel: &CancelToken,
 ) -> core::result::Result<Vec<u8>, BodyReadError> {
     let mut out: Vec<u8> = Vec::with_capacity(expected.min(1 << 20) as usize);
-    loop {
+    while (out.len() as u64) < expected {
         if cancel.is_cancelled() {
             return Err(BodyReadError::Canceled);
         }
         match body.chunk().await {
             Ok(Some(chunk)) => {
-                let next = out.len() as u64 + chunk.len() as u64;
-                if next > expected {
-                    return Err(BodyReadError::TooLarge);
+                let need = expected - out.len() as u64;
+                if chunk.len() as u64 > need {
+                    out.extend_from_slice(&chunk[..need as usize]);
+                } else {
+                    out.extend_from_slice(&chunk);
                 }
-                out.extend_from_slice(&chunk);
             }
-            Ok(None) => return Ok(out),
+            Ok(None) => return Err(BodyReadError::Truncated),
             Err(err) => return Err(BodyReadError::Transport(err)),
         }
     }
+    Ok(out)
 }
 
 /// Build a JSON request body as [`Bytes`].
@@ -467,7 +486,8 @@ mod tests {
         assert_eq!(classify_status(206), StatusClass::Success);
         assert_eq!(classify_status(429), StatusClass::Retryable);
         assert_eq!(classify_status(503), StatusClass::Retryable);
-        assert_eq!(classify_status(408), StatusClass::Retryable);
+        // Only 429 and 5xx retry, as in Go's retryableStatus: 408 is terminal.
+        assert_eq!(classify_status(408), StatusClass::Terminal);
         assert_eq!(classify_status(400), StatusClass::Terminal);
         assert_eq!(classify_status(404), StatusClass::Terminal);
         assert_eq!(classify_status(416), StatusClass::Terminal);

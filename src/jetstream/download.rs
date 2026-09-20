@@ -21,10 +21,12 @@
 //! it.
 //!
 //! - **`segment` mode** re-verifies the whole object before it is trusted:
-//!   [`SegmentReader`] re-reads the sealed header and validates the block index,
-//!   then the downloader recomputes the xxh3 checksum and cross-checks it against
-//!   the one the plan named, so a truncated, corrupted, or substituted object
-//!   cannot pass as the planned segment.
+//!   [`SegmentReader`] re-reads the sealed header, recomputes the xxh3 checksum,
+//!   and validates the block index, so a truncated or corrupted object is
+//!   redownloaded (within the bounded restart budget) rather than decoded. The
+//!   plan's checksum is a generation identity, not an integrity bind: a segment
+//!   rewritten between planning and download is accepted as a consistent new
+//!   generation, as in Go, with the snapshot window still clipping its rows.
 //! - **`blocks` mode** fetches only the requested block frames, so it never
 //!   retrieves the header or footer the checksum covers and does not recompute it
 //!   — pulling them would defeat the point of a sparse download, and the plan
@@ -72,6 +74,10 @@ pub struct DownloadedSegment {
     pub events: Vec<Event>,
     /// Row-level decode failures (invalid siblings), preserved for reporting.
     pub dropped: Vec<Error>,
+    /// A per-entry failure that stopped this segment partway: in blocks mode the
+    /// decoded prefix in `events` is still valid and deliverable, and the error
+    /// follows it in order (the Go client's emit-prefix-then-error contract).
+    pub failure: Option<Error>,
 }
 
 /// Download one planned segment and return its windowed events.
@@ -91,16 +97,14 @@ pub async fn download_segment<T: HttpTransport>(
 ) -> Result<DownloadedSegment> {
     match &segment.mode {
         SegmentMode::Whole => {
+            // `download_whole` returns bytes that already passed structural
+            // self-verification (header, xxh3, block index). The plan checksum
+            // is deliberately *not* required to match: it is a generation
+            // identity, not an integrity bind — a segment rewritten by
+            // compaction between planning and download is fetched as a
+            // consistent new generation and delivered, as in Go; the snapshot
+            // window still clips its rows.
             let bytes = download_whole(client, segment, cancel).await?;
-            // Re-verify structure + checksum, then bind the object to the plan.
-            let reader = SegmentReader::open(&bytes).map_err(|_| {
-                Error::DownloadFailed("downloaded segment failed integrity validation")
-            })?;
-            if format!("{:016x}", reader.header().checksum) != segment.checksum {
-                return Err(Error::DownloadFailed(
-                    "downloaded segment checksum did not match the plan",
-                ));
-            }
             let decoded = decode_segment_filtered(&bytes, filter)?;
             Ok(window(decoded, after_seq, before_seq))
         }
@@ -131,6 +135,7 @@ fn window(decoded: Decoded, after: u64, before: u64) -> DownloadedSegment {
     DownloadedSegment {
         events,
         dropped: decoded.dropped,
+        failure: None,
     }
 }
 
@@ -173,8 +178,24 @@ async fn download_blocks<T: HttpTransport>(
 
     let mut out = DownloadedSegment::default();
     for frame in frames {
-        let frame = frame?;
-        let decoded = decode_block_frame_filtered(&frame, filter)?;
+        // A failed or corrupt block ends the entry but keeps the decoded prefix:
+        // the caller delivers the prefix, then the ordered per-entry error, as
+        // the Go client does. Cancellation still aborts the whole download.
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(Error::Canceled) => return Err(Error::Canceled),
+            Err(err) => {
+                out.failure = Some(err);
+                return Ok(out);
+            }
+        };
+        let decoded = match decode_block_frame_filtered(&frame, filter) {
+            Ok(decoded) => decoded,
+            Err(err) => {
+                out.failure = Some(err);
+                return Ok(out);
+            }
+        };
         for event in decoded.events {
             if event.seq > after && event.seq <= before {
                 out.events.push(event);
@@ -186,24 +207,37 @@ async fn download_blocks<T: HttpTransport>(
 }
 
 /// Download a whole segment, restarting cleanly (up to the configured budget) if
-/// the object's generation changes mid-download.
+/// the object's generation changes mid-download or the assembled bytes fail
+/// structural self-verification (a truncated or torn object is redownloaded,
+/// not misclassified as permanent).
 async fn download_whole<T: HttpTransport>(
     client: &ArchiveClient<T>,
     segment: &PlanSegment,
     cancel: &CancelToken,
 ) -> Result<Vec<u8>> {
     let mut restarts: u32 = 0;
+    let mut last_failure;
     loop {
         match try_download_whole(client, segment, cancel).await? {
-            WholeOutcome::Done(bytes) => return Ok(bytes),
-            WholeOutcome::Restart => {
-                restarts += 1;
-                if restarts > client.limits().max_generation_restarts {
-                    return Err(Error::DownloadFailed(
-                        "segment was rewritten during download and the restart budget was exhausted",
-                    ));
+            WholeOutcome::Done(bytes) => {
+                // Structural self-verification: sealed header, xxh3 over
+                // header[12..256] ++ footer, and a consistent block index. HTTP
+                // success does not prove integrity; a failure here means a
+                // corrupt or torn object, so redownload within the same bounded
+                // budget as a generation change.
+                if SegmentReader::open(&bytes).is_ok() {
+                    return Ok(bytes);
                 }
+                last_failure = "downloaded segment failed integrity validation";
             }
+            WholeOutcome::Restart => {
+                last_failure =
+                    "segment was rewritten during download and the restart budget was exhausted";
+            }
+        }
+        restarts += 1;
+        if restarts > client.limits().max_generation_restarts {
+            return Err(Error::DownloadFailed(last_failure));
         }
     }
 }
@@ -341,10 +375,10 @@ fn classify_stripe(
     if result.status == 200 || result.status == 416 {
         return StripeOutcome::Restart;
     }
-    // A changed ETag on the part is a generation change.
-    if let Some(part_etag) = result.headers.etag.as_deref()
-        && part_etag != etag
-    {
+    // A changed ETag on the part is a generation change — and so is a *missing*
+    // one, as in Go: unverifiable bytes (e.g. from a proxy that honors Range but
+    // strips the validator) must never be spliced into the buffer.
+    if result.headers.etag.as_deref() != Some(etag) {
         return StripeOutcome::Restart;
     }
     match result
@@ -450,12 +484,14 @@ enum DownloadStatus {
     Terminal,
 }
 
-/// Classify a download status.
+/// Classify a download status. Only `429` and `5xx` retry, matching the Go
+/// client's `retryableStatus`; every other non-2xx (including `408`) is
+/// terminal.
 fn classify_download_status(status: u16) -> DownloadStatus {
     match status {
         200..=299 => DownloadStatus::Read,
         416 => DownloadStatus::RangeNotSatisfiable,
-        408 | 429 => DownloadStatus::Retryable,
+        429 => DownloadStatus::Retryable,
         500..=599 => DownloadStatus::Retryable,
         _ => DownloadStatus::Terminal,
     }
@@ -543,6 +579,13 @@ async fn handle_download_response<B: super::transport::HttpBody>(
                 Err(BodyReadError::TooLarge) => Attempt::Fatal(Error::DownloadFailed(
                     "response body exceeded the size limit",
                 )),
+                // A clean EOF short of the expected length is a transient
+                // truncation, retried like any read error (Go's io.ReadFull
+                // path) — never misclassified as permanent.
+                Err(BodyReadError::Truncated) => Attempt::Retry {
+                    delay_hint: None,
+                    err: Error::DownloadFailed("response body was truncated"),
+                },
                 Err(BodyReadError::Transport(err)) => transport_attempt(err),
             }
         }

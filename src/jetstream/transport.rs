@@ -125,6 +125,9 @@ pub struct ResponseHeaders {
     pub etag: Option<String>,
     /// `Retry-After` as a delta in seconds, if given as an integer.
     pub retry_after_secs: Option<u64>,
+    /// `Retry-After` as an absolute Unix time in seconds, if given as an
+    /// IMF-fixdate (the HTTP-date form of RFC 9110 §10.2.3).
+    pub retry_after_unix_secs: Option<u64>,
     /// `RateLimit-Reset` as an absolute Unix time in seconds, if an integer.
     pub ratelimit_reset_secs: Option<u64>,
 }
@@ -154,8 +157,17 @@ impl ResponseHeaders {
                 "content-range" => out.content_range = Some(bound(value)),
                 "accept-ranges" => out.accept_ranges = Some(bound_lower(value)),
                 "etag" => out.etag = Some(bound(value)),
-                "retry-after" => out.retry_after_secs = value.trim().parse::<u64>().ok(),
-                "ratelimit-reset" | "x-ratelimit-reset" => {
+                "retry-after" => {
+                    // Delta-seconds or an HTTP-date, as in Go's parseRetryAfter
+                    // (strconv.Atoi, falling back to http.ParseTime).
+                    let trimmed = value.trim();
+                    match trimmed.parse::<u64>() {
+                        Ok(secs) => out.retry_after_secs = Some(secs),
+                        Err(_) => out.retry_after_unix_secs = parse_http_date_unix(trimmed),
+                    }
+                }
+                // Only the atproto-conventional `RateLimit-Reset` name, matching Go.
+                "ratelimit-reset" => {
                     out.ratelimit_reset_secs = value.trim().parse::<u64>().ok();
                 }
                 _ => {}
@@ -171,19 +183,36 @@ impl ResponseHeaders {
             .is_some_and(|v| v.split(',').any(|t| t.trim() == "bytes"))
     }
 
-    /// A retry delay hint derived from rate-limit headers, if any: `Retry-After`
-    /// (a delta) takes precedence over `RateLimit-Reset` (an absolute time,
-    /// converted against `now_unix_secs`). A reset already in the past yields a
-    /// zero delay. Returns `None` when neither header constrains the retry.
+    /// A retry delay hint derived from rate-limit headers, if any. Mirrors the
+    /// Go client's `parseRetryAfter`: `RateLimit-Reset` (an absolute Unix time,
+    /// converted against `now_unix_secs`) is consulted first; `Retry-After`
+    /// (delta-seconds or an HTTP-date) applies only when the reset is absent or
+    /// works out to exactly zero. A hint in the past yields a zero delay.
+    /// Returns `None` when neither header constrains the retry.
     pub fn retry_hint(&self, now_unix_secs: u64) -> Option<Duration> {
-        if let Some(secs) = self.retry_after_secs {
-            return Some(Duration::from_secs(secs));
-        }
+        let mut until: Option<i64> = None;
         if let Some(reset) = self.ratelimit_reset_secs {
-            return Some(Duration::from_secs(reset.saturating_sub(now_unix_secs)));
+            until = Some(reset as i64 - now_unix_secs as i64);
         }
-        None
+        if until.unwrap_or(0) == 0 {
+            if let Some(secs) = self.retry_after_secs {
+                until = Some(i64::try_from(secs).unwrap_or(i64::MAX));
+            } else if let Some(at) = self.retry_after_unix_secs {
+                until = Some(at as i64 - now_unix_secs as i64);
+            }
+        }
+        until.map(|u| Duration::from_secs(u.max(0) as u64))
     }
+}
+
+/// Parse an HTTP-date (IMF-fixdate, e.g. `Sun, 06 Nov 1994 08:49:37 GMT`) to
+/// Unix seconds, or `None` when unparseable — untrusted input must not stall
+/// the client. The archaic RFC 850 and asctime forms Go's `http.ParseTime`
+/// also accepts are not supported.
+fn parse_http_date_unix(value: &str) -> Option<u64> {
+    static PARSER: jiff::fmt::rfc2822::DateTimeParser = jiff::fmt::rfc2822::DateTimeParser::new();
+    let ts = PARSER.parse_timestamp(value).ok()?;
+    u64::try_from(ts.as_second()).ok()
 }
 
 /// Bound a header value to [`MAX_HEADER_VALUE_LEN`] on a char boundary.
@@ -271,12 +300,14 @@ pub enum TransportErrorKind {
 
 impl TransportErrorKind {
     /// Whether a failure of this kind could plausibly succeed on a bounded retry.
-    /// Transient network faults are retryable; cancellation and a missing
-    /// capability are not.
+    /// As in the Go client, every transport failure is retryable except a
+    /// caller's own cancellation and a structural missing capability: an
+    /// unclassified failure (e.g. a reset on a reused pooled connection caught
+    /// in the request phase) is as transient as a mid-body break.
     pub fn is_retryable(self) -> bool {
-        matches!(
+        !matches!(
             self,
-            TransportErrorKind::Connect | TransportErrorKind::Timeout | TransportErrorKind::Body
+            TransportErrorKind::Canceled | TransportErrorKind::Capability
         )
     }
 }
@@ -379,18 +410,48 @@ mod tests {
     }
 
     #[test]
-    fn retry_hint_prefers_retry_after_then_reset() {
+    fn retry_hint_prefers_ratelimit_reset_then_retry_after() {
+        // RateLimit-Reset wins when both are present, as in Go's parseRetryAfter.
+        let h = ResponseHeaders::from_pairs([("RateLimit-Reset", "1050"), ("Retry-After", "12")]);
+        assert_eq!(h.retry_hint(1_000), Some(Duration::from_secs(50)));
+
         let h = ResponseHeaders::from_pairs([("Retry-After", "12")]);
         assert_eq!(h.retry_hint(1_000), Some(Duration::from_secs(12)));
 
-        let h = ResponseHeaders::from_pairs([("RateLimit-Reset", "1050")]);
-        assert_eq!(h.retry_hint(1_000), Some(Duration::from_secs(50)));
+        // A reset that works out to exactly zero falls through to Retry-After.
+        let h = ResponseHeaders::from_pairs([("RateLimit-Reset", "1000"), ("Retry-After", "12")]);
+        assert_eq!(h.retry_hint(1_000), Some(Duration::from_secs(12)));
 
-        // A reset already in the past yields zero, not an underflow.
-        let h = ResponseHeaders::from_pairs([("RateLimit-Reset", "900")]);
+        // A reset already in the past yields zero (and, matching Go's
+        // `until == 0` gate, suppresses Retry-After: negative is not zero).
+        let h = ResponseHeaders::from_pairs([("RateLimit-Reset", "900"), ("Retry-After", "12")]);
         assert_eq!(h.retry_hint(1_000), Some(Duration::ZERO));
 
         let h = ResponseHeaders::default();
+        assert_eq!(h.retry_hint(1_000), None);
+    }
+
+    #[test]
+    fn retry_after_http_date_is_parsed() {
+        // Sun, 06 Nov 1994 08:49:37 GMT == unix 784111777.
+        let h = ResponseHeaders::from_pairs([("Retry-After", "Sun, 06 Nov 1994 08:49:37 GMT")]);
+        assert_eq!(h.retry_after_unix_secs, Some(784_111_777));
+        assert_eq!(
+            h.retry_hint(784_111_777 - 30),
+            Some(Duration::from_secs(30))
+        );
+        // A date in the past clamps to zero.
+        assert_eq!(h.retry_hint(784_111_777 + 30), Some(Duration::ZERO));
+
+        // Garbage is treated as absent, never an error or a stall.
+        let h = ResponseHeaders::from_pairs([("Retry-After", "soon")]);
+        assert_eq!(h.retry_hint(1_000), None);
+    }
+
+    #[test]
+    fn x_ratelimit_reset_is_not_honored() {
+        // Go reads only the atproto-conventional RateLimit-Reset name.
+        let h = ResponseHeaders::from_pairs([("X-RateLimit-Reset", "1050")]);
         assert_eq!(h.retry_hint(1_000), None);
     }
 
@@ -399,9 +460,11 @@ mod tests {
         assert!(TransportError::connect("x").is_retryable());
         assert!(TransportError::timeout("x").is_retryable());
         assert!(TransportError::body("x").is_retryable());
+        // Unclassified transport failures are retryable, as in Go, where any
+        // non-permanent error on the segment path is retried.
+        assert!(TransportError::other("x").is_retryable());
         assert!(!TransportError::canceled("x").is_retryable());
         assert!(!TransportError::capability("x").is_retryable());
-        assert!(!TransportError::other("x").is_retryable());
     }
 
     #[test]

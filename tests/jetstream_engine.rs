@@ -36,8 +36,8 @@ use proptest::prelude::*;
 
 use shrike::jetstream::{
     ArchiveSource, CancelToken, Delivery, DialError, DictionarySource, DownloadedSegment, Engine,
-    EngineConfig, EngineSink, Error, Event, Filter, LiveConfig, LiveFrame, PlanSegment,
-    SegmentMode, SnapshotPlan, WsConnection, WsError, WsMessage, WsTransport, parse_live_frame,
+    EngineConfig, EngineSink, Error, Event, Filter, LiveConfig, LiveFrame, PlanPage, PlanSegment,
+    SegmentMode, WsConnection, WsError, WsMessage, WsTransport, parse_live_frame,
 };
 
 // ===========================================================================
@@ -188,21 +188,27 @@ struct Segment {
     raw: Vec<Me>,
     dropped: Vec<&'static str>,
     delay_ms: u64,
+    /// Serve the raw rows unwindowed (a straddling unit re-served whole),
+    /// exercising the engine's own already-delivered collapse.
+    ignore_window: bool,
+    /// Fail the download with a `DownloadFailed` error after any delay.
+    fail: bool,
 }
 
-/// One "server generation": what a single `plan()` call observes. Re-backfill
+/// One "server generation": what a single plan sweep observes. Re-backfill
 /// consumes successive generations, modeling a server whose sealed tip grows.
 #[derive(Clone)]
 struct Generation {
     tip: u64,
-    after: u64,
     segments: Vec<Segment>,
 }
 
-/// A scripted [`ArchiveSource`]. `plan()` consumes the next generation (retaining
-/// the last one as a steady state, so repeated re-plans without new data model a
-/// stall), and `download()` returns each segment's windowed, filtered, ordered
-/// events after its programmed delay, racing cancellation.
+/// A scripted [`ArchiveSource`]. The first `plan_page()` of each sweep (no
+/// pinned tip yet) consumes the next generation, returning it as one page that
+/// covers the whole sweep (retaining the last generation as a steady state, so
+/// repeated re-plans without new data model a stall); `download()` returns each
+/// segment's windowed, filtered, ordered events after its programmed delay,
+/// racing cancellation.
 struct MockArchive {
     gens: RefCell<VecDeque<Generation>>,
     current: RefCell<Vec<Segment>>,
@@ -230,33 +236,35 @@ async fn wait_cancel(cancel: &CancelToken) {
 }
 
 impl ArchiveSource for MockArchive {
-    async fn plan(
+    async fn plan_page(
         &self,
         _filter: &Filter,
         _after_seq: u64,
         before_seq: Option<u64>,
+        pinned_tip: Option<u64>,
         _cancel: &CancelToken,
-    ) -> core::result::Result<SnapshotPlan, Error> {
+    ) -> core::result::Result<PlanPage, Error> {
+        // The first page of a sweep consumes the next generation; the whole
+        // generation is returned as one page (plannedThroughSeq == tip), so a
+        // pinned follow-up page never occurs in practice — served defensively
+        // from the current generation if it does.
         let generation = {
             let mut gens = self.gens.borrow_mut();
-            if gens.len() > 1 {
+            if pinned_tip.is_none() && gens.len() > 1 {
                 gens.pop_front().expect("len checked")
             } else {
                 gens.front().cloned().unwrap_or(Generation {
                     tip: 0,
-                    after: 0,
                     segments: Vec::new(),
                 })
             }
         };
         *self.current.borrow_mut() = generation.segments.clone();
-        // Honor a caller-requested upper bound (snapshot-only), defaulting to the
-        // sealed tip when unbounded.
-        let before_seq = before_seq.unwrap_or(generation.tip).min(generation.tip);
-        Ok(SnapshotPlan {
-            sealed_tip_seq: generation.tip,
-            after_seq: generation.after,
-            before_seq,
+        // The server caps the reported tip at the caller's beforeSeq.
+        let tip = before_seq.unwrap_or(generation.tip).min(generation.tip);
+        Ok(PlanPage {
+            sealed_tip_seq: tip,
+            planned_through_seq: tip,
             segments: generation
                 .segments
                 .iter()
@@ -302,10 +310,17 @@ impl ArchiveSource for MockArchive {
             return Err(Error::Canceled);
         }
 
+        if seg.fail {
+            return Err(Error::DownloadFailed("scripted segment failure"));
+        }
         let mut events: Vec<Event> = seg
             .raw
             .iter()
-            .filter(|e| e.seq > after_seq && e.seq <= before_seq && allows(&self.allowed, e.coll))
+            .filter(|e| {
+                (seg.ignore_window || e.seq > after_seq)
+                    && e.seq <= before_seq
+                    && allows(&self.allowed, e.coll)
+            })
             .map(|e| make_event(*e))
             .collect();
         events.sort_by_key(|e| e.seq);
@@ -314,7 +329,11 @@ impl ArchiveSource for MockArchive {
             .iter()
             .map(|m| Error::protocol("BadArchiveRow", Some(*m)))
             .collect();
-        Ok(DownloadedSegment { events, dropped })
+        Ok(DownloadedSegment {
+            events,
+            dropped,
+            failure: None,
+        })
     }
 
     fn concurrency(&self) -> usize {
@@ -343,6 +362,8 @@ fn segments_from(world: &[Me], n_seg: usize) -> Vec<Segment> {
             raw: ch.to_vec(),
             dropped: Vec::new(),
             delay_ms: 0,
+            ignore_window: false,
+            fail: false,
         })
         .collect()
 }
@@ -600,15 +621,7 @@ async fn archive_ordered_across_segments_snapshot_only() {
     ];
     let tip = 9;
     let segments = segments_from(&world, 3);
-    let archive = MockArchive::new(
-        vec![Generation {
-            tip,
-            after: 0,
-            segments,
-        }],
-        Vec::new(),
-        4,
-    );
+    let archive = MockArchive::new(vec![Generation { tip, segments }], Vec::new(), 4);
 
     let mut config = EngineConfig::new(live_config(build_filter(&[]), 2));
     config.snapshot_only = true;
@@ -646,15 +659,7 @@ async fn parallel_completion_preserves_order() {
     segments[0].delay_ms = 100;
     segments[1].delay_ms = 5;
 
-    let archive = MockArchive::new(
-        vec![Generation {
-            tip: 4,
-            after: 0,
-            segments,
-        }],
-        Vec::new(),
-        4,
-    );
+    let archive = MockArchive::new(vec![Generation { tip: 4, segments }], Vec::new(), 4);
 
     let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
     config.snapshot_only = true;
@@ -690,7 +695,6 @@ async fn sparse_filter_drops_nonmatching() {
     let archive = MockArchive::new(
         vec![Generation {
             tip,
-            after: 0,
             segments: segments_from(&world, 2),
         }],
         allowed.clone(),
@@ -738,7 +742,6 @@ async fn cutover_overlap_dedups_boundary() {
     let archive = MockArchive::new(
         vec![Generation {
             tip,
-            after: 0,
             segments: segments_from(&world, 1),
         }],
         Vec::new(),
@@ -780,12 +783,10 @@ async fn repeated_cursor_too_old_rebackfills() {
     let gens = vec![
         Generation {
             tip: 3,
-            after: 0,
             segments: segments_from(&world1, 1),
         },
         Generation {
             tip: 6,
-            after: 3,
             segments: segments_from(&world2, 1),
         },
     ];
@@ -829,7 +830,6 @@ async fn rebackfill_stall_returns_no_progress() {
     let archive = MockArchive::new(
         vec![Generation {
             tip: 3,
-            after: 0,
             segments: segments_from(&world, 1),
         }],
         Vec::new(),
@@ -869,15 +869,7 @@ async fn cancellation_cleans_up_workers() {
     for seg in &mut segments {
         seg.delay_ms = 10_000;
     }
-    let archive = MockArchive::new(
-        vec![Generation {
-            tip: 4,
-            after: 0,
-            segments,
-        }],
-        Vec::new(),
-        4,
-    );
+    let archive = MockArchive::new(vec![Generation { tip: 4, segments }], Vec::new(), 4);
 
     let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
     config.snapshot_only = true;
@@ -927,6 +919,8 @@ async fn recoverable_drops_delivered_in_order() {
             raw: vec![Me::new(1, COLLS[0]), Me::new(2, COLLS[0])],
             dropped: vec!["row 3 malformed"],
             delay_ms: 0,
+            ignore_window: false,
+            fail: false,
         },
         Segment {
             name: "seg-1.jss".to_owned(),
@@ -936,20 +930,14 @@ async fn recoverable_drops_delivered_in_order() {
             raw: vec![Me::new(4, COLLS[0])],
             dropped: vec![],
             delay_ms: 0,
+            ignore_window: false,
+            fail: false,
         },
     ];
     // Keep declaration order stable for the assertion below.
     segments.sort_by_key(|s| s.index);
 
-    let archive = MockArchive::new(
-        vec![Generation {
-            tip: 4,
-            after: 0,
-            segments,
-        }],
-        Vec::new(),
-        1,
-    );
+    let archive = MockArchive::new(vec![Generation { tip: 4, segments }], Vec::new(), 1);
 
     let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
     config.snapshot_only = true;
@@ -1047,7 +1035,6 @@ async fn snapshot_only_never_dials_live() {
     let archive = MockArchive::new(
         vec![Generation {
             tip: 2,
-            after: 0,
             segments: segments_from(&world, 1),
         }],
         Vec::new(),
@@ -1081,12 +1068,10 @@ async fn stats_reflect_progress_and_mutation() {
     let gens = vec![
         Generation {
             tip: 2,
-            after: 0,
             segments: segments_from(&world1, 1),
         },
         Generation {
             tip: 4,
-            after: 2,
             segments: segments_from(&world2, 1),
         },
     ];
@@ -1135,7 +1120,6 @@ async fn stopping_batch_counted_in_progress() {
     let archive = MockArchive::new(
         vec![Generation {
             tip: 4,
-            after: 0,
             segments: segments_from(&world, 1),
         }],
         Vec::new(),
@@ -1179,6 +1163,8 @@ async fn overlapping_segments_out_of_order_rejected() {
         raw: vec![Me::new(1, COLLS[0]), Me::new(3, COLLS[0])],
         dropped: Vec::new(),
         delay_ms: 0,
+        ignore_window: false,
+        fail: false,
     };
     let seg_b = Segment {
         name: "seg-b.jss".to_owned(),
@@ -1188,11 +1174,12 @@ async fn overlapping_segments_out_of_order_rejected() {
         raw: vec![Me::new(2, COLLS[0]), Me::new(4, COLLS[0])],
         dropped: Vec::new(),
         delay_ms: 0,
+        ignore_window: false,
+        fail: false,
     };
     let archive = MockArchive::new(
         vec![Generation {
             tip: 4,
-            after: 0,
             segments: vec![seg_a, seg_b],
         }],
         Vec::new(),
@@ -1213,6 +1200,264 @@ async fn overlapping_segments_out_of_order_rejected() {
         engine.run(&mut sink).await,
         Err(Error::PlanInvalid(_))
     ));
+}
+
+/// A DID-level marker (identity/account/sync) carries no collection and must
+/// bypass a collection filter, on both the archive and live paths, while a
+/// non-matching commit is dropped — the consumer's only signal to purge a dead
+/// account (mirrors Go's TestEngineFilterContractAcrossArchiveAndLive).
+#[tokio::test(start_paused = true)]
+async fn collection_filter_passes_did_markers_across_archive_and_live() {
+    // Archive rows 1..3: a matching post, a non-matching like, and an account
+    // marker. The engine can't build markers from the `Me` type, so this drives
+    // markers through the live path (which parses real frames) and asserts the
+    // archive-side commit filtering separately.
+    let world = vec![
+        Me::new(1, "app.bsky.feed.post"),
+        Me::new(2, "app.bsky.feed.like"),
+    ];
+    let archive = MockArchive::new(
+        vec![Generation {
+            tip: 2,
+            segments: segments_from(&world, 1),
+        }],
+        // Collection filter is applied by the MockArchive too, but the real
+        // engine filter is what the live path exercises below.
+        vec!["app.bsky.feed.post"],
+        4,
+    );
+
+    // Live frames 3..6: a matching post, a non-matching like, an account marker,
+    // and a sync marker. With a post-only collection filter the engine must
+    // deliver the post (4) and both markers (5, 6) but drop the like (3... here
+    // seq 4 is the like). Build the marker frames by hand.
+    let account = serde_json::json!({
+        "$type": "message",
+        "payload": {
+            "$type": "network.bsky.jetstream.subscribeEvents#account",
+            "seq": 5, "did": DID, "time": TIME,
+            "account": {"seq": 5, "did": DID, "active": false, "time": TIME},
+        }
+    })
+    .to_string();
+    let sync = serde_json::json!({
+        "$type": "message",
+        "payload": {
+            "$type": "network.bsky.jetstream.subscribeEvents#sync",
+            "seq": 6, "did": DID, "time": TIME,
+            "sync": {"seq": 6, "did": DID, "blocks": {"$bytes": ""}, "rev": REV, "time": TIME},
+        }
+    })
+    .to_string();
+    let sessions = vec![vec![
+        Action::Text(commit_text(3, "app.bsky.feed.post")),
+        Action::Text(commit_text(4, "app.bsky.feed.like")),
+        Action::Text(account),
+        Action::Text(sync),
+        Action::Close,
+    ]];
+    let ws = ScriptedWs::new(sessions);
+
+    let config = EngineConfig::new(live_config(build_filter(&["app.bsky.feed.post"]), 1));
+    let cancel = CancelToken::new();
+    let engine = Engine::new(Some(archive), ws, NoDict, config, cancel.clone());
+    let mut sink = RecordingSink::new(4, Some(cancel));
+    let res = engine.run(&mut sink).await;
+    assert!(res.is_ok(), "run should be Ok: {res:?}");
+    // Archive: post 1 kept, like 2 dropped. Live: post 3 kept, like 4 dropped,
+    // account 5 and sync 6 delivered despite the collection filter.
+    assert_eq!(sink.seqs(), vec![1, 3, 5, 6]);
+}
+
+/// After a `CursorTooOld` re-backfill, a re-planned segment that straddles the
+/// resume point (re-serving already-delivered rows) must drop the duplicates and
+/// keep only the new rows — the engine's own already-delivered collapse, not the
+/// mock's windowing (mirrors Go's TestEngineReBackfillDropsAlreadyDeliveredStraddlingRows).
+#[tokio::test(start_paused = true)]
+async fn rebackfill_drops_already_delivered_straddling_rows() {
+    // Generation 1: tip 3, rows 1..3.
+    let gen1 = Generation {
+        tip: 3,
+        segments: segments_from(
+            &[
+                Me::new(1, COLLS[0]),
+                Me::new(2, COLLS[0]),
+                Me::new(3, COLLS[0]),
+            ],
+            1,
+        ),
+    };
+    // Generation 2: tip 6, one segment covering 1..6 served *unwindowed* — it
+    // straddles the resume point and re-serves 1..3, which the engine must
+    // collapse, delivering only 4..6.
+    let gen2 = Generation {
+        tip: 6,
+        segments: vec![Segment {
+            name: "straddle.jss".to_owned(),
+            index: 0,
+            min_seq: 1,
+            max_seq: 6,
+            raw: (1..=6).map(|s| Me::new(s, COLLS[0])).collect(),
+            dropped: Vec::new(),
+            delay_ms: 0,
+            ignore_window: true,
+            fail: false,
+        }],
+    };
+    let archive = MockArchive::new(vec![gen1, gen2], Vec::new(), 4);
+    let sessions = vec![
+        vec![Action::Text(error_text("CursorTooOld"))],
+        live_session(&[Me::new(7, COLLS[0])]),
+    ];
+    let ws = ScriptedWs::new(sessions);
+    let config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    let cancel = CancelToken::new();
+    let engine = Engine::new(Some(archive), ws, NoDict, config, cancel.clone());
+    let mut sink = RecordingSink::new(7, Some(cancel));
+    let res = engine.run(&mut sink).await;
+    assert!(res.is_ok(), "run should be Ok: {res:?}");
+    // No duplicates from the straddling re-download, no spurious PlanInvalid.
+    assert_eq!(sink.seqs(), vec![1, 2, 3, 4, 5, 6, 7]);
+}
+
+/// After the live tail delivered past a stale archive tip, a `CursorTooOld`
+/// re-backfill whose re-learned tip is *below* the delivered cursor must not
+/// rewind: the cutover resumes from the delivered sequence, never re-delivering
+/// events already emitted from the live phase (mirrors Go's
+/// TestEngineReBackfillCutoverDoesNotRewindBelowDelivered).
+#[tokio::test(start_paused = true)]
+async fn rebackfill_cutover_does_not_rewind_below_delivered() {
+    // Archive tip stays 2 across both plan cycles.
+    let steady = Generation {
+        tip: 2,
+        segments: segments_from(&[Me::new(1, COLLS[0]), Me::new(2, COLLS[0])], 1),
+    };
+    let archive = MockArchive::new(vec![steady.clone(), steady], Vec::new(), 4);
+    // Live session 1 delivers 3,4,5 (past the tip of 2), then CursorTooOld.
+    // Session 2 must resume after 5 and deliver 6 — never re-deliver 3,4,5.
+    let sessions = vec![
+        vec![
+            Action::Text(commit_text(3, COLLS[0])),
+            Action::Text(commit_text(4, COLLS[0])),
+            Action::Text(commit_text(5, COLLS[0])),
+            Action::Text(error_text("CursorTooOld")),
+        ],
+        live_session(&[
+            // The server inclusively replays from the resume cursor; 3,4,5 are
+            // duplicates the client must drop.
+            Me::new(3, COLLS[0]),
+            Me::new(4, COLLS[0]),
+            Me::new(5, COLLS[0]),
+            Me::new(6, COLLS[0]),
+        ]),
+    ];
+    let ws = ScriptedWs::new(sessions);
+    let config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    let cancel = CancelToken::new();
+    let engine = Engine::new(Some(archive), ws, NoDict, config, cancel.clone());
+    let mut sink = RecordingSink::new(6, Some(cancel));
+    let res = engine.run(&mut sink).await;
+    assert!(res.is_ok(), "run should be Ok: {res:?}");
+    assert_eq!(sink.seqs(), vec![1, 2, 3, 4, 5, 6]);
+}
+
+/// A failed segment download is a *recoverable* per-entry error: the sweep
+/// reports it in order and continues with the next segment, rather than failing
+/// the whole run (mirrors Go's per-entry Download error contract).
+#[tokio::test(start_paused = true)]
+async fn failed_segment_is_recoverable_and_sweep_continues() {
+    let generation = Generation {
+        tip: 6,
+        segments: vec![
+            Segment {
+                name: "seg-0.jss".to_owned(),
+                index: 0,
+                min_seq: 1,
+                max_seq: 2,
+                raw: vec![Me::new(1, COLLS[0]), Me::new(2, COLLS[0])],
+                dropped: Vec::new(),
+                delay_ms: 0,
+                ignore_window: false,
+                fail: false,
+            },
+            Segment {
+                name: "seg-1.jss".to_owned(),
+                index: 1,
+                min_seq: 3,
+                max_seq: 4,
+                raw: vec![Me::new(3, COLLS[0]), Me::new(4, COLLS[0])],
+                dropped: Vec::new(),
+                delay_ms: 0,
+                ignore_window: false,
+                fail: true,
+            },
+            Segment {
+                name: "seg-2.jss".to_owned(),
+                index: 2,
+                min_seq: 5,
+                max_seq: 6,
+                raw: vec![Me::new(5, COLLS[0]), Me::new(6, COLLS[0])],
+                dropped: Vec::new(),
+                delay_ms: 0,
+                ignore_window: false,
+                fail: false,
+            },
+        ],
+    };
+    let archive = MockArchive::new(vec![generation], Vec::new(), 1);
+    let mut config = EngineConfig::new(live_config(build_filter(&[]), 8));
+    config.snapshot_only = true;
+    let cancel = CancelToken::new();
+    let engine = Engine::new(
+        Some(archive),
+        ScriptedWs::new(vec![]),
+        NoDict,
+        config,
+        cancel,
+    );
+    let mut sink = RecordingSink::new(usize::MAX, None);
+    let res = engine.run(&mut sink).await;
+    assert!(
+        res.is_ok(),
+        "a per-entry failure must not fail the run: {res:?}"
+    );
+    // The failed middle segment's rows (3,4) are missing, but its siblings
+    // still deliver and the error is reported in order.
+    assert_eq!(sink.seqs(), vec![1, 2, 5, 6]);
+    assert_eq!(sink.recoverable_msgs().len(), 1);
+}
+
+/// A malformed live frame is surfaced to the engine consumer as an ordered
+/// recoverable error (not silently dropped), while its valid siblings still flow.
+#[tokio::test(start_paused = true)]
+async fn live_malformed_frame_is_reported_recoverable() {
+    let bad = serde_json::json!({
+        "$type": "message",
+        "payload": {
+            "$type": "network.bsky.jetstream.subscribeEvents#commit",
+            "seq": 0, "did": DID, "time": TIME, "operation": "delete",
+            "collection": "app.bsky.feed.post", "rkey": RKEY, "rev": REV,
+        }
+    })
+    .to_string();
+    let sessions = vec![vec![
+        Action::Text(commit_text(1, COLLS[0])),
+        Action::Text(bad),
+        Action::Text(commit_text(2, COLLS[0])),
+        Action::Close,
+    ]];
+    let ws = ScriptedWs::new(sessions);
+    let config = EngineConfig::new(live_config(build_filter(&[]), 1));
+    let cancel = CancelToken::new();
+    let engine = Engine::new(None::<MockArchive>, ws, NoDict, config, cancel.clone());
+    let mut sink = RecordingSink::new(2, Some(cancel));
+    let res = engine.run(&mut sink).await;
+    assert!(res.is_ok(), "run should be Ok: {res:?}");
+    assert_eq!(sink.seqs(), vec![1, 2]);
+    assert!(
+        !sink.recoverable_msgs().is_empty(),
+        "the malformed live frame must be reported"
+    );
 }
 
 // ===========================================================================
@@ -1298,7 +1543,6 @@ async fn before_seq_allowed_with_snapshot_only() {
     let archive = MockArchive::new(
         vec![Generation {
             tip: 4,
-            after: 0,
             segments: segments_from(&world, 1),
         }],
         Vec::new(),
@@ -1407,7 +1651,7 @@ proptest! {
         let rt = paused_runtime();
         let delivered = rt.block_on(async {
             let archive = MockArchive::new(
-                vec![Generation { tip, after, segments: segments_from(&world, raw.n_seg) }],
+                vec![Generation { tip, segments: segments_from(&world, raw.n_seg) }],
                 allowed.clone(),
                 4,
             );
@@ -1451,7 +1695,7 @@ proptest! {
         let rt = paused_runtime();
         let (delivered, ok) = rt.block_on(async {
             let archive = MockArchive::new(
-                vec![Generation { tip, after, segments: segments_from(&world, raw.n_seg) }],
+                vec![Generation { tip, segments: segments_from(&world, raw.n_seg) }],
                 allowed.clone(),
                 4,
             );

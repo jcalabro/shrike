@@ -25,11 +25,13 @@
 //! Terminal (fatal) errors — a frame from a non-v2 endpoint, an unusable
 //! subprotocol, or `CursorTooOld` on this credential-free live tail — are
 //! delivered to the consumer as a final `Err` item, in order after any buffered
-//! batch, and then the tail stops. Recoverable conditions (a clean or dirty
-//! disconnect, a reconnectable protocol error such as `ConsumerTooSlow`, a
-//! per-frame malformed event, or a dictionary/decompression setup failure) are
-//! handled internally by reconnecting or skipping, and are never surfaced as
-//! stream errors. Advisory `#info` frames are delivered as [`Delivery::Info`].
+//! batch, and then the tail stops. Recoverable conditions are *surfaced in
+//! order* through [`DeliverySink::recoverable`] and the tail keeps going, as in
+//! the Go client: a malformed data frame or a failed zstd frame is reported and
+//! the connection kept; a disconnect, read failure, or reconnectable protocol
+//! error (e.g. `ConsumerTooSlow`) is reported once before the backoff-paced
+//! redial. A consumer returning `false` from either callback stops the tail
+//! cleanly. Advisory `#info` frames are delivered as [`Delivery::Info`].
 //!
 //! The archive bearer key is never attached to the dictionary fetch or the
 //! WebSocket upgrade: both endpoints are unauthenticated.
@@ -104,7 +106,10 @@ pub enum LiveCursor {
     /// Start at the current tip: no `cursor` parameter is sent. This is a
     /// distinct state from a sequence of `0` (which would replay everything).
     Tip,
-    /// Resume inclusively from a sequence or timestamp [`Cursor`].
+    /// Resume from a [`Cursor`]. A sequence resume is **exclusive**, as in Go's
+    /// `WithLiveCursor`: delivery continues strictly after `Seq(n)` (the
+    /// server's inclusive replay of `n` is deduplicated), so a persisted
+    /// [`super::Batch::last_cursor`] can be passed back verbatim.
     Resume(Cursor),
 }
 
@@ -360,20 +365,34 @@ impl<T: HttpTransport> DictionarySource for HttpDictionarySource<T> {
                 Err(Error::InvalidDictionary("dictionary exceeds size limit"))
             }
             Err(BodyReadError::Canceled) => Err(Error::Canceled),
+            // Bounded reads have no expected length, so this cannot occur here;
+            // classify defensively as a retryable transport fault (dictionary
+            // fetch failures degrade to uncompressed either way).
+            Err(BodyReadError::Truncated) => Err(Error::Transport {
+                message: "dictionary body was truncated".to_owned(),
+                retryable: true,
+            }),
             Err(BodyReadError::Transport(err)) => Err(err.into()),
         }
     }
 }
 
-/// The consumer's delivery sink. `deliver` resolves to `false` when the consumer
-/// has gone away, at which point the tail shuts down cleanly. An `Err` item is
-/// always terminal and is the last thing delivered.
+/// The consumer's delivery sink. Each method resolves to `false` when the
+/// consumer has gone away, at which point the tail shuts down cleanly. An `Err`
+/// item passed to `deliver` is always terminal and is the last thing delivered;
+/// ordered *recoverable* errors (a malformed frame, a failed zstd frame, a
+/// disconnect about to be retried) arrive through `recoverable` and the stream
+/// continues after them, matching the Go client's `emit(nil, err)` contract.
 pub trait DeliverySink {
     /// Deliver one stream item. Returns `false` to stop the tail.
     fn deliver(
         &mut self,
         item: core::result::Result<Delivery, Error>,
     ) -> impl Future<Output = bool>;
+
+    /// Report one ordered, recoverable error. The stream continues after it.
+    /// Returns `false` to stop the tail.
+    fn recoverable(&mut self, error: Error) -> impl Future<Output = bool>;
 }
 
 /// Build the `subscribeEvents` WebSocket URL with repeated filter parameters.
@@ -461,10 +480,10 @@ struct StreamState {
 
 /// What the tail should do after a session ends.
 enum SessionOutcome {
-    /// Reconnect after applying backoff (reset when the session progressed).
-    Reconnect,
-    /// Reconnect immediately with no backoff (e.g. after a dictionary rotation).
-    ReconnectNow,
+    /// Reconnect after reporting the cause as a recoverable error and applying
+    /// backoff (reset when the session progressed). Matches the Go loop, which
+    /// emits a "reconnecting" error and sleeps before every redial.
+    Reconnect(Error),
     /// Stop the tail. `Ok(())` on clean cancellation or after a terminal error
     /// was already delivered.
     Stop,
@@ -485,6 +504,10 @@ pub struct LiveConsumer<W, D> {
     dict: D,
     config: LiveConfig,
     cancel: CancelToken,
+    /// An optional shared watermark of the highest *accepted* (pre-filter)
+    /// sequence, mirroring the Go consumer's `LastSeq`. The engine uses it for
+    /// re-backfill resume points and stall detection.
+    seen: Option<std::sync::Arc<core::sync::atomic::AtomicU64>>,
 }
 
 impl<W, D> LiveConsumer<W, D>
@@ -500,7 +523,18 @@ where
             dict,
             config,
             cancel,
+            seen: None,
         })
+    }
+
+    /// Publish the highest accepted (pre-filter) sequence into `watermark` as
+    /// the tail runs. Used by the replay engine.
+    pub(crate) fn with_seen_watermark(
+        mut self,
+        watermark: std::sync::Arc<core::sync::atomic::AtomicU64>,
+    ) -> Self {
+        self.seen = Some(watermark);
+        self
     }
 
     /// Run the live tail, delivering ordered, deduplicated batches (and advisory
@@ -527,23 +561,36 @@ where
             let conn = match self.dial(&state, &dict, sink).await {
                 DialAttempt::Connected(conn) => conn,
                 DialAttempt::Stop => return Ok(()),
-                DialAttempt::Reconnect => {
-                    if !self
-                        .backoff_sleep(self.config.backoff.delay(backoff_n))
-                        .await
+                DialAttempt::Reconnect(cause) => {
+                    // Report the failed dial as an ordered recoverable error,
+                    // then back off before the redial, as in Go.
+                    if !sink.recoverable(cause).await
+                        || !self
+                            .backoff_sleep(self.config.backoff.delay(backoff_n))
+                            .await
                     {
                         return Ok(());
                     }
                     backoff_n = backoff_n.saturating_add(1);
                     continue;
                 }
-                DialAttempt::RecoverDict => {
+                DialAttempt::RecoverDict(cause) => {
                     // A pre-upgrade dictionary rejection: refetch the current
-                    // dictionary (or degrade to uncompressed) and redial at once.
+                    // dictionary (or degrade to uncompressed), report the
+                    // rejection, and redial after the current backoff. The
+                    // backoff keeps doubling — a rotation is not progress — so
+                    // a fleet that keeps rejecting IDs is paced, not hammered.
                     if !self.recover_dict(&mut dict).await {
                         return Ok(());
                     }
-                    backoff_n = 0;
+                    if !sink.recoverable(cause).await
+                        || !self
+                            .backoff_sleep(self.config.backoff.delay(backoff_n))
+                            .await
+                    {
+                        return Ok(());
+                    }
+                    backoff_n = backoff_n.saturating_add(1);
                     continue;
                 }
             };
@@ -551,16 +598,14 @@ where
             let result = self.session(conn, &mut state, &mut dict, sink).await;
             match result.outcome {
                 SessionOutcome::Stop => return Ok(()),
-                SessionOutcome::ReconnectNow => {
-                    backoff_n = 0;
-                }
-                SessionOutcome::Reconnect => {
+                SessionOutcome::Reconnect(cause) => {
                     if result.progressed {
                         backoff_n = 0;
                     }
-                    if !self
-                        .backoff_sleep(self.config.backoff.delay(backoff_n))
-                        .await
+                    if !sink.recoverable(cause).await
+                        || !self
+                            .backoff_sleep(self.config.backoff.delay(backoff_n))
+                            .await
                     {
                         return Ok(());
                     }
@@ -662,7 +707,10 @@ where
     ) -> DialAttempt<W::Conn> {
         match err {
             DialError::Canceled => DialAttempt::Stop,
-            DialError::Transport(_) => DialAttempt::Reconnect,
+            DialError::Transport(_) => DialAttempt::Reconnect(Error::Transport {
+                message: "live dial failed".to_owned(),
+                retryable: true,
+            }),
             DialError::Subprotocol(_) => {
                 sink.deliver(Err(Error::Capability(
                     "server negotiated an unsupported subprotocol",
@@ -677,8 +725,8 @@ where
                         sink.deliver(Err(err)).await;
                         DialAttempt::Stop
                     }
-                    ProtoAction::DictRotation => DialAttempt::RecoverDict,
-                    ProtoAction::Reconnect => DialAttempt::Reconnect,
+                    ProtoAction::DictRotation => DialAttempt::RecoverDict(err),
+                    ProtoAction::Reconnect => DialAttempt::Reconnect(err),
                 }
             }
         }
@@ -694,13 +742,20 @@ where
     ) -> SessionResult {
         let mut batch: Vec<Event> = Vec::new();
         let mut progressed = false;
+        // The partial-batch flush deadline, anchored when the batch becomes
+        // non-empty — not re-armed per message — so a steady sub-delay event
+        // trickle still flushes within `flush_delay`, matching the Go engine's
+        // free-running flush ticker (max-delay semantics, not a quiet-period
+        // debounce).
+        let mut flush_deadline: Option<crate::platform::Deadline> = None;
 
         loop {
-            let timer = if batch.is_empty() {
-                None
-            } else {
-                Some(self.config.flush_delay)
-            };
+            if batch.is_empty() {
+                flush_deadline = None;
+            } else if flush_deadline.is_none() {
+                flush_deadline = Some(crate::platform::deadline_after(self.config.flush_delay));
+            }
+            let timer = flush_deadline.map(crate::platform::time_until);
 
             match next_read(&mut conn, &self.cancel, timer).await {
                 ReadStep::Cancelled => {
@@ -727,7 +782,10 @@ where
                     conn.close().await;
                     return SessionResult {
                         outcome: if alive {
-                            SessionOutcome::Reconnect
+                            SessionOutcome::Reconnect(Error::Transport {
+                                message: "live connection lost".to_owned(),
+                                retryable: true,
+                            })
                         } else {
                             SessionOutcome::Stop
                         },
@@ -737,14 +795,31 @@ where
                 ReadStep::Message(message) => {
                     match decode_message(message, dict, self.config.read_limit) {
                         MsgDecode::Skip => {}
-                        MsgDecode::StreamError => {
-                            // Flush the pending batch; a gone consumer stops the
-                            // tail rather than triggering a reconnect.
+                        MsgDecode::Recoverable(err) => {
+                            // A malformed data frame or a failed zstd frame:
+                            // report it in order and keep the connection, as in
+                            // Go (one bad frame must not drop the tail).
+                            if !deliver_batch(&mut batch, sink).await
+                                || !sink.recoverable(err).await
+                            {
+                                conn.close().await;
+                                return SessionResult {
+                                    outcome: SessionOutcome::Stop,
+                                    progressed,
+                                };
+                            }
+                        }
+                        MsgDecode::TooLarge => {
+                            // An oversized message: the connection is torn down
+                            // and redialed, matching Go's read-limit kill.
                             let alive = deliver_batch(&mut batch, sink).await;
                             conn.close().await;
                             return SessionResult {
                                 outcome: if alive {
-                                    SessionOutcome::Reconnect
+                                    SessionOutcome::Reconnect(Error::Transport {
+                                        message: "live message exceeded the read limit".to_owned(),
+                                        retryable: true,
+                                    })
                                 } else {
                                     SessionOutcome::Stop
                                 },
@@ -814,6 +889,9 @@ where
                                     }
                                 }
                                 ProtoAction::DictRotation => {
+                                    // Refresh (or shed) the dictionary, then
+                                    // report and back off through the normal
+                                    // reconnect path, as in Go.
                                     if !self.recover_dict(dict).await {
                                         return SessionResult {
                                             outcome: SessionOutcome::Stop,
@@ -821,12 +899,12 @@ where
                                         };
                                     }
                                     SessionResult {
-                                        outcome: SessionOutcome::ReconnectNow,
+                                        outcome: SessionOutcome::Reconnect(err),
                                         progressed,
                                     }
                                 }
                                 ProtoAction::Reconnect => SessionResult {
-                                    outcome: SessionOutcome::Reconnect,
+                                    outcome: SessionOutcome::Reconnect(err),
                                     progressed,
                                 },
                             };
@@ -855,6 +933,11 @@ where
         state.last_seq = event.seq;
         state.seen_any = true;
         *progressed = true;
+        // Publish the accepted (pre-filter) watermark for the engine's
+        // re-backfill/stall accounting, like the Go consumer's LastSeq.
+        if let Some(watermark) = &self.seen {
+            watermark.fetch_max(event.seq, core::sync::atomic::Ordering::Relaxed);
+        }
 
         // Advance the cursor for every event, but only deliver those the exact
         // filter admits (the server's coarser query may over-match).
@@ -885,11 +968,11 @@ where
 enum DialAttempt<C> {
     /// A live connection.
     Connected(C),
-    /// Reconnect after backoff.
-    Reconnect,
+    /// Reconnect after reporting the cause and applying backoff.
+    Reconnect(Error),
     /// A pre-upgrade dictionary rejection: refetch the current dictionary (or
-    /// degrade to uncompressed) and reconnect immediately.
-    RecoverDict,
+    /// degrade to uncompressed), report the cause, and reconnect after backoff.
+    RecoverDict(Error),
     /// Stop the tail.
     Stop,
 }
@@ -902,13 +985,15 @@ enum EventStep {
     Stop,
 }
 
-/// The initial dedup high-water mark for a starting cursor. A sequence resume of
-/// `n` must keep `seq == n` (the server replays inclusively), so the mark is
-/// `n - 1`; tip and timestamp starts begin at `0`.
+/// The initial dedup high-water mark for a starting cursor. A sequence resume is
+/// **exclusive**, as in Go's `WithLiveCursor`: delivery resumes strictly after
+/// `n`, so the mark is `n` itself (the server's inclusive replay of `n` is the
+/// at-least-once overlap this deduplicates). Tip and timestamp starts begin at
+/// `0`.
 fn initial_last_seq(cursor: &LiveCursor) -> u64 {
     match cursor {
         LiveCursor::Tip => 0,
-        LiveCursor::Resume(Cursor::Seq(n)) => n.saturating_sub(1),
+        LiveCursor::Resume(Cursor::Seq(n)) => *n,
         LiveCursor::Resume(Cursor::Timestamp(_)) => 0,
     }
 }
@@ -973,13 +1058,17 @@ fn classify_protocol(err: &Error) -> ProtoAction {
 
 /// The decode outcome of one WebSocket message.
 enum MsgDecode {
-    /// Ignore this message (forward-compatible unknown `$type`, a per-frame
-    /// malformed event, or a stray binary frame on an uncompressed connection).
+    /// Ignore this message (forward-compatible unknown `$type` or a stray
+    /// binary frame on an uncompressed connection).
     Skip,
     /// A parsed frame.
     Frame(LiveFrame),
-    /// A post-upgrade decompression failure: reconnect.
-    StreamError,
+    /// A per-frame recoverable failure (a malformed data frame or a failed zstd
+    /// frame): reported in order, connection kept, as in Go.
+    Recoverable(Error),
+    /// The message exceeded the read limit: tear down and reconnect (the shape
+    /// Go's `SetReadLimit` connection kill produces).
+    TooLarge,
     /// A frame from a non-v2 endpoint: fatal.
     Fatal(Error),
     /// A terminal `error` frame; classified by name.
@@ -992,10 +1081,9 @@ fn decode_message(message: WsMessage, dict: &DictState, read_limit: usize) -> Ms
         WsMessage::Text(bytes) => {
             // The built-in transports cap accepted messages, but `WsTransport`
             // is public and injectable: bound the text frame here too so a
-            // custom adapter cannot force an oversized parse. The binary path is
-            // bounded by `decompress_bounded` below.
+            // custom adapter cannot force an oversized parse.
             if bytes.len() > read_limit {
-                return MsgDecode::StreamError;
+                return MsgDecode::TooLarge;
             }
             classify_frame(parse_live_frame(&bytes))
         }
@@ -1004,16 +1092,18 @@ fn decode_message(message: WsMessage, dict: &DictState, read_limit: usize) -> Ms
             None => MsgDecode::Skip,
             Some(dictionary) => match decompress_bounded(&bytes, read_limit, Some(dictionary)) {
                 Ok(json) => classify_frame(parse_live_frame(&json)),
-                // A malformed compressed frame after upgrade is a stream error.
-                Err(_) => MsgDecode::StreamError,
+                // A malformed compressed frame is reported and the connection
+                // kept, as in Go, where DecodeAll failures are surfaced per
+                // frame without dropping the tail.
+                Err(err) => MsgDecode::Recoverable(err),
             },
         },
     }
 }
 
 /// Map a [`parse_live_frame`] result onto a [`MsgDecode`]. A per-frame malformed
-/// event is dropped (not delivered, cursor not advanced) so its valid siblings
-/// on the same connection still flow.
+/// event is reported as a recoverable error (never delivered, cursor not
+/// advanced) while its valid siblings on the same connection still flow.
 fn classify_frame(parsed: Result<Option<LiveFrame>>) -> MsgDecode {
     match parsed {
         Ok(Some(frame)) => MsgDecode::Frame(frame),
@@ -1021,8 +1111,8 @@ fn classify_frame(parsed: Result<Option<LiveFrame>>) -> MsgDecode {
         Err(err @ Error::InvalidFrame(_)) => MsgDecode::Fatal(err),
         Err(err @ Error::Protocol { .. }) => MsgDecode::Proto(err),
         // MalformedEvent / InvalidRecord / InvalidTimestamp and any other
-        // per-frame error: skip this frame, keep the connection.
-        Err(_) => MsgDecode::Skip,
+        // per-frame error: surface it in order, keep the connection.
+        Err(err) => MsgDecode::Recoverable(err),
     }
 }
 
@@ -1104,6 +1194,9 @@ mod tests {
     enum Action {
         Text(String),
         Binary(Vec<u8>),
+        /// Wait this many milliseconds (paused-clock time) before the next
+        /// action, modeling a paced event trickle.
+        Delay(u64),
         Close,
         Fail,
     }
@@ -1144,11 +1237,16 @@ mod tests {
 
     impl WsConnection for ScriptedConn {
         async fn read(&mut self) -> core::result::Result<Option<WsMessage>, WsError> {
-            match self.actions.pop_front() {
-                Some(Action::Text(s)) => Ok(Some(WsMessage::Text(s.into_bytes()))),
-                Some(Action::Binary(b)) => Ok(Some(WsMessage::Binary(b))),
-                Some(Action::Close) | None => Ok(None),
-                Some(Action::Fail) => Err(WsError::new("scripted failure")),
+            loop {
+                match self.actions.pop_front() {
+                    Some(Action::Text(s)) => return Ok(Some(WsMessage::Text(s.into_bytes()))),
+                    Some(Action::Binary(b)) => return Ok(Some(WsMessage::Binary(b))),
+                    Some(Action::Delay(ms)) => {
+                        crate::platform::sleep(Duration::from_millis(ms)).await;
+                    }
+                    Some(Action::Close) | None => return Ok(None),
+                    Some(Action::Fail) => return Err(WsError::new("scripted failure")),
+                }
             }
         }
 
@@ -1282,6 +1380,7 @@ mod tests {
     /// terminal error arrives.
     struct CollectingSink {
         items: Vec<core::result::Result<Delivery, Error>>,
+        recoverables: Vec<Error>,
         event_count: usize,
         stop_after: usize,
         cancel: CancelToken,
@@ -1291,6 +1390,7 @@ mod tests {
         fn new(stop_after: usize, cancel: CancelToken) -> Self {
             CollectingSink {
                 items: Vec::new(),
+                recoverables: Vec::new(),
                 event_count: 0,
                 stop_after,
                 cancel,
@@ -1343,6 +1443,11 @@ mod tests {
             }
             true
         }
+
+        async fn recoverable(&mut self, error: Error) -> bool {
+            self.recoverables.push(error);
+            true
+        }
     }
 
     /// A sink that reports the consumer has gone away on its first delivery
@@ -1355,6 +1460,10 @@ mod tests {
     impl DeliverySink for StopImmediatelySink {
         async fn deliver(&mut self, item: core::result::Result<Delivery, Error>) -> bool {
             self.items.push(item);
+            false
+        }
+
+        async fn recoverable(&mut self, _error: Error) -> bool {
             false
         }
     }
@@ -1533,28 +1642,33 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn resume_cursor_is_sent_and_kept_inclusive() {
+    async fn resume_cursor_is_sent_and_resume_is_exclusive() {
+        // A sequence resume is exclusive, as in Go's WithLiveCursor: the wire
+        // cursor is 5 (the server replays 5 inclusively), and the client
+        // deduplicates 5 so delivery resumes at 6 — a persisted last_cursor can
+        // be passed back verbatim without re-delivering its event.
         let mut config = live_config();
         config.cursor = LiveCursor::Resume(Cursor::Seq(5));
         let (sink, ws) = run_scripted(
             vec![vec![
-                // Server replays inclusively from 5; seq 5 must be kept.
                 Action::Text(commit_text(5, "app.bsky.feed.post")),
                 Action::Text(commit_text(6, "app.bsky.feed.post")),
             ]],
             config,
-            2,
+            1,
         )
         .await;
-        assert_eq!(sink.seqs(), vec![5, 6]);
+        assert_eq!(sink.seqs(), vec![6]);
         let first = &ws.dialed.borrow()[0];
         assert!(first.contains("cursor=5"), "resume dial URL: {first}");
     }
 
     #[tokio::test(start_paused = true)]
-    async fn malformed_frame_is_skipped_not_fatal() {
+    async fn malformed_frame_is_reported_recoverable_not_fatal() {
         // A commit with a non-positive seq is a per-frame malformed event: it is
-        // dropped, its valid siblings still flow, and the cursor is unaffected.
+        // surfaced as an ordered recoverable error (never silently dropped, as
+        // the Go client's emit(nil, err) contract requires), its valid siblings
+        // still flow on the same connection, and the cursor is unaffected.
         let bad = serde_json::json!({
             "$type": "message",
             "payload": {
@@ -1564,7 +1678,7 @@ mod tests {
             }
         })
         .to_string();
-        let (sink, _ws) = run_scripted(
+        let (sink, ws) = run_scripted(
             vec![vec![
                 Action::Text(commit_text(1, "app.bsky.feed.post")),
                 Action::Text(bad),
@@ -1576,6 +1690,83 @@ mod tests {
         .await;
         assert_eq!(sink.seqs(), vec![1, 2]);
         assert!(sink.error().is_none());
+        assert_eq!(sink.recoverables.len(), 1, "the bad frame is reported");
+        assert!(matches!(sink.recoverables[0], Error::MalformedEvent(_)));
+        // The connection was kept: one dial served all three frames.
+        assert_eq!(ws.dialed.borrow().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn flush_delay_is_a_maximum_not_a_debounce() {
+        // Regression: the partial-batch flush timer must anchor at the first
+        // buffered event, not re-arm per message — a steady trickle arriving
+        // faster than the delay must still flush within the delay (Go's
+        // free-running flush ticker), never accumulate until max_batch.
+        let mut config = live_config();
+        config.flush_delay = Duration::from_millis(20);
+        config.max_batch = 100;
+        let (sink, _ws) = run_scripted(
+            vec![vec![
+                Action::Text(commit_text(1, "app.bsky.feed.post")),
+                Action::Delay(15),
+                Action::Text(commit_text(2, "app.bsky.feed.post")),
+                Action::Delay(15),
+                Action::Text(commit_text(3, "app.bsky.feed.post")),
+                Action::Delay(15),
+                Action::Text(commit_text(4, "app.bsky.feed.post")),
+                Action::Delay(200),
+            ]],
+            config,
+            4,
+        )
+        .await;
+        assert_eq!(sink.seqs(), vec![1, 2, 3, 4]);
+        // The first flush happened at the 20 ms deadline with the events
+        // buffered by then — not one giant batch after the trickle ended.
+        let batches: Vec<usize> = sink
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Ok(Delivery::Batch(b)) => Some(b.len()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            batches.len() >= 2,
+            "a sub-delay trickle must flush more than once: {batches:?}"
+        );
+        assert!(
+            batches[0] < 4,
+            "the first batch must not hold the whole trickle: {batches:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reconnect_is_reported_as_a_recoverable_error() {
+        // Every non-terminal session end is reported once before the redial,
+        // matching Go's "live tail reconnecting" emit.
+        let (sink, ws) = run_scripted(
+            vec![
+                vec![
+                    Action::Text(commit_text(1, "app.bsky.feed.post")),
+                    Action::Close,
+                ],
+                vec![Action::Text(commit_text(2, "app.bsky.feed.post"))],
+            ],
+            live_config(),
+            2,
+        )
+        .await;
+        assert_eq!(sink.seqs(), vec![1, 2]);
+        assert_eq!(ws.dialed.borrow().len(), 2);
+        assert_eq!(sink.recoverables.len(), 1, "one reconnect notice");
+        assert!(matches!(
+            sink.recoverables[0],
+            Error::Transport {
+                retryable: true,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1831,6 +2022,45 @@ mod tests {
         // Two dials (initial + after rotation), two dictionary fetches.
         assert_eq!(ws.dialed.borrow().len(), 2);
         assert_eq!(*fetches.borrow(), 2);
+        // The rotation was surfaced as an ordered recoverable error.
+        assert_eq!(sink.recoverables.len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dictionary_rotation_redial_is_backoff_paced() {
+        // Regression: a dictionary rotation must redial after the current
+        // backoff (which keeps doubling — a rotation is not progress), matching
+        // Go, whose loop sleeps unconditionally after refreshDict. A zero-delay
+        // redial would hammer a misconfigured fleet that keeps rejecting IDs.
+        let (dict1, _f1) = make_dict_and_frame(1);
+        let (dict2, _f2) = make_dict_and_frame(2);
+        let (dict3, frame3) = make_dict_and_frame(3);
+        let cancel = CancelToken::new();
+        let ws = ScriptedWs::new(vec![
+            vec![Action::Text(error_text("UnknownZstdDictionary"))],
+            vec![Action::Text(error_text("UnknownZstdDictionary"))],
+            vec![Action::Binary(frame3)],
+        ]);
+        let dict_src = ScriptedDict::new(vec![dict1, dict2, dict3]);
+        let mut config = LiveConfig::new("jetstream.test", true);
+        config.compression = true;
+        config.backoff = LiveBackoff {
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+        };
+        let consumer = LiveConsumer::new(ws.clone(), dict_src, config, cancel.clone()).unwrap();
+        let mut sink = CollectingSink::new(1, cancel);
+        let started = tokio::time::Instant::now();
+        consumer.run(&mut sink).await.unwrap();
+        assert_eq!(sink.seqs(), vec![3]);
+        assert_eq!(ws.dialed.borrow().len(), 3);
+        // Two rotations: the first waits the 100 ms base, the second the
+        // doubled 200 ms — at least 300 ms of pacing in total.
+        assert!(
+            started.elapsed() >= Duration::from_millis(300),
+            "rotation redials must be backoff-paced, elapsed {:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1868,13 +2098,16 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn corrupt_binary_after_upgrade_reconnects() {
+    async fn corrupt_binary_after_upgrade_is_reported_and_connection_kept() {
+        // A zstd frame that fails to decode is surfaced as an ordered
+        // recoverable error and the connection is *kept*, matching Go, where a
+        // DecodeAll failure is emitted per frame without dropping the tail.
         let (dict, _frame) = make_dict_and_frame(1);
         let cancel = CancelToken::new();
-        let ws = ScriptedWs::new(vec![
-            vec![Action::Binary(vec![0xFF, 0xFF, 0xFF, 0xFF])],
-            vec![Action::Text(commit_text(1, "app.bsky.feed.post"))],
-        ]);
+        let ws = ScriptedWs::new(vec![vec![
+            Action::Binary(vec![0xFF, 0xFF, 0xFF, 0xFF]),
+            Action::Text(commit_text(1, "app.bsky.feed.post")),
+        ]]);
         let dict_src = ScriptedDict::new(vec![dict]);
         let mut config = LiveConfig::new("jetstream.test", true);
         config.compression = true;
@@ -1882,7 +2115,10 @@ mod tests {
         let mut sink = CollectingSink::new(1, cancel);
         consumer.run(&mut sink).await.unwrap();
         assert_eq!(sink.seqs(), vec![1]);
-        assert_eq!(ws.dialed.borrow().len(), 2);
+        // One dial: the corrupt frame did not tear down the connection.
+        assert_eq!(ws.dialed.borrow().len(), 1);
+        assert_eq!(sink.recoverables.len(), 1);
+        assert!(matches!(sink.recoverables[0], Error::Compression(_)));
     }
 
     // ---- Pure-function tests ------------------------------------------------
@@ -2004,10 +2240,12 @@ mod tests {
     }
 
     #[test]
-    fn initial_last_seq_keeps_resume_inclusive() {
+    fn initial_last_seq_makes_resume_exclusive() {
+        // The dedup mark equals the resume sequence, so the resumed-from event
+        // itself is never re-delivered (Go's dedupFloor = cursor).
         assert_eq!(initial_last_seq(&LiveCursor::Tip), 0);
-        assert_eq!(initial_last_seq(&LiveCursor::Resume(Cursor::Seq(5))), 4);
-        assert_eq!(initial_last_seq(&LiveCursor::Resume(Cursor::Seq(1))), 0);
+        assert_eq!(initial_last_seq(&LiveCursor::Resume(Cursor::Seq(5))), 5);
+        assert_eq!(initial_last_seq(&LiveCursor::Resume(Cursor::Seq(0))), 0);
         assert_eq!(
             initial_last_seq(&LiveCursor::Resume(Cursor::Timestamp(999))),
             0

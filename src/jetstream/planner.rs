@@ -23,10 +23,22 @@
 //! Every field the downloader will act on is validated before it is trusted: a
 //! later page whose `sealedTipSeq` drifted from `S`, a `plannedThroughSeq` past
 //! `S` or that fails to advance, a bad segment name, a non-16-hex checksum, an
-//! inverted or out-of-range sequence span, an unknown mode, or block ranges that
-//! are empty, inverted, or not strictly increasing all abort planning with a
-//! fatal [`Error::PlanInvalid`]. There is no safe way to download against a plan
-//! that cannot be trusted, so the planner refuses rather than guess.
+//! inverted sequence span, an unknown mode, or block ranges that are empty,
+//! inverted, or not strictly increasing all abort planning with a fatal
+//! [`Error::PlanInvalid`]. There is no safe way to download against a plan that
+//! cannot be trusted, so the planner refuses rather than guess.
+//!
+//! Two shapes an honest server legitimately produces are accepted, matching the
+//! reference Go client:
+//!
+//! - a segment whose `maxSeq` exceeds the pinned tip — the server reports the
+//!   segment's *true* span while capping `sealedTipSeq` at the caller's
+//!   `beforeSeq`, so any `beforeSeq` landing inside a segment produces this;
+//!   the download window clips the out-of-range rows;
+//! - a page that *repeats* the previous page's segment index — the per-page
+//!   entry cap truncates block-mode plans mid-segment, and the next page
+//!   re-plans that segment's remaining blocks under the same index. Only a
+//!   *decreasing* index (a reordered plan) is rejected.
 
 use crate::api::network::bsky::{
     JetstreamPlanSnapshotBlockRange, JetstreamPlanSnapshotInput, JetstreamPlanSnapshotOutput,
@@ -73,8 +85,9 @@ pub struct PlanSegment {
     pub index: u64,
     /// The minimum sequence the segment covers (1-based).
     pub min_seq: u64,
-    /// The maximum sequence the segment covers (1-based), never above the pinned
-    /// sealed tip.
+    /// The maximum sequence the segment covers (1-based). May exceed the pinned
+    /// sealed tip when the segment straddles the caller's `beforeSeq`; the
+    /// download window clips the out-of-range rows.
     pub max_seq: u64,
     /// The segment's xxh3 metadata checksum, exactly 16 lowercase hex digits.
     pub checksum: String,
@@ -98,12 +111,209 @@ pub struct SnapshotPlan {
     pub segments: Vec<PlanSegment>,
 }
 
+/// One validated `planSnapshot` page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanPage {
+    /// The sealed tip the server reported for this page (capped by the request's
+    /// `beforeSeq`).
+    pub sealed_tip_seq: u64,
+    /// The coverage cursor this page reached.
+    pub planned_through_seq: u64,
+    /// This page's validated segments, in plan order.
+    pub segments: Vec<PlanSegment>,
+}
+
+/// Fetch and validate one `planSnapshot` page.
+///
+/// `after_seq` is the page's exclusive floor (the caller's bound on the first
+/// page, the running coverage cursor on later ones). `pinned_tip` is `None` for
+/// a sweep's first page and `Some(S)` afterwards, in which case the request's
+/// `beforeSeq` is frozen at `S`; otherwise the caller's `before_seq` is sent.
+/// Sweep-level bookkeeping (tip drift, coverage advance, completion) is
+/// [`PlanSweep`]'s job.
+pub async fn plan_page<T: HttpTransport>(
+    client: &ArchiveClient<T>,
+    filter: &Filter,
+    after_seq: u64,
+    before_seq: Option<u64>,
+    pinned_tip: Option<u64>,
+    cancel: &CancelToken,
+) -> Result<PlanPage> {
+    if cancel.is_cancelled() {
+        return Err(Error::Canceled);
+    }
+    let mut input = build_base_input(filter, before_seq)?;
+    input.after_seq = match pinned_tip {
+        // First page: the caller's exact bound, omitted at zero.
+        None => (after_seq > 0).then_some(seq_to_wire(after_seq)?),
+        // Later pages: always the coverage cursor.
+        Some(_) => Some(seq_to_wire(after_seq)?),
+    };
+    input.before_seq = match pinned_tip {
+        None => before_seq.map(seq_to_wire).transpose()?,
+        Some(tip) => Some(seq_to_wire(tip)?),
+    };
+    let body = json_body(&input)?;
+
+    let url = client.xrpc_url(PLAN_SNAPSHOT_METHOD, None);
+    let bytes = client
+        .control_request(cancel, || {
+            HttpRequest::post(url.clone())
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .with_body(body.clone())
+        })
+        .await?;
+
+    let output: JetstreamPlanSnapshotOutput = serde_json::from_slice(&bytes)
+        .map_err(|_| Error::PlanInvalid("planSnapshot response was not valid JSON"))?;
+
+    let tip = nonneg(output.sealed_tip_seq, "sealedTipSeq was negative")?;
+    let pts = nonneg(output.planned_through_seq, "plannedThroughSeq was negative")?;
+    if pts > tip {
+        return Err(Error::PlanInvalid(
+            "plannedThroughSeq exceeded the sealed tip",
+        ));
+    }
+
+    let mut segments: Vec<PlanSegment> = Vec::with_capacity(output.segments.len());
+    for raw in output.segments {
+        if segments.len() >= client.limits().max_plan_segments {
+            return Err(Error::PlanInvalid(
+                "planSnapshot returned too many segments",
+            ));
+        }
+        let segment = validate_segment(raw)?;
+        // Within a page, indices may not decrease (a reordered plan cannot be
+        // trusted); an *equal* index is legal across the block-truncation seam,
+        // and the snapshot window plus the ascending-seq check downstream keep a
+        // hostile duplicate from double-delivering rows.
+        if let Some(last) = segments.last()
+            && segment.index < last.index
+        {
+            return Err(Error::PlanInvalid(
+                "segment indices decreased within a page",
+            ));
+        }
+        segments.push(segment);
+    }
+
+    Ok(PlanPage {
+        sealed_tip_seq: tip,
+        planned_through_seq: pts,
+        segments,
+    })
+}
+
+/// Sweep-level bookkeeping across `planSnapshot` pages: tip pinning and drift
+/// detection, coverage advance, segment-index monotonicity across pages, the
+/// page budget, and completion. Shared by [`plan_snapshot`] and the engine's
+/// page-interleaved replay so both enforce one contract.
+#[derive(Debug)]
+pub struct PlanSweep {
+    caller_after: u64,
+    caller_before: Option<u64>,
+    pinned_tip: Option<u64>,
+    planned_through: u64,
+    last_index: Option<u64>,
+    pages: u32,
+    max_pages: u32,
+}
+
+impl PlanSweep {
+    /// Start a sweep over `(after_seq, before_seq]` with a page budget.
+    pub fn new(after_seq: u64, before_seq: Option<u64>, max_pages: u32) -> Self {
+        PlanSweep {
+            caller_after: after_seq,
+            caller_before: before_seq,
+            pinned_tip: None,
+            planned_through: after_seq,
+            last_index: None,
+            pages: 0,
+            max_pages,
+        }
+    }
+
+    /// The bounds for the next [`plan_page`] call:
+    /// `(after_seq, before_seq, pinned_tip)`. `after_seq` is also the exclusive
+    /// floor of the page's download window.
+    pub fn bounds(&self) -> (u64, Option<u64>, Option<u64>) {
+        (self.planned_through, self.caller_before, self.pinned_tip)
+    }
+
+    /// Absorb a fetched page: pin or check the tip, verify coverage advanced,
+    /// verify cross-page segment-index monotonicity, and spend a page from the
+    /// budget. Returns a fatal [`Error::PlanInvalid`] on any violation.
+    pub fn absorb(&mut self, page: &PlanPage) -> Result<()> {
+        self.pages += 1;
+        if self.pages > self.max_pages {
+            return Err(Error::PlanInvalid(
+                "planSnapshot exceeded the maximum page count",
+            ));
+        }
+
+        let tip = page.sealed_tip_seq;
+        match self.pinned_tip {
+            None => self.pinned_tip = Some(tip),
+            Some(pinned) if tip != pinned => {
+                return Err(Error::PlanInvalid("sealedTipSeq drifted between pages"));
+            }
+            Some(_) => {}
+        }
+
+        // Indices may repeat across the block-truncation seam but never decrease.
+        for segment in &page.segments {
+            if let Some(last) = self.last_index
+                && segment.index < last
+            {
+                return Err(Error::PlanInvalid("segment indices decreased across pages"));
+            }
+            self.last_index = Some(segment.index);
+        }
+
+        // Coverage must strictly advance unless the page already reaches the tip.
+        let pts = page.planned_through_seq;
+        if pts <= self.planned_through && pts < tip {
+            return Err(Error::PlanInvalid(
+                "planSnapshot page did not advance coverage",
+            ));
+        }
+        self.planned_through = self.planned_through.max(pts);
+        Ok(())
+    }
+
+    /// The pinned sealed tip, once the first page has been absorbed.
+    pub fn tip(&self) -> Option<u64> {
+        self.pinned_tip
+    }
+
+    /// The coverage cursor the sweep has reached.
+    pub fn planned_through(&self) -> u64 {
+        self.planned_through
+    }
+
+    /// Whether planning is complete (coverage reached the pinned tip).
+    pub fn done(&self) -> bool {
+        self.pinned_tip
+            .is_some_and(|tip| self.planned_through >= tip)
+    }
+
+    /// The caller's exclusive lower bound for the whole sweep.
+    pub fn after_seq(&self) -> u64 {
+        self.caller_after
+    }
+}
+
 /// Build a validated, stable snapshot plan for `filter` over the window
-/// `(after_seq, before_seq]` (an open `before_seq` means up to the sealed tip).
+/// `(after_seq, before_seq]` (an open `before_seq` means up to the sealed tip),
+/// accumulating every page up front.
 ///
 /// See the module docs for the stability and validation contract. Returns a
 /// fatal [`Error::PlanInvalid`] on any untrustworthy response, [`Error::Canceled`]
 /// if cancelled, or a transport/protocol error surfaced by the control request.
+/// The engine does not use this accumulate-everything entry point — it
+/// interleaves [`plan_page`] with downloads, as the Go client does — but the
+/// one-shot plan remains useful for tools and tests.
 pub async fn plan_snapshot<T: HttpTransport>(
     client: &ArchiveClient<T>,
     filter: &Filter,
@@ -111,101 +321,21 @@ pub async fn plan_snapshot<T: HttpTransport>(
     before_seq: Option<u64>,
     cancel: &CancelToken,
 ) -> Result<SnapshotPlan> {
-    let base_input = build_base_input(filter, before_seq)?;
-
+    let mut sweep = PlanSweep::new(after_seq, before_seq, client.limits().max_plan_pages);
     let mut segments: Vec<PlanSegment> = Vec::new();
-    let mut pinned_tip: Option<u64> = None;
-    // Coverage starts at the caller's exclusive lower bound: everything at or
-    // below `after_seq` is out of scope before any page is fetched.
-    let mut planned_through: u64 = after_seq;
-    let mut pages: u32 = 0;
-
     loop {
-        if cancel.is_cancelled() {
-            return Err(Error::Canceled);
-        }
-        pages += 1;
-        if pages > client.limits().max_plan_pages {
+        let (page_after, page_before, pinned) = sweep.bounds();
+        let page = plan_page(client, filter, page_after, page_before, pinned, cancel).await?;
+        sweep.absorb(&page)?;
+        if segments.len().saturating_add(page.segments.len()) > client.limits().max_plan_segments {
             return Err(Error::PlanInvalid(
-                "planSnapshot exceeded the maximum page count",
+                "planSnapshot returned too many segments",
             ));
         }
-
-        // First page: caller's exact bounds. Later pages: pinned freeze.
-        let (page_after, page_before) = match pinned_tip {
-            None => (
-                (after_seq > 0).then_some(seq_to_wire(after_seq)?),
-                before_seq.map(seq_to_wire).transpose()?,
-            ),
-            Some(tip) => (Some(seq_to_wire(planned_through)?), Some(seq_to_wire(tip)?)),
-        };
-
-        let body = {
-            let mut input = base_input.clone();
-            input.after_seq = page_after;
-            input.before_seq = page_before;
-            json_body(&input)?
-        };
-        let url = client.xrpc_url(PLAN_SNAPSHOT_METHOD, None);
-        let bytes = client
-            .control_request(cancel, || {
-                HttpRequest::post(url.clone())
-                    .header("content-type", "application/json")
-                    .header("accept", "application/json")
-                    .with_body(body.clone())
-            })
-            .await?;
-
-        let output: JetstreamPlanSnapshotOutput = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::PlanInvalid("planSnapshot response was not valid JSON"))?;
-
-        let tip = nonneg(output.sealed_tip_seq, "sealedTipSeq was negative")?;
-        match pinned_tip {
-            None => pinned_tip = Some(tip),
-            Some(pinned) if tip != pinned => {
-                return Err(Error::PlanInvalid("sealedTipSeq drifted between pages"));
-            }
-            Some(_) => {}
-        }
-
-        let pts = nonneg(output.planned_through_seq, "plannedThroughSeq was negative")?;
-        if pts > tip {
-            return Err(Error::PlanInvalid(
-                "plannedThroughSeq exceeded the pinned sealed tip",
-            ));
-        }
-
-        for raw in output.segments {
-            if segments.len() >= client.limits().max_plan_segments {
-                return Err(Error::PlanInvalid(
-                    "planSnapshot returned too many segments",
-                ));
-            }
-            let segment = validate_segment(raw, tip)?;
-            // Segment indices must strictly increase across the whole plan (pages
-            // included). This rejects a duplicate or reordered entry, which would
-            // otherwise be downloaded again and double-count its events — the
-            // planner is the trust boundary, and window clipping does not dedupe.
-            if let Some(last) = segments.last()
-                && segment.index <= last.index
-            {
-                return Err(Error::PlanInvalid(
-                    "segment indices are not strictly increasing",
-                ));
-            }
-            segments.push(segment);
-        }
-
-        // Coverage must strictly advance unless the page already reaches the tip.
-        if pts <= planned_through && pts < tip {
-            return Err(Error::PlanInvalid(
-                "planSnapshot page did not advance coverage",
-            ));
-        }
-        planned_through = planned_through.max(pts);
-
-        if planned_through >= tip {
-            let tip = pinned_tip.unwrap_or(tip);
+        segments.extend(page.segments);
+        if sweep.done() {
+            // `done` implies the tip is pinned.
+            let tip = sweep.tip().unwrap_or_default();
             return Ok(SnapshotPlan {
                 sealed_tip_seq: tip,
                 after_seq,
@@ -239,9 +369,14 @@ fn build_base_input(
     })
 }
 
-/// Validate one raw plan segment against the pinned tip, converting it into a
-/// trusted [`PlanSegment`].
-fn validate_segment(raw: JetstreamPlanSnapshotSegment, sealed_tip: u64) -> Result<PlanSegment> {
+/// Validate one raw plan segment, converting it into a trusted [`PlanSegment`].
+///
+/// The segment's span is *not* checked against the pinned tip: the server
+/// reports a segment's true `maxSeq` while capping `sealedTipSeq` at the
+/// request's `beforeSeq`, so a segment straddling the caller's bound
+/// legitimately exceeds the tip (the download window clips its rows). The Go
+/// client accepts these too.
+fn validate_segment(raw: JetstreamPlanSnapshotSegment) -> Result<PlanSegment> {
     validate_segment_name(&raw.name)?;
     validate_checksum(&raw.checksum)?;
 
@@ -251,11 +386,6 @@ fn validate_segment(raw: JetstreamPlanSnapshotSegment, sealed_tip: u64) -> Resul
     if min_seq == 0 || min_seq > max_seq {
         return Err(Error::PlanInvalid(
             "segment sequence span is empty or inverted",
-        ));
-    }
-    if max_seq > sealed_tip {
-        return Err(Error::PlanInvalid(
-            "segment maxSeq exceeded the pinned sealed tip",
         ));
     }
 
@@ -414,25 +544,22 @@ mod tests {
 
     #[test]
     fn accepts_whole_and_blocks_modes() {
-        let whole = validate_segment(seg("s0.jss", 0, 1, 10, CK, "segment", vec![]), 10)
-            .expect("valid whole");
+        let whole =
+            validate_segment(seg("s0.jss", 0, 1, 10, CK, "segment", vec![])).expect("valid whole");
         assert_eq!(whole.mode, SegmentMode::Whole);
         assert_eq!(whole.name, "s0.jss");
         assert_eq!(whole.min_seq, 1);
         assert_eq!(whole.max_seq, 10);
 
-        let blocks = validate_segment(
-            seg(
-                "s1.jss",
-                1,
-                11,
-                20,
-                CK,
-                "blocks",
-                vec![(0, 2), (4, 4), (7, 9)],
-            ),
+        let blocks = validate_segment(seg(
+            "s1.jss",
+            1,
+            11,
             20,
-        )
+            CK,
+            "blocks",
+            vec![(0, 2), (4, 4), (7, 9)],
+        ))
         .expect("valid blocks");
         assert_eq!(
             blocks.mode,
@@ -453,7 +580,7 @@ mod tests {
             "0123456789abcdef0",
         ] {
             assert!(matches!(
-                validate_segment(seg("s.jss", 0, 1, 2, bad, "segment", vec![]), 2),
+                validate_segment(seg("s.jss", 0, 1, 2, bad, "segment", vec![])),
                 Err(Error::PlanInvalid(_))
             ));
         }
@@ -463,43 +590,45 @@ mod tests {
     fn rejects_bad_names() {
         for bad in ["", "../etc", "a/b", "a b", "seg\u{0000}", ".", ".."] {
             assert!(matches!(
-                validate_segment(seg(bad, 0, 1, 2, CK, "segment", vec![]), 2),
+                validate_segment(seg(bad, 0, 1, 2, CK, "segment", vec![])),
                 Err(Error::PlanInvalid(_))
             ));
         }
     }
 
     #[test]
-    fn rejects_inverted_or_out_of_range_spans() {
+    fn rejects_inverted_spans_but_accepts_tip_straddle() {
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 5, 4, CK, "segment", vec![]), 10),
+            validate_segment(seg("s.jss", 0, 5, 4, CK, "segment", vec![])),
             Err(Error::PlanInvalid(_))
         ));
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 0, 4, CK, "segment", vec![]), 10),
+            validate_segment(seg("s.jss", 0, 0, 4, CK, "segment", vec![])),
             Err(Error::PlanInvalid(_))
         ));
-        // maxSeq beyond the pinned tip.
-        assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 11, CK, "segment", vec![]), 10),
-            Err(Error::PlanInvalid(_))
-        ));
+        // Regression: a segment whose maxSeq exceeds the pinned tip is the
+        // normal server response to a beforeSeq landing inside a segment (the
+        // tip is capped at beforeSeq, the segment reports its true span). It
+        // must be accepted, as in Go; the download window clips its rows.
+        let straddle = validate_segment(seg("s.jss", 0, 5, 150, CK, "segment", vec![]))
+            .expect("straddling segment accepted");
+        assert_eq!(straddle.max_seq, 150);
     }
 
     #[test]
     fn rejects_unknown_mode_and_mismatched_blocks() {
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 2, CK, "elsewhere", vec![]), 2),
+            validate_segment(seg("s.jss", 0, 1, 2, CK, "elsewhere", vec![])),
             Err(Error::PlanInvalid(_))
         ));
         // segment mode must not carry blocks.
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 2, CK, "segment", vec![(0, 1)]), 2),
+            validate_segment(seg("s.jss", 0, 1, 2, CK, "segment", vec![(0, 1)])),
             Err(Error::PlanInvalid(_))
         ));
         // blocks mode must carry blocks.
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 2, CK, "blocks", vec![]), 2),
+            validate_segment(seg("s.jss", 0, 1, 2, CK, "blocks", vec![])),
             Err(Error::PlanInvalid(_))
         ));
     }
@@ -508,17 +637,17 @@ mod tests {
     fn rejects_non_increasing_block_ranges() {
         // Overlapping (4 <= 4).
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(0, 4), (4, 6)]), 9),
+            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(0, 4), (4, 6)])),
             Err(Error::PlanInvalid(_))
         ));
         // Out of order.
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(5, 6), (0, 1)]), 9),
+            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(5, 6), (0, 1)])),
             Err(Error::PlanInvalid(_))
         ));
         // Inverted single range.
         assert!(matches!(
-            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(6, 5)]), 9),
+            validate_segment(seg("s.jss", 0, 1, 9, CK, "blocks", vec![(6, 5)])),
             Err(Error::PlanInvalid(_))
         ));
     }

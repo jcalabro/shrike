@@ -48,7 +48,9 @@ unsafe_code = "deny"
 [workspace.dependencies]
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `raw_value` lets the jetstream live parser inspect a commit record's raw JSON
+# text (duplicate-key rejection) without a second full parse of the frame.
+serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 data-encoding = "2"
 p256 = { version = "0.13", features = ["ecdsa"] }

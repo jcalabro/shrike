@@ -170,11 +170,17 @@ pub enum Delivery {
 /// A cheap, copyable snapshot of engine progress. Not a metrics registry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Stats {
-    /// Archive plan pages processed.
+    /// Archive plan pages fully downloaded and delivered. Counted *after* a
+    /// page's segments are emitted (matching the Go client), so `pages` never
+    /// runs ahead of delivered work: a page in flight is not yet reflected here.
     pub pages: u64,
-    /// The pinned sealed-tip sequence `S`.
+    /// The pinned sealed-tip sequence `S`. Published as soon as a page is
+    /// planned — before its segments download — so a consumer sees the goal
+    /// ahead of the delivered coverage below.
     pub sealed_tip_seq: u64,
-    /// The sequence the plan has covered so far.
+    /// The sequence the plan has covered so far. Advances only after a page's
+    /// segments are delivered, so `sealed_tip_seq - planned_through_seq` is the
+    /// residual gap still to replay.
     pub planned_through_seq: u64,
     /// The residual gap between coverage and the sealed tip.
     pub residual_gap: u64,
@@ -199,13 +205,42 @@ pub enum LiveFrame {
 /// frame that is well-formed but carries an unknown (forward-compatible)
 /// envelope or payload `$type`, and `Err` for a terminal `error` frame, a frame
 /// from a non-v2 endpoint (no envelope `$type`), or a malformed event.
+///
+/// A commit's `record` is additionally checked for duplicate JSON object keys
+/// against its *raw* wire text: `serde_json`'s tree resolves duplicates
+/// last-wins, which would silently rewrite the record's canonical bytes (and any
+/// CID computed over them), where the Go client rejects the frame.
 pub fn parse_live_frame(bytes: &[u8]) -> Result<Option<LiveFrame>> {
     let value: Value =
         serde_json::from_slice(bytes).map_err(|_| Error::InvalidFrame("frame is not JSON"))?;
+    // Targeted second pass: capture the record's raw text (if any) so duplicate
+    // keys inside it can be detected before the deduplicated tree is trusted.
+    if let Ok(probe) = serde_json::from_slice::<RawFrameProbe>(bytes)
+        && let Some(raw) = probe.payload.and_then(|p| p.record)
+    {
+        super::json_cbor::reject_duplicate_keys(raw.get())?;
+    }
     parse_live_value(&value)
 }
 
+/// The minimal shape needed to reach a commit payload's raw `record` text.
+#[derive(serde::Deserialize)]
+struct RawFrameProbe<'a> {
+    #[serde(borrow, default)]
+    payload: Option<RawPayloadProbe<'a>>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawPayloadProbe<'a> {
+    #[serde(borrow, default)]
+    record: Option<&'a serde_json::value::RawValue>,
+}
+
 /// Parse one proposal-0015 live frame from already-parsed JSON.
+///
+/// Note: a [`Value`] has already collapsed any duplicate object keys (last
+/// wins), so this entry point cannot detect them; [`parse_live_frame`] checks
+/// the raw text first and is what the live tail uses.
 pub fn parse_live_value(value: &Value) -> Result<Option<LiveFrame>> {
     let obj = value
         .as_object()
@@ -610,6 +645,23 @@ mod tests {
             panic!("expected account");
         };
         assert!(account.active);
+    }
+
+    #[test]
+    fn duplicate_record_keys_are_rejected_from_raw_text() {
+        // Regression: serde_json's tree silently resolves duplicate keys last-
+        // wins, which would deliver a silently rewritten record; the Go client
+        // rejects the frame. Only parse_live_frame (raw bytes) can see them.
+        let frame = format!(
+            r#"{{"$type":"message","payload":{{"$type":"{TYPE_COMMIT}","seq":42,"did":"{DID}","time":"{TIME}","operation":"create","collection":"app.bsky.feed.post","rkey":"{RKEY}","rev":"{REV}","record":{{"a":1,"a":2}}}}}}"#
+        );
+        assert!(matches!(
+            parse_live_frame(frame.as_bytes()),
+            Err(Error::InvalidRecord(_))
+        ));
+        // The same record without the duplicate parses fine.
+        let ok = frame.replace(r#"{"a":1,"a":2}"#, r#"{"a":1,"b":2}"#);
+        assert!(parse_live_frame(ok.as_bytes()).unwrap().is_some());
     }
 
     #[test]

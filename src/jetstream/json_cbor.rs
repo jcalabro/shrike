@@ -119,6 +119,86 @@ fn encode(value: &Value, buf: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+/// Reject duplicate object keys anywhere inside a raw JSON value.
+///
+/// `serde_json::Value` resolves duplicate keys silently (last wins), so by the
+/// time a record reaches [`record_json_to_dag_cbor`] a hostile duplicate has
+/// already rewritten it — the canonical bytes (and any CID computed over them)
+/// would silently differ from what the record was published under. The Go
+/// client's `cbor.FromJSON` rejects such records outright; the live parser runs
+/// this check over the record's raw text to match.
+pub(crate) fn reject_duplicate_keys(raw: &str) -> Result<()> {
+    let mut de = serde_json::Deserializer::from_str(raw);
+    serde::de::DeserializeSeed::deserialize(DupCheck, &mut de)
+        .map_err(|_| Error::InvalidRecord("record JSON has duplicate keys"))
+}
+
+/// A deserialize seed that walks any JSON value, erroring on a duplicate key
+/// within any object. Values are otherwise discarded.
+struct DupCheck;
+
+impl<'de> serde::de::DeserializeSeed<'de> for DupCheck {
+    type Value = ();
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> core::result::Result<(), D::Error> {
+        deserializer.deserialize_any(DupCheckVisitor)
+    }
+}
+
+struct DupCheckVisitor;
+
+impl<'de> serde::de::Visitor<'de> for DupCheckVisitor {
+    type Value = ();
+
+    fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> core::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_i64<E>(self, _: i64) -> core::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_u64<E>(self, _: u64) -> core::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_f64<E>(self, _: f64) -> core::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_str<E>(self, _: &str) -> core::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_unit<E>(self) -> core::result::Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(
+        self,
+        mut seq: A,
+    ) -> core::result::Result<(), A::Error> {
+        while seq.next_element_seed(DupCheck)?.is_some() {}
+        Ok(())
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(
+        self,
+        mut map: A,
+    ) -> core::result::Result<(), A::Error> {
+        let mut keys = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key) {
+                return Err(serde::de::Error::custom("duplicate object key"));
+            }
+            map.next_value_seed(DupCheck)?;
+        }
+        Ok(())
+    }
+}
+
 /// Decode a dag-json `$bytes` payload. The data model specifies standard base64
 /// without padding (RFC 4648 §4); we also accept the padded alphabet for
 /// robustness across producers, since either decodes to identical bytes.
@@ -273,6 +353,16 @@ mod tests {
             record_json_to_dag_cbor(&serde_json::json!({"$bytes": 5})),
             Err(Error::InvalidRecord(_))
         ));
+    }
+
+    #[test]
+    fn duplicate_keys_are_rejected() {
+        // Top level, nested, and inside arrays; unique keys pass.
+        assert!(reject_duplicate_keys(r#"{"a":1,"a":2}"#).is_err());
+        assert!(reject_duplicate_keys(r#"{"outer":{"a":1,"a":2}}"#).is_err());
+        assert!(reject_duplicate_keys(r#"[{"a":1},{"a":1,"a":2}]"#).is_err());
+        assert!(reject_duplicate_keys(r#"{"a":1,"b":{"a":1},"c":[1,"x",null]}"#).is_ok());
+        assert!(reject_duplicate_keys(r#""just a string""#).is_ok());
     }
 
     /// A map that merely *contains* `$bytes`/`$link` among other keys is a plain

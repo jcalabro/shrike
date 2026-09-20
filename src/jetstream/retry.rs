@@ -100,8 +100,9 @@ pub enum Attempt<T> {
 /// `op` is invoked with the 0-based attempt number and classifies its outcome.
 /// On [`Attempt::Retry`], the loop sleeps for [`RetryConfig::delay_for`] (with
 /// the hint as a floor) and tries again until the attempt budget is spent, then
-/// returns the last error. Cancellation is checked before each attempt and again
-/// before each sleep, returning [`Error::Canceled`] without waiting.
+/// returns the last error. Cancellation is checked before each attempt and
+/// *raced against* each backoff sleep, returning [`Error::Canceled`] promptly
+/// rather than waiting out the delay.
 pub(crate) async fn with_retry<T, F, Fut>(
     cfg: &RetryConfig,
     cancel: &CancelToken,
@@ -125,10 +126,11 @@ where
                     return Err(err);
                 }
                 let delay = cfg.delay_for(attempt, delay_hint);
-                if cancel.is_cancelled() {
+                // Race the backoff against cancellation so a shutdown request
+                // never waits out a long (up to max_delay) sleep.
+                if !cancel.sleep_cancelable(delay).await {
                     return Err(Error::Canceled);
                 }
-                crate::platform::sleep(delay).await;
                 attempt = next;
             }
         }
@@ -284,5 +286,37 @@ mod tests {
         .await;
         assert!(matches!(out, Err(Error::Canceled)));
         assert_eq!(seen.get(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_during_backoff_sleep_aborts_promptly() {
+        // Regression: a cancellation arriving mid-backoff must interrupt the
+        // sleep rather than wait out the full delay (Go's retry sleeps select
+        // on ctx.Done()).
+        let cfg = RetryConfig {
+            max_attempts: 5,
+            base_delay: Duration::from_secs(30),
+            max_delay: Duration::from_secs(30),
+        };
+        let cancel = CancelToken::new();
+        let canceller = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            canceller.cancel();
+        });
+        let started = tokio::time::Instant::now();
+        let out: Result<u32> = with_retry(&cfg, &cancel, |_| async move {
+            Attempt::Retry {
+                delay_hint: None,
+                err: Error::Transport {
+                    message: "boom".to_owned(),
+                    retryable: true,
+                },
+            }
+        })
+        .await;
+        assert!(matches!(out, Err(Error::Canceled)));
+        // Interrupted within the cancel-poll granularity, not the 30 s backoff.
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

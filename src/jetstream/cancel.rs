@@ -55,6 +55,21 @@ impl CancelToken {
             crate::platform::sleep(core::time::Duration::from_millis(CANCEL_POLL_MILLIS)).await;
         }
     }
+
+    /// Sleep for `delay`, racing cancellation. Returns `false` when cancelled
+    /// (before or during the sleep), so a backoff wait never outlives a
+    /// shutdown request — matching the Go client, whose retry sleeps select on
+    /// `ctx.Done()`.
+    pub(crate) async fn sleep_cancelable(&self, delay: core::time::Duration) -> bool {
+        use futures::future::{Either, select};
+        if self.is_cancelled() {
+            return false;
+        }
+        let sleep = crate::platform::sleep(delay);
+        let cancelled = self.cancelled();
+        futures::pin_mut!(sleep, cancelled);
+        matches!(select(sleep, cancelled).await, Either::Left(_))
+    }
 }
 
 /// How often [`CancelToken::cancelled`] re-checks the flag. Cancellation is a
