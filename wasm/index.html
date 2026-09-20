@@ -226,7 +226,7 @@
 
     // === Jetstream v2 (sealed archive + live) ===============================
     // Events, stats, and info all arrive as ES Maps (see `to_js`), so every
-    // value is normalized through `plain()` before use, exactly like `addRow`.
+    // v2 hands back plain JS objects, so property access works without `plain()`.
     let v2sub;
     let v2count = 0;
     let v2statsTimer;
@@ -238,7 +238,7 @@
       if (!v2sub) return;
       let snapshot;
       try {
-        snapshot = plain(v2sub.stats());
+        snapshot = v2sub.stats();
       } catch {
         return; // subscription already closed
       }
@@ -262,7 +262,6 @@
     }
 
     function v2AddEvent(event) {
-      event = plain(event);
       const row = document.createElement("div");
       row.className = "event";
       const kind = document.createElement("strong");
@@ -284,7 +283,6 @@
     }
 
     function v2Info(info) {
-      info = plain(info);
       const row = document.createElement("div");
       row.className = "event";
       row.style.borderLeftColor = "#d29922";
@@ -293,7 +291,23 @@
     }
 
     function v2Error(error) {
-      v2status.textContent = `Stream error: ${errorText(error)}`;
+      // Recoverable errors are reported while the stream keeps running; show
+      // them inline without tearing down the "delivered" status line. A fatal
+      // error ends the stream — onComplete fires right after.
+      if (error?.recoverable) {
+        const row = document.createElement("div");
+        row.className = "event";
+        row.style.borderLeftColor = "#d29922";
+        row.textContent = `recoverable: ${errorText(error)}`;
+        v2events.prepend(row);
+      } else {
+        v2status.textContent = `Stream error: ${errorText(error)}`;
+      }
+    }
+
+    function v2Complete(result) {
+      const summary = result.ok ? "completed" : `failed: ${errorText(result.error)}`;
+      v2status.textContent = `${v2count} events delivered · ${summary}`;
     }
 
     function v2Stop() {
@@ -338,7 +352,7 @@
         if (before) options.beforeSeq = parseSeq("beforeSeq", before);
         if (keyField.value) options.replayKey = keyField.value;
 
-        v2sub = connectJetstreamV2(options, v2AddEvent, v2Info, v2Error);
+        v2sub = connectJetstreamV2(options, v2AddEvent, v2Info, v2Error, v2Complete);
         $("v2-start").disabled = true;
         $("v2-stop").disabled = false;
         renderV2Stats();

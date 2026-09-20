@@ -743,7 +743,7 @@ fn to_js(value: &serde_json::Value) -> Result<JsValue, JsValue> {
 // a workspace build, where they are absent.
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 mod jetstream_v2 {
-    use super::{emit_stream_error, js_error, to_js};
+    use super::js_error;
     use js_sys::Function;
     use serde::Deserialize;
     use wasm_bindgen::prelude::*;
@@ -756,6 +756,61 @@ mod jetstream_v2 {
 
     /// The default public Jetstream v2 host, matching the CLI.
     const DEFAULT_HOST: &str = "jetstream.us-east.bsky.network";
+
+    /// Serialize a value to a **plain** JavaScript object so consumers can use
+    /// property access (`event.kind`, `stats.deliveredEvents`). The default
+    /// `serde_wasm_bindgen` serializer emits an ES `Map` for a serde map, which
+    /// reads as `undefined` under dotted access — a browser footgun this binding
+    /// avoids by always going through the `json_compatible` serializer.
+    fn to_plain_js(value: &serde_json::Value) -> Result<JsValue, JsValue> {
+        use serde::Serialize;
+        value
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(js_error)
+    }
+
+    /// Deliver a stream error to `on_error`, tagged so JavaScript can tell a
+    /// fatal (stream-ending) error from a recoverable one without matching the
+    /// message text: `error.fatal` is `true` only for the single terminal error,
+    /// and `error.recoverable` is its inverse. A recoverable error is delivered
+    /// in order and the stream keeps running; a fatal error is always paired with
+    /// the terminal `onComplete` call below.
+    fn emit_error(callback: Option<&Function>, error: JsValue, fatal: bool) {
+        let Some(callback) = callback else {
+            return;
+        };
+        // `error` is a `js_sys::Error` object (from `js_error`), so these tags
+        // land as own properties; on the off chance it is not an object the
+        // writes are simply dropped and the untagged error is still delivered.
+        let _ = js_sys::Reflect::set(
+            &error,
+            &JsValue::from_str("fatal"),
+            &JsValue::from_bool(fatal),
+        );
+        let _ = js_sys::Reflect::set(
+            &error,
+            &JsValue::from_str("recoverable"),
+            &JsValue::from_bool(!fatal),
+        );
+        let _ = callback.call1(&JsValue::NULL, &error);
+    }
+
+    /// Fire the terminal completion signal exactly once, when the stream ends for
+    /// any reason (snapshot finished, `close()` called, or a fatal error). The
+    /// argument is `{ ok: boolean, error: string | null }`, so a UI can show a
+    /// final state without having to also wire `onError`.
+    fn emit_complete(callback: Option<&Function>, outcome: &Result<(), shrike::jetstream::Error>) {
+        let Some(callback) = callback else {
+            return;
+        };
+        let value = match outcome {
+            Ok(()) => serde_json::json!({ "ok": true, "error": serde_json::Value::Null }),
+            Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }),
+        };
+        if let Ok(js) = to_plain_js(&value) {
+            let _ = callback.call1(&JsValue::NULL, &js);
+        }
+    }
 
     /// Options for [`connect_jetstream_v2`], deserialized from a plain JS object.
     ///
@@ -803,7 +858,7 @@ mod jetstream_v2 {
         /// archive downloads. The UI polls this to show replay/cutover progress.
         pub fn stats(&self) -> Result<JsValue, JsValue> {
             let s = self.stats.snapshot();
-            to_js(&serde_json::json!({
+            to_plain_js(&serde_json::json!({
                 "pages": s.pages,
                 "sealedTipSeq": s.sealed_tip_seq,
                 "plannedThroughSeq": s.planned_through_seq,
@@ -821,14 +876,24 @@ mod jetstream_v2 {
     /// archive), replay-then-cutover (`afterSeq`), and snapshot (`snapshotOnly`,
     /// optionally bounded by `beforeSeq`). Any archive mode requires `replayKey`.
     ///
-    /// `onInfo` (optional) receives `#info` advisories; `onError` (optional)
-    /// receives recoverable errors in order and the single fatal error, if any.
+    /// Every value handed to JavaScript — events, `#info` advisories, and
+    /// `stats()` — is a plain object, so `event.kind` / `event.seq` work directly.
+    ///
+    /// Callbacks (all but `onEvent` optional):
+    /// - `onEvent(event)` — one call per event.
+    /// - `onInfo(info)` — `#info` advisories (`{ name, message }`).
+    /// - `onError(error)` — stream errors. `error.recoverable === true` means the
+    ///   stream kept running; `error.fatal === true` means it ended (and
+    ///   `onComplete` also fires).
+    /// - `onComplete(result)` — fires once when the stream ends for any reason,
+    ///   with `{ ok: boolean, error: string | null }`.
     #[wasm_bindgen(js_name = connectJetstreamV2)]
     pub fn connect_jetstream_v2(
         options: JsValue,
         on_event: Function,
         on_info: Option<Function>,
         on_error: Option<Function>,
+        on_complete: Option<Function>,
     ) -> Result<Subscription, JsValue> {
         let opts: Options = if options.is_null() || options.is_undefined() {
             Options::default()
@@ -894,9 +959,13 @@ mod jetstream_v2 {
             on_error: on_error.clone(),
         };
         wasm_bindgen_futures::spawn_local(async move {
-            if let Err(err) = engine.run(&mut sink).await {
-                emit_stream_error(on_error.as_ref(), js_error(err));
+            let outcome = engine.run(&mut sink).await;
+            // A fatal error surfaces on `onError` (tagged fatal) for consumers
+            // wiring only that callback, and always as the terminal `onComplete`.
+            if let Err(error) = &outcome {
+                emit_error(on_error.as_ref(), js_error(error), true);
             }
+            emit_complete(on_complete.as_ref(), &outcome);
         });
 
         Ok(Subscription { cancel, stats })
@@ -950,7 +1019,7 @@ mod jetstream_v2 {
         }
 
         async fn recoverable(&mut self, error: shrike::jetstream::Error) -> bool {
-            emit_stream_error(self.on_error.as_ref(), js_error(error));
+            emit_error(self.on_error.as_ref(), js_error(error), false);
             true
         }
     }
@@ -958,11 +1027,13 @@ mod jetstream_v2 {
     impl JsSink {
         fn emit_batch(&self, batch: &Batch) {
             for event in batch.events() {
-                match event_to_json(event).and_then(|value| to_js(&value)) {
+                match event_to_json(event).and_then(|value| to_plain_js(&value)) {
                     Ok(value) => {
                         let _ = self.on_event.call1(&JsValue::NULL, &value);
                     }
-                    Err(error) => emit_stream_error(self.on_error.as_ref(), error),
+                    // A single event that will not serialize is recoverable: the
+                    // stream keeps running, so report it as such rather than fatal.
+                    Err(error) => emit_error(self.on_error.as_ref(), error, false),
                 }
             }
         }
@@ -972,7 +1043,7 @@ mod jetstream_v2 {
                 return;
             };
             let value = serde_json::json!({ "name": info.name, "message": info.message });
-            if let Ok(js) = to_js(&value) {
+            if let Ok(js) = to_plain_js(&value) {
                 let _ = callback.call1(&JsValue::NULL, &js);
             }
         }
@@ -1188,6 +1259,7 @@ mod tests {
             noop_fn(),
             None,
             None,
+            None,
         );
         assert!(
             result.is_err(),
@@ -1201,6 +1273,7 @@ mod tests {
         let result = crate::jetstream_v2::connect_jetstream_v2(
             v2_options(serde_json::json!({ "afterSeq": 10 })),
             noop_fn(),
+            None,
             None,
             None,
         );
@@ -1218,6 +1291,7 @@ mod tests {
         let result = crate::jetstream_v2::connect_jetstream_v2(
             v2_options(serde_json::json!({ "kinds": ["bogus"] })),
             noop_fn(),
+            None,
             None,
             None,
         );
@@ -1240,6 +1314,7 @@ mod tests {
             noop_fn(),
             None,
             None,
+            None,
         );
         assert!(
             result.is_err(),
@@ -1256,6 +1331,7 @@ mod tests {
         let sub = crate::jetstream_v2::connect_jetstream_v2(
             v2_options(serde_json::json!({ "host": "127.0.0.1:9", "insecure": true })),
             noop_fn(),
+            None,
             None,
             None,
         )
@@ -1278,6 +1354,39 @@ mod tests {
         // Idempotent teardown: cancelling twice must not panic or double-free
         // the WebSocket listeners.
         sub.close();
+        sub.close();
+    }
+
+    // Ergonomics regression: the default `serde_wasm_bindgen` serializer emits an
+    // ES `Map` for a serde map, on which `value.pages` reads `undefined` — the
+    // README and demo both use property access. `stats()` must hand back a plain
+    // object so `Reflect::get` (i.e. `value.pages`) returns the value directly.
+    #[wasm_bindgen_test]
+    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+    fn jetstream_v2_stats_is_a_plain_object_not_a_map() {
+        use wasm_bindgen::JsCast;
+        let sub = crate::jetstream_v2::connect_jetstream_v2(
+            v2_options(serde_json::json!({ "host": "127.0.0.1:9", "insecure": true })),
+            noop_fn(),
+            None,
+            None,
+            None,
+        )
+        .expect("a live-only subscription needs no archive key");
+
+        let stats = sub.stats().expect("stats snapshot serializes");
+        assert!(
+            !stats.is_instance_of::<js_sys::Map>(),
+            "stats must be a plain object, not an ES Map"
+        );
+        let pages = js_sys::Reflect::get(&stats, &"pages".into())
+            .expect("plain object exposes its keys as properties");
+        assert!(
+            !pages.is_undefined(),
+            "property access (value.pages) must work on the returned object"
+        );
+        assert_eq!(pages.as_f64(), Some(0.0), "pages starts at zero");
+
         sub.close();
     }
 }

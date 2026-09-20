@@ -74,7 +74,16 @@ const sub = connectJetstreamV2(
   },
   event => console.log(event.kind, event.seq, event.collection),
   info => console.warn("info", info.name, info.message), // optional
-  error => console.error("stream error", error),          // optional
+  error => {                                              // optional
+    // `recoverable` errors are reported while the stream keeps running; a
+    // `fatal` error means the stream ended (onComplete also fires).
+    if (error.fatal) console.error("stream ended", error);
+    else console.warn("recoverable", error);
+  },
+  result => {                                             // optional
+    // Fires exactly once when the stream ends, for any reason.
+    console.log(result.ok ? "done" : `failed: ${result.error}`);
+  },
 );
 
 console.log(sub.stats()); // { lastProcessedSeq, deliveredEvents, sealedTipSeq, … }
@@ -83,8 +92,14 @@ console.log(sub.stats()); // { lastProcessedSeq, deliveredEvents, sealedTipSeq, 
 
 Options: `host`, `insecure` (use `ws`/`http` instead of `wss`/`https`),
 `archiveHost` (defaults to `host`), `collections`, `dids`, `kinds`, `afterSeq`,
-`beforeSeq`, `snapshotOnly`, `noCompression`, and `replayKey`. Events, info
-advisories, and `stats()` snapshots are delivered as plain JavaScript values.
+`beforeSeq`, `snapshotOnly`, `noCompression`, and `replayKey`.
+
+Callbacks after `onEvent` are all optional: `onInfo(info)` for `#info`
+advisories, `onError(error)`, and `onComplete(result)`. Events, info advisories,
+and `stats()` snapshots are delivered as plain JavaScript objects, so
+`event.kind` and `stats().deliveredEvents` work by direct property access.
+Each `onError` value carries `error.recoverable` / `error.fatal` booleans, and
+`onComplete` fires once at stream end with `{ ok, error }`.
 
 Never embed a long-lived archive key in checked-in HTML, JavaScript, or WASM,
 and never place it in a URL: browser bundles are readable by anyone who loads
