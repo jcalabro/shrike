@@ -11,8 +11,8 @@ dev:
     nix --extra-experimental-features "nix-command flakes" develop
 
 # Build everything
-build:
-    cargo build --workspace --features full
+build *ARGS:
+    cargo build --workspace --features full {{ARGS}}
 
 # Build browser-ready WebAssembly plus JavaScript/TypeScript bindings.
 wasm:
