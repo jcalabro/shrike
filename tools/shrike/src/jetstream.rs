@@ -15,6 +15,7 @@
 //! shell history and process listings. The live tail needs no key.
 
 use std::io::{self, Write};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
@@ -77,6 +78,18 @@ pub struct Args {
     /// Print periodic progress stats instead of individual events.
     #[arg(long)]
     pub stats: bool,
+
+    /// Decode like records into FeedLike and report successes/errors in stats.
+    #[arg(long, requires = "stats")]
+    pub typed_likes: bool,
+
+    /// Concurrent archive segments and block/stripe requests per segment.
+    #[arg(long)]
+    pub download_concurrency: Option<std::num::NonZeroUsize>,
+
+    /// Maximum events per delivery. Larger batches can amortize CPU work.
+    #[arg(long)]
+    pub batch_size: Option<std::num::NonZeroUsize>,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -86,6 +99,9 @@ pub async fn run(args: Args) -> Result<()> {
     let mut live = LiveConfig::new(&args.host, secure);
     live.filter = filter;
     live.compression = !args.no_compression;
+    if let Some(size) = args.batch_size {
+        live.max_batch = size.get();
+    }
     let read_limit = live.read_limit;
 
     let mut config = EngineConfig::new(live);
@@ -131,6 +147,11 @@ pub async fn run(args: Args) -> Result<()> {
     let mut sink = CliSink {
         output,
         stats: stats.clone(),
+        typed_likes: args.typed_likes,
+        decoded: 0,
+        decode_errors: 0,
+        started: Instant::now(),
+        last_report: Instant::now(),
     };
 
     engine
@@ -142,7 +163,7 @@ pub async fn run(args: Args) -> Result<()> {
     // last batch did not trigger a periodic print. A broken pipe here is a clean
     // exit, not an error, so the write result is intentionally discarded.
     if args.stats {
-        let _ = emit_stats(&stats, args.json);
+        let _ = emit_stats(&sink, args.json);
     }
     Ok(())
 }
@@ -159,6 +180,9 @@ fn build_archive(args: &Args, secure: bool) -> Result<ClientArchive<NativeHttpTr
         .unwrap_or_else(|| args.host.clone());
     let mut archive_config = ArchiveConfig::new(host, key);
     archive_config.secure = secure;
+    if let Some(concurrency) = args.download_concurrency {
+        archive_config.limits.concurrency = concurrency.get();
+    }
     let transport = NativeHttpTransport::new().context("failed to build HTTP transport")?;
     let client =
         ArchiveClient::new(transport, archive_config).context("invalid archive configuration")?;
@@ -194,13 +218,18 @@ fn build_filter(args: &Args) -> Result<Filter> {
 enum Output {
     /// One line per event (human or JSON).
     Events { json: bool },
-    /// A progress snapshot after each batch (human or JSON).
+    /// A progress snapshot at most once per second (human or JSON).
     Stats { json: bool },
 }
 
 struct CliSink {
     output: Output,
     stats: StatsHandle,
+    typed_likes: bool,
+    decoded: u64,
+    decode_errors: u64,
+    started: Instant,
+    last_report: Instant,
 }
 
 impl EngineSink for CliSink {
@@ -208,7 +237,19 @@ impl EngineSink for CliSink {
         let result = match delivery {
             Delivery::Batch(batch) => match self.output {
                 Output::Events { json } => emit_batch(&batch, json),
-                Output::Stats { json } => emit_stats(&self.stats, json),
+                Output::Stats { json } => {
+                    if self.typed_likes {
+                        let (decoded, errors) = decode_likes(&batch);
+                        self.decoded += decoded;
+                        self.decode_errors += errors;
+                    }
+                    if self.last_report.elapsed() >= Duration::from_secs(1) {
+                        self.last_report = Instant::now();
+                        emit_stats(self, json)
+                    } else {
+                        Ok(())
+                    }
+                }
             },
             // Advisories go to stderr so stdout stays a clean event/stats stream.
             Delivery::Info(info) => {
@@ -228,6 +269,45 @@ impl EngineSink for CliSink {
         // engine continues after it.
         true
     }
+}
+
+fn decode_like(
+    event: &Event,
+) -> Option<std::result::Result<shrike::api::app::bsky::FeedLike, shrike::cbor::CborError>> {
+    if let EventPayload::Commit(commit) = &event.payload
+        && commit.collection.as_str() == "app.bsky.feed.like"
+        && let Some(record) = &commit.record
+    {
+        Some(shrike::api::app::bsky::FeedLike::from_cbor(
+            record.as_cbor(),
+        ))
+    } else {
+        None
+    }
+}
+
+fn count_likes(
+    values: impl IntoIterator<
+        Item = Option<
+            std::result::Result<shrike::api::app::bsky::FeedLike, shrike::cbor::CborError>,
+        >,
+    >,
+) -> (u64, u64) {
+    let (mut decoded, mut errors) = (0, 0);
+    for value in values.into_iter().flatten() {
+        match value {
+            Ok(like) => {
+                std::hint::black_box(like);
+                decoded += 1;
+            }
+            Err(_) => errors += 1,
+        }
+    }
+    (decoded, errors)
+}
+
+fn decode_likes(batch: &Batch) -> (u64, u64) {
+    count_likes(batch.events().iter().map(decode_like))
 }
 
 /// Whether an emit result is a broken-pipe error (downstream reader closed).
@@ -323,9 +403,11 @@ fn operation_str(op: Operation) -> &'static str {
     }
 }
 
-fn emit_stats(stats: &StatsHandle, json: bool) -> io::Result<()> {
-    let s = stats.snapshot();
-    let downloads = stats.active_downloads();
+fn emit_stats(sink: &CliSink, json: bool) -> io::Result<()> {
+    let s = sink.stats.snapshot();
+    let downloads = sink.stats.active_downloads();
+    let elapsed = sink.started.elapsed().as_secs_f64();
+    let rate = s.delivered_events as f64 / elapsed.max(f64::MIN_POSITIVE);
     let mut out = io::stdout().lock();
     if json {
         let value = serde_json::json!({
@@ -336,6 +418,11 @@ fn emit_stats(stats: &StatsHandle, json: bool) -> io::Result<()> {
             "delivered_events": s.delivered_events,
             "last_processed_seq": s.last_processed_seq,
             "active_downloads": downloads,
+            "elapsed_seconds": elapsed,
+            "events_per_second": rate,
+            "typed_likes": sink.typed_likes,
+            "decoded": sink.decoded,
+            "decode_errors": sink.decode_errors,
         });
         match serde_json::to_string(&value) {
             Ok(line) => writeln!(out, "{line}")?,
@@ -344,7 +431,7 @@ fn emit_stats(stats: &StatsHandle, json: bool) -> io::Result<()> {
     } else {
         writeln!(
             out,
-            "pages={} tip={} planned={} gap={} delivered={} processed={} downloads={}",
+            "pages={} tip={} planned={} gap={} delivered={} processed={} downloads={} elapsed={elapsed:.3}s events_per_second={rate:.0} typed_likes={} decoded={} decode_errors={}",
             s.pages,
             s.sealed_tip_seq,
             s.planned_through_seq,
@@ -352,6 +439,9 @@ fn emit_stats(stats: &StatsHandle, json: bool) -> io::Result<()> {
             s.delivered_events,
             s.last_processed_seq,
             downloads,
+            sink.typed_likes,
+            sink.decoded,
+            sink.decode_errors,
         )?;
     }
     out.flush()
@@ -383,7 +473,37 @@ mod tests {
             no_compression: false,
             json: false,
             stats: false,
+            typed_likes: false,
+            download_concurrency: None,
+            batch_size: None,
         }
+    }
+
+    #[test]
+    fn typed_stats_count_valid_and_invalid_likes_but_skip_other_records_and_deletes() {
+        use shrike::jetstream::{RawEvent, SegmentKind, raw_event_to_event};
+        let make = |seq, collection: &str, kind, payload: &[u8]| {
+            raw_event_to_event(RawEvent {
+                seq,
+                witnessed_at: 0,
+                indexed_at: 0,
+                kind,
+                collection: collection.as_bytes().to_vec(),
+                did: b"did:plc:abcdefghijklmnopqrstuvwx".to_vec(),
+                rkey: b"3l3qo2vuowo2b".to_vec(),
+                rev: b"3l3qo2vutsw2b".to_vec(),
+                payload: payload.to_vec(),
+            })
+            .expect("valid event envelope")
+        };
+        let good = include_bytes!("../../../benches/fixtures/record_like.cbor");
+        let batch = Batch::new(vec![
+            make(1, "app.bsky.feed.like", SegmentKind::Create, good),
+            make(2, "app.bsky.feed.like", SegmentKind::Update, &[0xff]),
+            make(3, "app.bsky.feed.post", SegmentKind::Create, &[0xff]),
+            make(4, "app.bsky.feed.like", SegmentKind::Delete, &[]),
+        ]);
+        assert_eq!(decode_likes(&batch), (1, 1));
     }
 
     #[test]

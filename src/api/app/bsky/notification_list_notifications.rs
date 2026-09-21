@@ -201,7 +201,143 @@ impl NotificationListNotificationsNotification {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_cid: Option<String> = None;
+        let mut field_uri: Option<crate::syntax::AtUri> = None;
+        let mut field_author: Option<crate::api::app::bsky::ActorDefsProfileView> = None;
+        let mut field_is_read: Option<bool> = None;
+        let mut field_labels: Vec<crate::api::com::atproto::LabelDefsLabel> = Vec::new();
+        let mut field_reason: Option<String> = None;
+        let mut field_indexed_at: Option<crate::syntax::Datetime> = None;
+        let mut field_starter_pack: Option<crate::api::app::bsky::GraphDefsStarterPackViewBasic> =
+            None;
+        let mut field_reason_subject: Option<crate::syntax::AtUri> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "cid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_cid = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "uri" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_uri = Some(
+                            crate::syntax::AtUri::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "author" => {
+                    field_author = Some(crate::api::app::bsky::ActorDefsProfileView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "isRead" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_is_read = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "labels" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_labels.push(
+                                crate::api::com::atproto::LabelDefsLabel::from_cbor_value(item)?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "reason" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_reason = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "indexedAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_indexed_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "starterPack" => {
+                    field_starter_pack = Some(
+                        crate::api::app::bsky::GraphDefsStarterPackViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "reasonSubject" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_reason_subject = Some(
+                            crate::syntax::AtUri::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationListNotificationsNotification {
+            cid: field_cid.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'cid'".into())
+            })?,
+            uri: field_uri.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'uri'".into())
+            })?,
+            author: field_author.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'author'".into())
+            })?,
+            is_read: field_is_read.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'isRead'".into())
+            })?,
+            labels: field_labels,
+            reason: field_reason.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reason'".into())
+            })?,
+            record: Default::default(),
+            indexed_at: field_indexed_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'indexedAt'".into())
+            })?,
+            starter_pack: field_starter_pack,
+            reason_subject: field_reason_subject,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -239,11 +375,8 @@ impl NotificationListNotificationsNotification {
                     }
                 }
                 "author" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_author = Some(crate::api::app::bsky::ActorDefsProfileView::decode_cbor(
-                        &mut dec,
-                    )?);
+                    field_author =
+                        Some(crate::api::app::bsky::ActorDefsProfileView::from_cbor_value(value)?);
                 }
                 "isRead" => {
                     if let crate::cbor::Value::Bool(b) = value {
@@ -255,10 +388,8 @@ impl NotificationListNotificationsNotification {
                 "labels" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_labels.push(
-                                crate::api::com::atproto::LabelDefsLabel::decode_cbor(&mut dec)?,
+                                crate::api::com::atproto::LabelDefsLabel::from_cbor_value(item)?,
                             );
                         }
                     } else {
@@ -283,11 +414,9 @@ impl NotificationListNotificationsNotification {
                     }
                 }
                 "starterPack" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_starter_pack = Some(
-                        crate::api::app::bsky::GraphDefsStarterPackViewBasic::decode_cbor(
-                            &mut dec,
+                        crate::api::app::bsky::GraphDefsStarterPackViewBasic::from_cbor_value(
+                            value,
                         )?,
                     );
                 }

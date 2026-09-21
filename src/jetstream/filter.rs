@@ -242,11 +242,8 @@ impl Filter {
         // DID predicate (empty means all), applied to every kind. The filter's
         // DID set only ever holds syntactically valid DIDs, so a row DID that
         // fails to parse can never be a member and correctly fails the predicate.
-        if !self.dids.is_empty() {
-            match Did::try_from(did) {
-                Ok(d) if self.dids.contains(&d) => {}
-                _ => return false,
-            }
+        if !self.dids.is_empty() && !self.dids.contains(did) {
+            return false;
         }
         // Collection predicate (empty means all), applied to commits only.
         if self.collections.is_empty() {
@@ -255,8 +252,27 @@ impl Filter {
         if kind != Kind::Commit || collection.is_empty() {
             return true;
         }
-        match Nsid::try_from(collection) {
-            Ok(nsid) => self.collections.iter().any(|c| c.matches(&nsid)),
+        // Matching a validated exact NSID also proves the input's validity.
+        // Only authority case may differ; mismatches need no temporary NSID.
+        let mut has_prefix = false;
+        for predicate in &self.collections {
+            match predicate {
+                CollectionFilter::Exact(nsid) if matches_exact(collection, nsid) => return true,
+                CollectionFilter::Prefix(_) => has_prefix = true,
+                _ => {}
+            }
+        }
+        if !has_prefix {
+            return false;
+        }
+        // Wildcards must still validate the whole input, including the suffix.
+        match Nsid::validate(collection) {
+            Ok(_) => self.collections.iter().any(|c| match c {
+                CollectionFilter::Prefix(prefix) => collection
+                    .get(..prefix.len())
+                    .is_some_and(|s| s.eq_ignore_ascii_case(prefix)),
+                CollectionFilter::Exact(_) => false,
+            }),
             // A commit whose collection is not a valid NSID cannot satisfy any
             // exact or wildcard predicate, so a constrained subscription drops it.
             Err(_) => false,
@@ -277,6 +293,20 @@ impl Filter {
     pub fn collection_wire_tokens(&self) -> impl Iterator<Item = String> + '_ {
         self.collections.iter().map(CollectionFilter::to_wire)
     }
+}
+
+fn matches_exact(raw: &str, expected: &Nsid) -> bool {
+    let expected = expected.as_str();
+    if raw == expected {
+        return true;
+    }
+    if raw.len() != expected.len() {
+        return false;
+    }
+    let dot = expected.rfind('.').unwrap_or(0);
+    let (authority, name) = raw.as_bytes().split_at(dot);
+    let (expected_authority, expected_name) = expected.as_bytes().split_at(dot);
+    name == expected_name && authority.eq_ignore_ascii_case(expected_authority)
 }
 
 /// Parse one collection filter entry.
@@ -481,6 +511,35 @@ mod tests {
         assert!(!f.matches_segment(Kind::Account, other, ""));
         // A row DID that is not even a valid DID cannot be a member.
         assert!(!f.matches_segment(Kind::Sync, "not-a-did", ""));
+    }
+
+    #[test]
+    fn raw_collection_matching_preserves_normalization_and_validation() {
+        let exact = Filter::new()
+            .did(D)
+            .unwrap()
+            .kinds([Kind::Commit])
+            .collection("App.Bsky.Feed.like")
+            .unwrap();
+        for collection in ["app.bsky.feed.like", "APP.BSKY.FEED.like"] {
+            assert!(exact.matches_segment(Kind::Commit, D, collection));
+            assert!(!exact.matches_segment(Kind::Commit, "not-a-did", collection));
+            assert!(!exact.matches_segment(Kind::Identity, D, collection));
+        }
+        for collection in [
+            "app.bsky.feed.Like",
+            "app.bsky.feed.like!",
+            "app.bsky.feed.liké",
+        ] {
+            assert!(!exact.matches_segment(Kind::Commit, D, collection));
+        }
+
+        let mixed = Filter::new()
+            .collections(["app.bsky.feed.like", "app.bsky.graph.*"])
+            .unwrap();
+        assert!(mixed.matches_segment(Kind::Commit, D, "app.bsky.feed.like"));
+        assert!(mixed.matches_segment(Kind::Commit, D, "APP.BSKY.GRAPH.follow"));
+        assert!(!mixed.matches_segment(Kind::Commit, D, "app.bsky.graph.follow!"));
     }
 
     /// An empty filter (the default) admits every kind, DID, and collection.

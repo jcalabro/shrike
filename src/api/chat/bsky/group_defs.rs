@@ -58,7 +58,44 @@ impl GroupDefsDisabledJoinLinkPreviewView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_code: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "code" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_code = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsDisabledJoinLinkPreviewView {
+            code: field_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'code'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -151,7 +188,44 @@ impl GroupDefsInvalidJoinLinkPreviewView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_code: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "code" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_code = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsInvalidJoinLinkPreviewView {
+            code: field_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'code'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -337,7 +411,163 @@ impl GroupDefsJoinLinkPreviewView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_code: Option<String> = None;
+        let mut field_name: Option<String> = None;
+        let mut field_convo: Option<crate::api::chat::bsky::ConvoDefsConvoView> = None;
+        let mut field_owner: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_viewer: Option<GroupDefsJoinLinkViewerState> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_join_rule: Option<GroupDefsJoinRule> = None;
+        let mut field_member_count: Option<i64> = None;
+        let mut field_member_limit: Option<i64> = None;
+        let mut field_require_approval: Option<bool> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "code" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_code = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "name" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convo" => {
+                    field_convo = Some(crate::api::chat::bsky::ConvoDefsConvoView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "owner" => {
+                    field_owner = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "viewer" => {
+                    field_viewer = Some(GroupDefsJoinLinkViewerState::decode_cbor(decoder)?);
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "joinRule" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_join_rule = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "memberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "memberLimit" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_limit = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "requireApproval" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_require_approval = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsJoinLinkPreviewView {
+            code: field_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'code'".into())
+            })?,
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            convo: field_convo,
+            owner: field_owner.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'owner'".into())
+            })?,
+            viewer: field_viewer,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            join_rule: field_join_rule.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'joinRule'".into())
+            })?,
+            member_count: field_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberCount'".into())
+            })?,
+            member_limit: field_member_limit.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberLimit'".into())
+            })?,
+            require_approval: field_require_approval.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'requireApproval'".into(),
+                )
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -372,23 +602,17 @@ impl GroupDefsJoinLinkPreviewView {
                     }
                 }
                 "convo" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_convo = Some(crate::api::chat::bsky::ConvoDefsConvoView::decode_cbor(
-                        &mut dec,
-                    )?);
+                    field_convo = Some(
+                        crate::api::chat::bsky::ConvoDefsConvoView::from_cbor_value(value)?,
+                    );
                 }
                 "owner" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_owner = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "viewer" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_viewer = Some(GroupDefsJoinLinkViewerState::decode_cbor(&mut dec)?);
+                    field_viewer = Some(GroupDefsJoinLinkViewerState::from_cbor_value(value)?);
                 }
                 "convoId" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -573,7 +797,97 @@ impl GroupDefsJoinLinkView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_code: Option<String> = None;
+        let mut field_join_rule: Option<GroupDefsJoinRule> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_enabled_status: Option<GroupDefsLinkEnabledStatus> = None;
+        let mut field_require_approval: Option<bool> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "code" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_code = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "joinRule" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_join_rule = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "enabledStatus" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_enabled_status = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "requireApproval" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_require_approval = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsJoinLinkView {
+            code: field_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'code'".into())
+            })?,
+            join_rule: field_join_rule.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'joinRule'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            enabled_status: field_enabled_status.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'enabledStatus'".into())
+            })?,
+            require_approval: field_require_approval.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'requireApproval'".into(),
+                )
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -725,7 +1039,45 @@ impl GroupDefsJoinLinkViewerState {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_requested_at: Option<crate::syntax::Datetime> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "requestedAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_requested_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsJoinLinkViewerState {
+            requested_at: field_requested_at,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -859,7 +1211,120 @@ impl GroupDefsJoinRequestConvoView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_name: Option<String> = None;
+        let mut field_owner: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_viewer: Option<GroupDefsJoinLinkViewerState> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_member_count: Option<i64> = None;
+        let mut field_member_limit: Option<i64> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "name" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "owner" => {
+                    field_owner = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "viewer" => {
+                    field_viewer = Some(GroupDefsJoinLinkViewerState::decode_cbor(decoder)?);
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "memberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "memberLimit" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_limit = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsJoinRequestConvoView {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            owner: field_owner.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'owner'".into())
+            })?,
+            viewer: field_viewer.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'viewer'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            member_count: field_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberCount'".into())
+            })?,
+            member_limit: field_member_limit.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberLimit'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -883,16 +1348,12 @@ impl GroupDefsJoinRequestConvoView {
                     }
                 }
                 "owner" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_owner = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "viewer" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_viewer = Some(GroupDefsJoinLinkViewerState::decode_cbor(&mut dec)?);
+                    field_viewer = Some(GroupDefsJoinLinkViewerState::from_cbor_value(value)?);
                 }
                 "convoId" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -1037,7 +1498,69 @@ impl GroupDefsJoinRequestView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_requested_at: Option<crate::syntax::Datetime> = None;
+        let mut field_requested_by: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "requestedAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_requested_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "requestedBy" => {
+                    field_requested_by = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GroupDefsJoinRequestView {
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            requested_at: field_requested_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'requestedAt'".into())
+            })?,
+            requested_by: field_requested_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'requestedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1069,10 +1592,8 @@ impl GroupDefsJoinRequestView {
                     }
                 }
                 "requestedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_requested_by = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 _ => {

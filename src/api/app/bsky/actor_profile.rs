@@ -385,7 +385,134 @@ impl ActorProfile {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_type: Option<String> = None;
+        let mut field_avatar: Option<crate::api::Blob> = None;
+        let mut field_banner: Option<crate::api::Blob> = None;
+        let mut field_labels: Option<ActorProfileLabelsUnion> = None;
+        let mut field_website: Option<String> = None;
+        let mut field_pronouns: Option<String> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_pinned_post: Option<crate::api::com::atproto::RepoStrongRef> = None;
+        let mut field_description: Option<String> = None;
+        let mut field_display_name: Option<String> = None;
+        let mut field_joined_via_starter_pack: Option<crate::api::com::atproto::RepoStrongRef> =
+            None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "$type" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "avatar" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_avatar = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                "banner" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_banner = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                "labels" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_labels = Some(ActorProfileLabelsUnion::decode_cbor(&mut dec)?);
+                }
+                "website" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_website = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "pronouns" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_pronouns = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "pinnedPost" => {
+                    field_pinned_post = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "description" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_description = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "displayName" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_display_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "joinedViaStarterPack" => {
+                    field_joined_via_starter_pack = Some(
+                        crate::api::com::atproto::RepoStrongRef::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ActorProfile {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.actor.profile".to_string()),
+            avatar: field_avatar,
+            banner: field_banner,
+            labels: field_labels,
+            website: field_website,
+            pronouns: field_pronouns,
+            created_at: field_created_at,
+            pinned_post: field_pinned_post,
+            description: field_description,
+            display_name: field_display_name,
+            joined_via_starter_pack: field_joined_via_starter_pack,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -454,11 +581,9 @@ impl ActorProfile {
                     }
                 }
                 "pinnedPost" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_pinned_post = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
-                        &mut dec,
-                    )?);
+                    field_pinned_post = Some(
+                        crate::api::com::atproto::RepoStrongRef::from_cbor_value(value)?,
+                    );
                 }
                 "description" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -475,10 +600,8 @@ impl ActorProfile {
                     }
                 }
                 "joinedViaStarterPack" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_joined_via_starter_pack = Some(
-                        crate::api::com::atproto::RepoStrongRef::decode_cbor(&mut dec)?,
+                        crate::api::com::atproto::RepoStrongRef::from_cbor_value(value)?,
                     );
                 }
                 _ => {

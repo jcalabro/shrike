@@ -15,6 +15,7 @@ mod handle;
 mod language;
 mod nsid;
 mod recordkey;
+mod small_string;
 mod tid;
 
 pub use at_identifier::AtIdentifier;

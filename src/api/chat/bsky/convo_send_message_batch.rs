@@ -66,7 +66,53 @@ impl ConvoSendMessageBatchBatchItem {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<crate::api::chat::bsky::ConvoDefsMessageInput> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(
+                        crate::api::chat::bsky::ConvoDefsMessageInput::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoSendMessageBatchBatchItem {
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -86,10 +132,8 @@ impl ConvoSendMessageBatchBatchItem {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_message = Some(
-                        crate::api::chat::bsky::ConvoDefsMessageInput::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ConvoDefsMessageInput::from_cbor_value(value)?,
                     );
                 }
                 _ => {

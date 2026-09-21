@@ -101,7 +101,73 @@ impl FeedLike {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_via: Option<crate::api::com::atproto::RepoStrongRef> = None;
+        let mut field_type: Option<String> = None;
+        let mut field_subject: Option<crate::api::com::atproto::RepoStrongRef> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "via" => {
+                    field_via = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "$type" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "subject" => {
+                    field_subject = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(FeedLike {
+            via: field_via,
+            r#type: field_type.unwrap_or_else(|| "app.bsky.feed.like".to_string()),
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -116,10 +182,8 @@ impl FeedLike {
         for (key, value) in entries {
             match key {
                 "via" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_via = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
-                        &mut dec,
+                    field_via = Some(crate::api::com::atproto::RepoStrongRef::from_cbor_value(
+                        value,
                     )?);
                 }
                 "$type" => {
@@ -130,10 +194,8 @@ impl FeedLike {
                     }
                 }
                 "subject" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_subject = Some(crate::api::com::atproto::RepoStrongRef::decode_cbor(
-                        &mut dec,
+                    field_subject = Some(crate::api::com::atproto::RepoStrongRef::from_cbor_value(
+                        value,
                     )?);
                 }
                 "createdAt" => {

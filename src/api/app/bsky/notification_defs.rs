@@ -66,7 +66,56 @@ impl NotificationDefsActivitySubscription {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_post: Option<bool> = None;
+        let mut field_reply: Option<bool> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "post" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_post = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "reply" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_reply = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsActivitySubscription {
+            post: field_post.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'post'".into())
+            })?,
+            reply: field_reply.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reply'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -178,7 +227,56 @@ impl NotificationDefsChatPreference {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_push: Option<bool> = None;
+        let mut field_include: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "push" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_push = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "include" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_include = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsChatPreference {
+            push: field_push.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'push'".into())
+            })?,
+            include: field_include.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'include'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -298,7 +396,68 @@ impl NotificationDefsFilterablePreference {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_list: Option<bool> = None;
+        let mut field_push: Option<bool> = None;
+        let mut field_include: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "list" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_list = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "push" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_push = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "include" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_include = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsFilterablePreference {
+            list: field_list.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
+            })?,
+            push: field_push.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'push'".into())
+            })?,
+            include: field_include.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'include'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -421,7 +580,56 @@ impl NotificationDefsPreference {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_list: Option<bool> = None;
+        let mut field_push: Option<bool> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "list" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_list = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "push" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_push = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsPreference {
+            list: field_list.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
+            })?,
+            push: field_push.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'push'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -622,7 +830,135 @@ impl NotificationDefsPreferences {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_chat: Option<NotificationDefsChatPreference> = None;
+        let mut field_like: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_quote: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_reply: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_follow: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_repost: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_mention: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_verified: Option<NotificationDefsPreference> = None;
+        let mut field_unverified: Option<NotificationDefsPreference> = None;
+        let mut field_like_via_repost: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_subscribed_post: Option<NotificationDefsPreference> = None;
+        let mut field_repost_via_repost: Option<NotificationDefsFilterablePreference> = None;
+        let mut field_starterpack_joined: Option<NotificationDefsPreference> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "chat" => {
+                    field_chat = Some(NotificationDefsChatPreference::decode_cbor(decoder)?);
+                }
+                "like" => {
+                    field_like = Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "quote" => {
+                    field_quote = Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "reply" => {
+                    field_reply = Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "follow" => {
+                    field_follow =
+                        Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "repost" => {
+                    field_repost =
+                        Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "mention" => {
+                    field_mention =
+                        Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "verified" => {
+                    field_verified = Some(NotificationDefsPreference::decode_cbor(decoder)?);
+                }
+                "unverified" => {
+                    field_unverified = Some(NotificationDefsPreference::decode_cbor(decoder)?);
+                }
+                "likeViaRepost" => {
+                    field_like_via_repost =
+                        Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "subscribedPost" => {
+                    field_subscribed_post = Some(NotificationDefsPreference::decode_cbor(decoder)?);
+                }
+                "repostViaRepost" => {
+                    field_repost_via_repost =
+                        Some(NotificationDefsFilterablePreference::decode_cbor(decoder)?);
+                }
+                "starterpackJoined" => {
+                    field_starterpack_joined =
+                        Some(NotificationDefsPreference::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsPreferences {
+            chat: field_chat.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'chat'".into())
+            })?,
+            like: field_like.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'like'".into())
+            })?,
+            quote: field_quote.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'quote'".into())
+            })?,
+            reply: field_reply.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reply'".into())
+            })?,
+            follow: field_follow.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'follow'".into())
+            })?,
+            repost: field_repost.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'repost'".into())
+            })?,
+            mention: field_mention.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'mention'".into())
+            })?,
+            verified: field_verified.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'verified'".into())
+            })?,
+            unverified: field_unverified.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'unverified'".into())
+            })?,
+            like_via_repost: field_like_via_repost.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'likeViaRepost'".into())
+            })?,
+            subscribed_post: field_subscribed_post.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'subscribedPost'".into(),
+                )
+            })?,
+            repost_via_repost: field_repost_via_repost.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'repostViaRepost'".into(),
+                )
+            })?,
+            starterpack_joined: field_starterpack_joined.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'starterpackJoined'".into(),
+                )
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -646,78 +982,61 @@ impl NotificationDefsPreferences {
         for (key, value) in entries {
             match key {
                 "chat" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_chat = Some(NotificationDefsChatPreference::decode_cbor(&mut dec)?);
+                    field_chat = Some(NotificationDefsChatPreference::from_cbor_value(value)?);
                 }
                 "like" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_like = Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_like = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "quote" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_quote =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_quote = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "reply" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_reply =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_reply = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "follow" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_follow =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_follow = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "repost" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_repost =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_repost = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "mention" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_mention =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_mention = Some(NotificationDefsFilterablePreference::from_cbor_value(
+                        value,
+                    )?);
                 }
                 "verified" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_verified = Some(NotificationDefsPreference::decode_cbor(&mut dec)?);
+                    field_verified = Some(NotificationDefsPreference::from_cbor_value(value)?);
                 }
                 "unverified" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_unverified = Some(NotificationDefsPreference::decode_cbor(&mut dec)?);
+                    field_unverified = Some(NotificationDefsPreference::from_cbor_value(value)?);
                 }
                 "likeViaRepost" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_like_via_repost =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_like_via_repost = Some(
+                        NotificationDefsFilterablePreference::from_cbor_value(value)?,
+                    );
                 }
                 "subscribedPost" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_subscribed_post =
-                        Some(NotificationDefsPreference::decode_cbor(&mut dec)?);
+                        Some(NotificationDefsPreference::from_cbor_value(value)?);
                 }
                 "repostViaRepost" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_repost_via_repost =
-                        Some(NotificationDefsFilterablePreference::decode_cbor(&mut dec)?);
+                    field_repost_via_repost = Some(
+                        NotificationDefsFilterablePreference::from_cbor_value(value)?,
+                    );
                 }
                 "starterpackJoined" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_starterpack_joined =
-                        Some(NotificationDefsPreference::decode_cbor(&mut dec)?);
+                        Some(NotificationDefsPreference::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -828,7 +1147,32 @@ impl NotificationDefsRecordDeleted {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsRecordDeleted {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -918,7 +1262,57 @@ impl NotificationDefsSubjectActivitySubscription {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_subject: Option<crate::syntax::Did> = None;
+        let mut field_activity_subscription: Option<NotificationDefsActivitySubscription> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "subject" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "activitySubscription" => {
+                    field_activity_subscription =
+                        Some(NotificationDefsActivitySubscription::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(NotificationDefsSubjectActivitySubscription {
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            activity_subscription: field_activity_subscription.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'activitySubscription'".into(),
+                )
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -941,10 +1335,9 @@ impl NotificationDefsSubjectActivitySubscription {
                     }
                 }
                 "activitySubscription" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_activity_subscription =
-                        Some(NotificationDefsActivitySubscription::decode_cbor(&mut dec)?);
+                    field_activity_subscription = Some(
+                        NotificationDefsActivitySubscription::from_cbor_value(value)?,
+                    );
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;

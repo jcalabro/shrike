@@ -3,7 +3,8 @@
 //! A Jetstream archive block, once decompressed, is a columnar buffer: a
 //! `u32` event count, then nine fixed-width columns, then five variable-length
 //! blob regions (collections, DIDs, rkeys, revs, payloads) concatenated in that
-//! order. This module turns that buffer into [`RawEvent`] rows.
+//! order. The filtered decoder borrows rows directly from the validated buffer;
+//! [`decode_block`] provides owned [`RawEvent`] rows for callers that need them.
 //!
 //! The layout is validated with checked arithmetic before any slice is taken:
 //! the event count is capped, the fixed region must fit, and the blob regions
@@ -99,10 +100,9 @@ impl SegmentKind {
 
 /// One decoded segment row, still carrying raw column bytes.
 ///
-/// M0 keeps the string-like columns as owned bytes so the decoder is faithful
-/// to the wire (it validates neither UTF-8 nor atproto syntax here; higher
-/// layers do). M2 replaces the owned buffers with slices into a single shared
-/// decompressed slab.
+/// This owned representation preserves the wire bytes without validating UTF-8
+/// or atproto syntax. The filtered decoder uses borrowed columns internally so
+/// rejected rows need not allocate and selected payloads are copied only once.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RawEvent {
     /// Jetstream sequence cursor.
@@ -146,13 +146,54 @@ pub fn decode_block_frame(frame: &[u8]) -> Result<Vec<RawEvent>> {
 
 /// Decode an already-decompressed columnar block body.
 pub fn decode_block(body: &[u8]) -> Result<Vec<RawEvent>> {
+    let mut events = Vec::new();
+    visit_block(body, |n, row, payload| {
+        if events.is_empty() {
+            events.reserve_exact(n);
+        }
+        events.push(RawEvent {
+            seq: row.seq,
+            witnessed_at: row.witnessed_at,
+            indexed_at: row.indexed_at,
+            kind: row.kind,
+            collection: row.collection.to_vec(),
+            did: row.did.to_vec(),
+            rkey: row.rkey.to_vec(),
+            rev: row.rev.to_vec(),
+            payload: payload.to_vec(),
+        });
+    })?;
+    Ok(events)
+}
+
+/// Borrowed metadata for one structurally valid row. Syntax validation belongs
+/// to conversion, after filtering. Payload is passed separately so the caller
+/// can either copy it or share the backing block.
+pub(crate) struct Columns<'a> {
+    pub seq: u64,
+    pub witnessed_at: i64,
+    pub indexed_at: i64,
+    pub kind: SegmentKind,
+    pub collection: &'a [u8],
+    pub did: &'a [u8],
+    pub rkey: &'a [u8],
+    pub rev: &'a [u8],
+}
+
+/// Validate the layout and visit every row, including kinds rejected by the
+/// caller's filter. A later structural error invalidates the entire result:
+/// callers must discard all visited rows if this returns Err.
+pub(crate) fn visit_block(
+    body: &[u8],
+    mut visit: impl FnMut(usize, Columns<'_>, &[u8]),
+) -> Result<()> {
     let n = read_u32(body, 0)? as usize;
     if n == 0 {
         // An empty block is exactly four zero bytes; anything more is corruption.
         if body.len() != 4 {
             return Err(Error::CorruptSegment("empty block has trailing bytes"));
         }
-        return Ok(Vec::new());
+        return Ok(());
     }
     if n > MAX_BLOCK_EVENTS {
         return Err(Error::LimitExceeded {
@@ -184,11 +225,6 @@ pub fn decode_block(body: &[u8]) -> Result<Vec<RawEvent>> {
 
     // Read the length columns and accumulate blob-region sizes in u64 so the
     // sums cannot overflow on 32-bit wasm (did_len alone can reach 65535).
-    let mut coll_len = Vec::with_capacity(n);
-    let mut did_len = Vec::with_capacity(n);
-    let mut rkey_len = Vec::with_capacity(n);
-    let mut rev_len = Vec::with_capacity(n);
-    let mut payload_len = Vec::with_capacity(n);
     let (mut sum_coll, mut sum_did, mut sum_rkey, mut sum_rev, mut sum_payload) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
     for i in 0..n {
@@ -202,11 +238,6 @@ pub fn decode_block(body: &[u8]) -> Result<Vec<RawEvent>> {
         sum_rkey += u64::from(kl);
         sum_rev += u64::from(vl);
         sum_payload += u64::from(pl);
-        coll_len.push(cl as usize);
-        did_len.push(dl as usize);
-        rkey_len.push(kl as usize);
-        rev_len.push(vl as usize);
-        payload_len.push(pl as usize);
     }
 
     // The blob regions must account for the rest of the buffer exactly.
@@ -236,27 +267,30 @@ pub fn decode_block(body: &[u8]) -> Result<Vec<RawEvent>> {
 
     let (mut c, mut d, mut k, mut v, mut p) =
         (coll_start, did_start, rkey_start, rev_start, payload_start);
-    let mut events = Vec::with_capacity(n);
     for i in 0..n {
-        let event = RawEvent {
+        let cl = body[coll_len_off + i] as usize;
+        let dl = read_u16(body, did_len_off + 2 * i)? as usize;
+        let kl = body[rkey_len_off + i] as usize;
+        let vl = body[rev_len_off + i] as usize;
+        let pl = read_u32(body, plen_off + 4 * i)? as usize;
+        let columns = Columns {
             seq: read_u64(body, seq_off + 8 * i)?,
             witnessed_at: read_i64(body, wit_off + 8 * i)?,
             indexed_at: read_i64(body, idx_off + 8 * i)?,
             kind: SegmentKind::from_u8(body[kind_off + i])?,
-            collection: body[c..c + coll_len[i]].to_vec(),
-            did: body[d..d + did_len[i]].to_vec(),
-            rkey: body[k..k + rkey_len[i]].to_vec(),
-            rev: body[v..v + rev_len[i]].to_vec(),
-            payload: body[p..p + payload_len[i]].to_vec(),
+            collection: &body[c..c + cl],
+            did: &body[d..d + dl],
+            rkey: &body[k..k + kl],
+            rev: &body[v..v + vl],
         };
-        c += coll_len[i];
-        d += did_len[i];
-        k += rkey_len[i];
-        v += rev_len[i];
-        p += payload_len[i];
-        events.push(event);
+        visit(n, columns, &body[p..p + pl]);
+        c += cl;
+        d += dl;
+        k += kl;
+        v += vl;
+        p += pl;
     }
-    Ok(events)
+    Ok(())
 }
 
 fn read_u16(b: &[u8], off: usize) -> Result<u16> {

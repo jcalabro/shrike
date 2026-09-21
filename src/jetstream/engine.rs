@@ -43,8 +43,6 @@ use core::future::Future;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use futures::stream::{self, StreamExt};
-
 use super::archive::ArchiveClient;
 use super::cancel::CancelToken;
 use super::config::Cursor;
@@ -589,33 +587,42 @@ where
     let concurrency = arch.concurrency().max(1);
     let mut buf: Vec<Event> = Vec::new();
 
-    let mut downloads = stream::iter(segments.iter().map(|segment| {
-        let stats = stats.clone();
-        async move {
-            let _guard = WorkerGuard::new(stats);
-            arch.download(segment, after, before, filter, cancel).await
-        }
-    }))
-    .buffered(concurrency);
+    let mut downloads = super::ordered::OrderedDownloads::new(
+        segments.iter().map(|segment| {
+            let stats = stats.clone();
+            async move {
+                let _guard = WorkerGuard::new(stats);
+                arch.download(segment, after, before, filter, cancel).await
+            }
+        }),
+        concurrency,
+    );
 
     while let Some(result) = downloads.next().await {
         if cancel.is_cancelled() {
             // Deliver what was already decoded before winding down, as in Go,
             // where the final flush runs even after ctx cancellation.
-            let _ = flush_archive_batch(&mut buf, stats, sink).await;
+            let _ = downloads
+                .during(flush_archive_batch(&mut buf, stats, sink))
+                .await;
             return Ok(true);
         }
         let downloaded = match result {
             Ok(downloaded) => downloaded,
             Err(Error::Canceled) => {
-                let _ = flush_archive_batch(&mut buf, stats, sink).await;
+                let _ = downloads
+                    .during(flush_archive_batch(&mut buf, stats, sink))
+                    .await;
                 return Ok(true);
             }
             // A failed entry is recoverable: report it in order and keep the
             // sweep going (Go's per-entry error contract). Later entries carry
             // higher sequences, so ordering is preserved.
             Err(err) => {
-                if !flush_archive_batch(&mut buf, stats, sink).await || !sink.recoverable(err).await
+                if !downloads
+                    .during(flush_archive_batch(&mut buf, stats, sink))
+                    .await
+                    || !downloads.during(sink.recoverable(err)).await
                 {
                     return Ok(true);
                 }
@@ -623,6 +630,10 @@ where
             }
         };
 
+        // Each delivery transfers the batch allocation to the consumer. Reserve
+        // the next batch once, instead of repeatedly growing and copying it.
+        // Cap the eager reservation independently of a caller's batch limit.
+        let batch_reservation = max_batch.min(downloaded.events.len()).min(1024);
         for event in downloaded.events {
             // Already delivered before this run, or the same boundary event
             // repeated by a straddling unit or an inclusive segment boundary:
@@ -641,8 +652,15 @@ where
                 ));
             }
             *floor = event.seq;
+            if buf.capacity() == 0 {
+                buf.reserve(batch_reservation);
+            }
             buf.push(event);
-            if buf.len() >= max_batch && !flush_archive_batch(&mut buf, stats, sink).await {
+            if buf.len() >= max_batch
+                && !downloads
+                    .during(flush_archive_batch(&mut buf, stats, sink))
+                    .await
+            {
                 return Ok(true);
             }
         }
@@ -650,11 +668,14 @@ where
         // Emit recoverable row drops after flushing the rows that preceded them,
         // preserving the "valid rows, then the ordered error" contract.
         if !downloaded.dropped.is_empty() {
-            if !flush_archive_batch(&mut buf, stats, sink).await {
+            if !downloads
+                .during(flush_archive_batch(&mut buf, stats, sink))
+                .await
+            {
                 return Ok(true);
             }
             for dropped in downloaded.dropped {
-                if !sink.recoverable(dropped).await {
+                if !downloads.during(sink.recoverable(dropped)).await {
                     return Ok(true);
                 }
             }
@@ -663,7 +684,10 @@ where
         // A blocks-mode entry that failed partway delivers its decoded prefix
         // above, then its ordered per-entry error; the sweep continues.
         if let Some(failure) = downloaded.failure {
-            if !flush_archive_batch(&mut buf, stats, sink).await || !sink.recoverable(failure).await
+            if !downloads
+                .during(flush_archive_batch(&mut buf, stats, sink))
+                .await
+                || !downloads.during(sink.recoverable(failure)).await
             {
                 return Ok(true);
             }
@@ -672,12 +696,18 @@ where
 
         // Flush at the segment boundary so delivery latency is bounded by one
         // segment, not by the whole sweep.
-        if !flush_archive_batch(&mut buf, stats, sink).await {
+        if !downloads
+            .during(flush_archive_batch(&mut buf, stats, sink))
+            .await
+        {
             return Ok(true);
         }
     }
 
-    if !flush_archive_batch(&mut buf, stats, sink).await {
+    if !downloads
+        .during(flush_archive_batch(&mut buf, stats, sink))
+        .await
+    {
         return Ok(true);
     }
     Ok(false)

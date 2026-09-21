@@ -269,6 +269,10 @@ name = "cbor_benchmarks"
 harness = false
 required-features = ["cbor"]
 
+[[example]]
+name = "jetstream_bench"
+required-features = ["jetstream"]
+
 [[bench]]
 name = "mst_benchmarks"
 harness = false

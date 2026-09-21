@@ -303,7 +303,134 @@ impl LabelerService {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_type: Option<String> = None;
+        let mut field_labels: Option<LabelerServiceLabelsUnion> = None;
+        let mut field_policies: Option<crate::api::app::bsky::LabelerDefsLabelerPolicies> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_reason_types: Vec<crate::api::com::atproto::ModerationDefsReasonType> =
+            Vec::new();
+        let mut field_subject_types: Vec<crate::api::com::atproto::ModerationDefsSubjectType> =
+            Vec::new();
+        let mut field_subject_collections: Vec<crate::syntax::Nsid> = Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "$type" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_type = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "labels" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_labels = Some(LabelerServiceLabelsUnion::decode_cbor(&mut dec)?);
+                }
+                "policies" => {
+                    field_policies = Some(
+                        crate::api::app::bsky::LabelerDefsLabelerPolicies::decode_cbor(decoder)?,
+                    );
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "reasonTypes" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_reason_types.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "subjectTypes" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_subject_types.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "subjectCollections" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_subject_collections.push(
+                                    crate::syntax::Nsid::try_from(s).map_err(|e| {
+                                        crate::cbor::CborError::InvalidCbor(e.to_string())
+                                    })?,
+                                );
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(LabelerService {
+            r#type: field_type.unwrap_or_else(|| "app.bsky.labeler.service".to_string()),
+            labels: field_labels,
+            policies: field_policies.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'policies'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            reason_types: field_reason_types,
+            subject_types: field_subject_types,
+            subject_collections: field_subject_collections,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -335,10 +462,8 @@ impl LabelerService {
                     field_labels = Some(LabelerServiceLabelsUnion::decode_cbor(&mut dec)?);
                 }
                 "policies" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_policies = Some(
-                        crate::api::app::bsky::LabelerDefsLabelerPolicies::decode_cbor(&mut dec)?,
+                        crate::api::app::bsky::LabelerDefsLabelerPolicies::from_cbor_value(value)?,
                     );
                 }
                 "createdAt" => {

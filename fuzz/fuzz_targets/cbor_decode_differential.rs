@@ -46,6 +46,28 @@ fn decode_std(data: &[u8]) -> Option<Value<'_>> {
 fuzz_target!(|data: &[u8]| {
     let std = decode_std(data);
 
+    // Generated streaming decoders must retain the generic parser's strict
+    // wire checks, and preserve unknown fields through typed round trips.
+    macro_rules! typed_roundtrip {
+        ($ty:ty) => {
+            if let Ok(value) = <$ty>::from_cbor(data) {
+                assert!(
+                    std.is_some(),
+                    "typed decoder accepted invalid canonical CBOR"
+                );
+                let encoded = value.to_cbor().expect("accepted value encodes");
+                let roundtrip = <$ty>::from_cbor(&encoded).expect("typed round trip decodes");
+                assert_eq!(
+                    encoded,
+                    roundtrip.to_cbor().expect("typed round trip encodes")
+                );
+            }
+        };
+    }
+    typed_roundtrip!(shrike::api::app::bsky::FeedLike);
+    typed_roundtrip!(shrike::api::app::bsky::FeedPost);
+    typed_roundtrip!(shrike::api::app::bsky::ActorProfile);
+
     let bump = Bump::new();
     let mut dec = Decoder::new(data);
     let bump_val = dec

@@ -76,7 +76,48 @@ impl GraphGetListsWithMembershipListWithMembership {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_list: Option<crate::api::app::bsky::GraphDefsListView> = None;
+        let mut field_list_item: Option<crate::api::app::bsky::GraphDefsListItemView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "list" => {
+                    field_list = Some(crate::api::app::bsky::GraphDefsListView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                "listItem" => {
+                    field_list_item = Some(
+                        crate::api::app::bsky::GraphDefsListItemView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(GraphGetListsWithMembershipListWithMembership {
+            list: field_list.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
+            })?,
+            list_item: field_list_item,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -89,18 +130,13 @@ impl GraphGetListsWithMembershipListWithMembership {
         for (key, value) in entries {
             match key {
                 "list" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_list = Some(crate::api::app::bsky::GraphDefsListView::decode_cbor(
-                        &mut dec,
+                    field_list = Some(crate::api::app::bsky::GraphDefsListView::from_cbor_value(
+                        value,
                     )?);
                 }
                 "listItem" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_list_item = Some(
-                        crate::api::app::bsky::GraphDefsListItemView::decode_cbor(&mut dec)?,
-                    );
+                    field_list_item =
+                        Some(crate::api::app::bsky::GraphDefsListItemView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;

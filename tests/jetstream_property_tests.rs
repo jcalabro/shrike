@@ -37,6 +37,8 @@ const DIDS: &[&str] = &[DID_A, DID_B, "not-a-did", ""];
 const COLLECTIONS: &[&str] = &[
     "app.bsky.feed.post",
     "app.bsky.feed.like",
+    "APP.BSKY.FEED.post",
+    "app.bsky.feed.Post",
     "app.bsky.graph.follow",
     "",
     "not an nsid",
@@ -161,6 +163,19 @@ fn filter_strategy() -> impl Strategy<Value = Filter> {
 }
 
 proptest! {
+    #[test]
+    fn raw_exact_collections_agree_with_validating_parser(
+        raw in prop_oneof![
+            ".{0,350}",
+            "[aA][pP][pP]\\.[bB][sS][kK][yY]\\.[fF][eE][eE][dD]\\.(like|Like|post|POST)",
+        ],
+    ) {
+        let filter = Filter::new().collections(["app.bsky.feed.like", "app.bsky.feed.post"]).unwrap();
+        let expected = raw.is_empty() || shrike::syntax::Nsid::try_from(raw.as_str())
+            .is_ok_and(|n| matches!(n.as_str(), "app.bsky.feed.like" | "app.bsky.feed.post"));
+        prop_assert_eq!(filter.matches_segment(Kind::Commit, DID_A, &raw), expected);
+    }
+
     /// Layout/geometry validation and block-index decode never panic, whatever
     /// the header offsets, declared block count, or raw footer bytes.
     #[test]

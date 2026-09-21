@@ -4,13 +4,14 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::small_string::SmallString;
 use crate::syntax::SyntaxError;
 
 /// A validated AT Protocol DID (Decentralized Identifier).
 ///
 /// Guaranteed to be valid on construction. Use `TryFrom<&str>` or `.parse()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Did(String);
+pub struct Did(SmallString);
 
 impl Did {
     /// Returns the DID method (e.g. "plc" from "did:plc:abc123").
@@ -52,10 +53,8 @@ impl Borrow<str> for Did {
     }
 }
 
-impl TryFrom<&str> for Did {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl Did {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidDid(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -96,10 +95,13 @@ impl TryFrom<&str> for Did {
         let ident = &raw[ident_start..];
 
         // Validate identifier characters: [a-zA-Z0-9._:-]
-        for b in ident.bytes() {
-            if !is_did_ident_char(b) {
-                return Err(err("invalid character in identifier"));
-            }
+        // A reduction lets LLVM vectorize validation of longer identifiers.
+        // The length is bounded above; all bytes are still checked.
+        if !ident
+            .bytes()
+            .fold(true, |valid, b| valid & is_did_ident_char(b))
+        {
+            return Err(err("invalid character in identifier"));
         }
 
         // Last character cannot be ':'.
@@ -110,7 +112,16 @@ impl TryFrom<&str> for Did {
             return Err(err("identifier cannot end with ':'"));
         }
 
-        Ok(Did(raw.to_owned()))
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for Did {
+    type Error = SyntaxError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::validate(raw)?;
+        Ok(Did(SmallString::from(raw)))
     }
 }
 

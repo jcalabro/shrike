@@ -128,6 +128,168 @@ fn block_frame(rows: &[Row]) -> Vec<u8> {
     zstd::bulk::compress(&block_body(rows), 3).expect("compress block")
 }
 
+#[test]
+fn filtered_records_survive_their_input_and_sibling_events() {
+    use shrike::jetstream::{EventPayload, decode_block_frame_filtered};
+    let rows = [row(1), row(2), row(3)];
+    let mut frame = block_frame(&rows);
+    let mut decoded = decode_block_frame_filtered(&frame, &Filter::new()).unwrap();
+    assert!(decoded.dropped.is_empty());
+    let event = decoded.events.remove(1);
+    let EventPayload::Commit(commit) = event.payload else {
+        panic!("not commit")
+    };
+    let record = commit.record.unwrap();
+    let retained = record.clone();
+    drop(record);
+    drop(decoded);
+    // Neither changing nor releasing the compressed input may affect records.
+    frame.fill(0);
+    drop(frame);
+    assert_eq!(retained.as_cbor(), rows[1].payload);
+    assert_eq!(retained.to_json().unwrap(), serde_json::json!({}));
+    assert_eq!(
+        retained.cid(),
+        shrike::cbor::Cid::compute(shrike::cbor::Codec::Drisl, &rows[1].payload)
+    );
+}
+
+#[test]
+fn filtering_cannot_hide_structural_corruption() {
+    use shrike::jetstream::decode_block_frame_filtered;
+    let reject = Filter::new().collection("app.bsky.feed.like").unwrap();
+    let mut rows = [row(1), row(2), row(3)];
+    rows[2].kind = 255;
+    let frame = block_frame(&rows);
+    assert!(decode_block_frame_filtered(&frame, &Filter::new()).is_err());
+    assert!(decode_block_frame_filtered(&frame, &reject).is_err());
+    rows[2].kind = 1;
+    let mut body = block_body(&rows);
+    body.pop();
+    let truncated = zstd::bulk::compress(&body, 3).unwrap();
+    assert!(decode_block_frame_filtered(&truncated, &reject).is_err());
+}
+
+#[test]
+fn borrowed_decode_matches_owned_rows_including_recoverable_failures() {
+    use shrike::jetstream::{
+        EventPayload, RawEvent, SegmentKind, decode_block_frame_filtered, raw_event_to_event,
+    };
+    fn project(e: &shrike::jetstream::Event) -> (String, Option<Vec<u8>>) {
+        let record = match &e.payload {
+            EventPayload::Commit(c) => c.record.as_ref().map(|r| r.as_cbor().to_vec()),
+            _ => None,
+        };
+        (format!("{e:?}"), record)
+    }
+    let mut rows: Vec<_> = (0..16).map(row).collect();
+    rows[1].did = vec![255];
+    rows[2].collection = vec![255];
+    rows[3].rkey = b"bad/key".to_vec();
+    rows[4].rev = b"bad".to_vec();
+    rows[5].collection = b"APP.BSKY.FEED.post".to_vec();
+    rows[6].collection = b"app.bsky.feed.Post".to_vec();
+    rows[7].kind = 3;
+    rows[7].payload.clear();
+    rows[8].kind = 7;
+    rows[9].kind = 2;
+    rows[10].kind = 4;
+    rows[11].kind = 5;
+    rows[12].kind = 6;
+    rows[13].indexed_at = -123;
+    rows[14].collection = b"app.bsky.feed.like".to_vec();
+    for filter in [
+        Filter::new(),
+        Filter::new().collection("app.bsky.feed.post").unwrap(),
+        Filter::new().collection("app.bsky.feed.*").unwrap(),
+        Filter::new().did(DID_A).unwrap(),
+    ] {
+        let mut expected = Vec::new();
+        let mut errors = Vec::new();
+        for r in &rows {
+            let raw = RawEvent {
+                seq: r.seq,
+                witnessed_at: r.witnessed_at,
+                indexed_at: r.indexed_at,
+                kind: SegmentKind::from_u8(r.kind).unwrap(),
+                collection: r.collection.clone(),
+                did: r.did.clone(),
+                rkey: r.rkey.clone(),
+                rev: r.rev.clone(),
+                payload: r.payload.clone(),
+            };
+            if !filter.matches_segment(
+                raw.kind.public_kind(),
+                std::str::from_utf8(&raw.did).unwrap_or(""),
+                std::str::from_utf8(&raw.collection).unwrap_or(""),
+            ) {
+                continue;
+            }
+            match raw_event_to_event(raw) {
+                Ok(event) => expected.push(project(&event)),
+                Err(error) => errors.push(error.to_string()),
+            }
+        }
+        let got = decode_block_frame_filtered(&block_frame(&rows), &filter).unwrap();
+        assert_eq!(got.events.iter().map(project).collect::<Vec<_>>(), expected);
+        assert_eq!(
+            got.dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            errors
+        );
+    }
+}
+
+#[test]
+fn whole_segment_matches_individual_blocks_with_filtered_and_malformed_rows() {
+    use shrike::jetstream::{decode_block_frame_filtered, decode_segment_filtered};
+    let mut blocks: Vec<Vec<Row>> = (0..5)
+        .map(|block| ((block * 8 + 1)..=(block * 8 + 8)).map(row).collect())
+        .collect();
+    blocks[0][3].did = vec![255];
+    blocks[1][2].collection = b"app.bsky.feed.like".to_vec();
+    blocks[2][4].rev = b"bad".to_vec();
+    blocks[3][0].rkey = b"bad/key".to_vec();
+    blocks[4][6].collection = vec![255];
+    let (segment, _) = seal(&blocks);
+    for filter in [
+        Filter::new(),
+        Filter::new().collection("app.bsky.feed.post").unwrap(),
+    ] {
+        let mut events = Vec::new();
+        let mut errors = Vec::new();
+        for block in &blocks {
+            let decoded = decode_block_frame_filtered(&block_frame(block), &filter).unwrap();
+            events.extend(decoded.events.into_iter().map(|e| format!("{e:?}")));
+            errors.extend(decoded.dropped.into_iter().map(|e| e.to_string()));
+        }
+        let decoded = decode_segment_filtered(&segment, &filter).unwrap();
+        assert_eq!(
+            decoded
+                .events
+                .iter()
+                .map(|e| format!("{e:?}"))
+                .collect::<Vec<_>>(),
+            events
+        );
+        assert_eq!(
+            decoded
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            errors
+        );
+    }
+    // A later corrupt block must fail the entire segment, never return an
+    // apparently successful partial prefix accumulated from earlier blocks.
+    blocks[4][0].kind = 255;
+    let (corrupt, _) = seal(&blocks);
+    assert!(decode_segment_filtered(&corrupt, &Filter::new()).is_err());
+}
+
 /// Assemble a complete sealed segment and return its bytes plus the lowercase
 /// 16-hex checksum the plan would name for it.
 fn seal(blocks: &[Vec<Row>]) -> (Vec<u8>, String) {

@@ -272,7 +272,49 @@ impl EmbedRecordWithMedia {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_media: Option<EmbedRecordWithMediaMediaUnion> = None;
+        let mut field_record: Option<crate::api::app::bsky::EmbedRecord> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "media" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_media = Some(EmbedRecordWithMediaMediaUnion::decode_cbor(&mut dec)?);
+                }
+                "record" => {
+                    field_record = Some(crate::api::app::bsky::EmbedRecord::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(EmbedRecordWithMedia {
+            media: field_media.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'media'".into())
+            })?,
+            record: field_record.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'record'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -290,9 +332,8 @@ impl EmbedRecordWithMedia {
                     field_media = Some(EmbedRecordWithMediaMediaUnion::decode_cbor(&mut dec)?);
                 }
                 "record" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_record = Some(crate::api::app::bsky::EmbedRecord::decode_cbor(&mut dec)?);
+                    field_record =
+                        Some(crate::api::app::bsky::EmbedRecord::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -594,7 +635,51 @@ impl EmbedRecordWithMediaView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_media: Option<EmbedRecordWithMediaViewMediaUnion> = None;
+        let mut field_record: Option<crate::api::app::bsky::EmbedRecordView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "media" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_media = Some(EmbedRecordWithMediaViewMediaUnion::decode_cbor(&mut dec)?);
+                }
+                "record" => {
+                    field_record = Some(crate::api::app::bsky::EmbedRecordView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(EmbedRecordWithMediaView {
+            media: field_media.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'media'".into())
+            })?,
+            record: field_record.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'record'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -612,10 +697,8 @@ impl EmbedRecordWithMediaView {
                     field_media = Some(EmbedRecordWithMediaViewMediaUnion::decode_cbor(&mut dec)?);
                 }
                 "record" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_record = Some(crate::api::app::bsky::EmbedRecordView::decode_cbor(
-                        &mut dec,
+                    field_record = Some(crate::api::app::bsky::EmbedRecordView::from_cbor_value(
+                        value,
                     )?);
                 }
                 _ => {

@@ -110,7 +110,52 @@ impl GraphGetStarterPacksWithMembershipStarterPackWithMembership {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_list_item: Option<crate::api::app::bsky::GraphDefsListItemView> = None;
+        let mut field_starter_pack: Option<crate::api::app::bsky::GraphDefsStarterPackView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "listItem" => {
+                    field_list_item = Some(
+                        crate::api::app::bsky::GraphDefsListItemView::decode_cbor(decoder)?,
+                    );
+                }
+                "starterPack" => {
+                    field_starter_pack = Some(
+                        crate::api::app::bsky::GraphDefsStarterPackView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(
+            GraphGetStarterPacksWithMembershipStarterPackWithMembership {
+                list_item: field_list_item,
+                starter_pack: field_starter_pack.ok_or_else(|| {
+                    crate::cbor::CborError::InvalidCbor(
+                        "missing required field 'starterPack'".into(),
+                    )
+                })?,
+                extra: std::collections::HashMap::new(),
+                extra_cbor,
+            },
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -123,17 +168,12 @@ impl GraphGetStarterPacksWithMembershipStarterPackWithMembership {
         for (key, value) in entries {
             match key {
                 "listItem" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_list_item = Some(
-                        crate::api::app::bsky::GraphDefsListItemView::decode_cbor(&mut dec)?,
-                    );
+                    field_list_item =
+                        Some(crate::api::app::bsky::GraphDefsListItemView::from_cbor_value(value)?);
                 }
                 "starterPack" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_starter_pack = Some(
-                        crate::api::app::bsky::GraphDefsStarterPackView::decode_cbor(&mut dec)?,
+                        crate::api::app::bsky::GraphDefsStarterPackView::from_cbor_value(value)?,
                     );
                 }
                 _ => {

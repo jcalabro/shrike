@@ -47,13 +47,14 @@
 
 use bytes::Bytes;
 use futures::stream::{self, StreamExt};
+use std::sync::Arc;
 
 use super::archive::{
     ArchiveClient, BodyReadError, SendError, now_unix_secs, parse_xrpc_error, read_body_bounded,
     read_body_exact,
 };
 use super::cancel::CancelToken;
-use super::decode::{Decoded, decode_block_frame_filtered, decode_segment_filtered};
+use super::decode::{Decoded, decode_block_frame_filtered, decode_segment_cancellable};
 use super::error::{Error, Result};
 use super::event::Event;
 use super::filter::Filter;
@@ -105,7 +106,8 @@ pub async fn download_segment<T: HttpTransport>(
             // consistent new generation and delivered, as in Go; the snapshot
             // window still clips its rows.
             let bytes = download_whole(client, segment, cancel).await?;
-            let decoded = decode_segment_filtered(&bytes, filter)?;
+            let decoded =
+                decode_archive(bytes, Arc::new(filter.clone()), true, cancel.clone()).await?;
             Ok(window(decoded, after_seq, before_seq))
         }
         SegmentMode::Blocks(spans) => {
@@ -123,17 +125,38 @@ pub async fn download_segment<T: HttpTransport>(
     }
 }
 
+async fn decode_archive(
+    bytes: Vec<u8>,
+    filter: Arc<Filter>,
+    whole_segment: bool,
+    cancel: CancelToken,
+) -> Result<Decoded> {
+    super::decode_task::run(move |stop| {
+        let cancelled = || cancel.is_cancelled() || stop.is_cancelled();
+        if cancelled() {
+            return Err(Error::Canceled);
+        }
+        if whole_segment {
+            decode_segment_cancellable(&bytes, &filter, cancelled)
+        } else {
+            let decoded = decode_block_frame_filtered(&bytes, &filter)?;
+            if cancelled() {
+                return Err(Error::Canceled);
+            }
+            Ok(decoded)
+        }
+    })
+    .await
+}
+
 /// Apply the snapshot window `(after, before]` to a decoded segment's events,
 /// keeping row-level drops.
-fn window(decoded: Decoded, after: u64, before: u64) -> DownloadedSegment {
-    let mut events = Vec::with_capacity(decoded.events.len());
-    for event in decoded.events {
-        if event.seq > after && event.seq <= before {
-            events.push(event);
-        }
-    }
+fn window(mut decoded: Decoded, after: u64, before: u64) -> DownloadedSegment {
+    decoded
+        .events
+        .retain(|event| event.seq > after && event.seq <= before);
     DownloadedSegment {
-        events,
+        events: decoded.events,
         dropped: decoded.dropped,
         failure: None,
     }
@@ -152,9 +175,10 @@ async fn download_blocks<T: HttpTransport>(
     let indices: Vec<u32> = spans.iter().flat_map(|s| s.first..=s.last).collect();
     let concurrency = client.limits().concurrency.max(1);
     let frame_limit = client.limits().max_block_frame_bytes;
+    let filter = Arc::new(filter.clone());
 
     // `buffered` preserves input order, so frames come back in block order.
-    let frames: Vec<Result<Vec<u8>>> = stream::iter(indices.into_iter().map(|idx| {
+    let mut frames = stream::iter(indices.into_iter().map(|idx| {
         let url = client.xrpc_url(
             GET_BLOCK_METHOD,
             Some(&format!("segment={name}&blockIndex={idx}")),
@@ -172,12 +196,10 @@ async fn download_blocks<T: HttpTransport>(
             Ok(result.body)
         }
     }))
-    .buffered(concurrency)
-    .collect()
-    .await;
+    .buffered(concurrency);
 
     let mut out = DownloadedSegment::default();
-    for frame in frames {
+    while let Some(frame) = frames.next().await {
         // A failed or corrupt block ends the entry but keeps the decoded prefix:
         // the caller delivers the prefix, then the ordered per-entry error, as
         // the Go client does. Cancellation still aborts the whole download.
@@ -189,8 +211,11 @@ async fn download_blocks<T: HttpTransport>(
                 return Ok(out);
             }
         };
-        let decoded = match decode_block_frame_filtered(&frame, filter) {
+        // One decode job per active segment, bounded by the outer ordered
+        // download stream. Its HTTP futures and transport never cross threads.
+        let decoded = match decode_archive(frame, filter.clone(), false, cancel.clone()).await {
             Ok(decoded) => decoded,
+            Err(Error::Canceled) => return Err(Error::Canceled),
             Err(err) => {
                 out.failure = Some(err);
                 return Ok(out);

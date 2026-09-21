@@ -126,7 +126,7 @@ impl TryFrom<&str> for AtUri {
         // The authority MUST be a valid AT identifier (DID or handle). Delegate
         // to the canonical parser rather than a loose character class, so the
         // AT-URI grammar can't drift from the identifier grammar.
-        AtIdentifier::try_from(authority).map_err(|e| err(&format!("invalid authority: {e}")))?;
+        AtIdentifier::validate(authority).map_err(|e| err(&format!("invalid authority: {e}")))?;
 
         // No path — authority only is valid.
         if !has_path {
@@ -149,7 +149,7 @@ impl TryFrom<&str> for AtUri {
         }
 
         // The collection MUST be a valid NSID. Delegate to the canonical parser.
-        Nsid::try_from(collection).map_err(|e| err(&format!("invalid collection: {e}")))?;
+        Nsid::validate(collection).map_err(|e| err(&format!("invalid collection: {e}")))?;
 
         if !has_rkey {
             return Ok(AtUri(raw.to_owned()));
@@ -168,7 +168,7 @@ impl TryFrom<&str> for AtUri {
         // The record key MUST satisfy the record-key grammar (which also
         // rejects the reserved "." and ".." values and the over-broad
         // URI-sub-delims charset). Delegate to the canonical parser.
-        RecordKey::try_from(rkey).map_err(|e| err(&format!("invalid record key: {e}")))?;
+        RecordKey::validate(rkey).map_err(|e| err(&format!("invalid record key: {e}")))?;
 
         Ok(AtUri(raw.to_owned()))
     }

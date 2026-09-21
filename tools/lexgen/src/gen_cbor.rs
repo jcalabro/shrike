@@ -510,9 +510,6 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
 }
 
 fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_nsid: Option<&str>) {
-    // Filter out JSON-only fields.
-    let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
-
     // from_cbor: convenience wrapper
     writeln!(
         out,
@@ -542,7 +539,15 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
 
     // decode_cbor
     writeln!(out, "    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {{").ok();
-    writeln!(out, "        let val = decoder.decode()?;").ok();
+    gen_decode_struct_body(out, type_name, fields, type_nsid, true);
+    writeln!(out, "    }}").ok();
+    out.push('\n');
+    // Nested values have already passed the decoder's canonical-form, depth,
+    // length, and duplicate-key checks. Consume them without encoding and
+    // parsing them again; retain the same typed field validation below.
+    // Root-only types have no nested value callers.
+    writeln!(out, "    #[allow(dead_code)]").ok();
+    writeln!(out, "    pub(crate) fn from_cbor_value(val: crate::cbor::Value<'_>) -> Result<Self, crate::cbor::CborError> {{").ok();
     writeln!(out, "        let entries = match val {{").ok();
     writeln!(
         out,
@@ -556,6 +561,24 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     writeln!(out, "        }};").ok();
     out.push('\n');
+
+    gen_decode_struct_body(out, type_name, fields, type_nsid, false);
+    writeln!(out, "    }}").ok();
+}
+
+/// Both entry paths use the same field conversion and required-field rules.
+/// Streamed struct fields decode directly from the shared bounded decoder;
+/// generic values (including array elements) consume their existing map.
+fn gen_decode_struct_body(
+    out: &mut String,
+    type_name: &str,
+    fields: &[CborField],
+    type_nsid: Option<&str>,
+    streamed: bool,
+) {
+    let mut cbor_fields: Vec<&CborField> =
+        fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
+    cbor_fields.sort_by(|a, b| cbor_key_cmp(&a.json_name, &b.json_name));
 
     // Declare variables for each field.
     for f in &cbor_fields {
@@ -590,13 +613,39 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     out.push('\n');
 
-    writeln!(out, "        for (key, value) in entries {{").ok();
+    if streamed {
+        writeln!(out, "        let mut entries = decoder.map_entries()?;").ok();
+        writeln!(
+            out,
+            "        while let Some(result) = entries.next_with(|key, decoder| {{"
+        )
+        .ok();
+    } else {
+        writeln!(out, "        for (key, value) in entries {{").ok();
+    }
     writeln!(out, "            match key {{").ok();
 
     for f in &cbor_fields {
         let key = &f.json_name;
         let clean_var = clean_field_name(&f.rust_field);
         writeln!(out, "                {key:?} => {{").ok();
+        if streamed && matches!(f.kind, FieldKind::Struct) && !f.nullable {
+            let ty = f
+                .rust_type
+                .strip_prefix("Option<")
+                .and_then(|ty| ty.strip_suffix('>'))
+                .unwrap_or(&f.rust_type);
+            writeln!(
+                out,
+                "                    field_{clean_var} = Some({ty}::decode_cbor(decoder)?);"
+            )
+            .ok();
+            writeln!(out, "                }}").ok();
+            continue;
+        }
+        if streamed {
+            writeln!(out, "                    let value = decoder.decode()?;").ok();
+        }
         if f.nullable {
             // A nullable field carries either the value or CBOR null; null
             // leaves the Option as None rather than erroring on type mismatch.
@@ -615,6 +664,9 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
 
     // Unknown keys go to extra_cbor.
     writeln!(out, "                _ => {{").ok();
+    if streamed {
+        writeln!(out, "                    let value = decoder.decode()?;").ok();
+    }
     writeln!(
         out,
         "                    let raw = crate::cbor::encode_value(&value)?;"
@@ -627,7 +679,12 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     writeln!(out, "                }}").ok();
     writeln!(out, "            }}").ok();
-    writeln!(out, "        }}").ok();
+    if streamed {
+        writeln!(out, "            Ok(())").ok();
+        writeln!(out, "        }}) {{ result?; }}").ok();
+    } else {
+        writeln!(out, "        }}").ok();
+    }
     out.push('\n');
 
     // Build the struct, verifying required fields.
@@ -656,7 +713,6 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     writeln!(out, "            extra: std::collections::HashMap::new(),").ok();
     writeln!(out, "            extra_cbor,").ok();
     writeln!(out, "        }})").ok();
-    writeln!(out, "    }}").ok();
 }
 
 // ─── Encoding helpers ──────────────────────────────────────────────
@@ -1084,7 +1140,14 @@ fn gen_decode_single(
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected CID\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
-        FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
+        FieldKind::Struct => {
+            writeln!(
+                out,
+                "{indent}{assign_pre}{rust_type}::from_cbor_value(value)?{assign_post}"
+            )
+            .ok();
+        }
+        FieldKind::Blob | FieldKind::Union => {
             writeln!(out, "{indent}let raw = crate::cbor::encode_value(&value)?;").ok();
             writeln!(
                 out,
@@ -1232,7 +1295,14 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected CID in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
-        FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
+        FieldKind::Struct => {
+            writeln!(
+                out,
+                "{indent}{target}.push({inner_type}::from_cbor_value(item)?);"
+            )
+            .ok();
+        }
+        FieldKind::Blob | FieldKind::Union => {
             writeln!(out, "{indent}let raw = crate::cbor::encode_value(&item)?;").ok();
             writeln!(
                 out,

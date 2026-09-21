@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::small_string::SmallString;
 use crate::syntax::SyntaxError;
 
 /// A validated AT Protocol NSID (Namespaced Identifier, e.g. `"app.bsky.feed.post"`).
@@ -12,7 +13,7 @@ use crate::syntax::SyntaxError;
 /// the name segment (last component) preserves its original case.
 /// Use `TryFrom<&str>` or `.parse()`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Nsid(String);
+pub struct Nsid(SmallString);
 
 impl Nsid {
     /// Returns the authority in normal DNS order (reversed domain portion), lowercased.
@@ -63,10 +64,9 @@ impl Borrow<str> for Nsid {
     }
 }
 
-impl TryFrom<&str> for Nsid {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl Nsid {
+    /// Validate without allocating, returning the authority/name separator.
+    pub(crate) fn validate(raw: &str) -> Result<usize, SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidNsid(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -131,11 +131,18 @@ impl TryFrom<&str> for Nsid {
             }
         }
 
-        // Normalize authority (everything before the last dot) to lowercase,
-        // but preserve the name segment's original case.
-        let last_dot = raw.rfind('.').unwrap_or(0);
-        let mut normalized = raw[..last_dot].to_ascii_lowercase();
-        normalized.push_str(&raw[last_dot..]);
+        Ok(last_dot.unwrap_or(0))
+    }
+}
+
+impl TryFrom<&str> for Nsid {
+    type Error = SyntaxError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        let last_dot = Self::validate(raw)?;
+        // Normalize only the authority, preserving the name's original case.
+        let mut normalized = SmallString::from(raw);
+        normalized.lowercase_prefix(last_dot);
         Ok(Nsid(normalized))
     }
 }

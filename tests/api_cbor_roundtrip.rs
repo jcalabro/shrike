@@ -2,6 +2,46 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[test]
+fn nested_typed_decode_preserves_unknowns_and_validates_nested_fields() {
+    use shrike::{
+        api::app::bsky::FeedLike,
+        cbor::{Value, encode_value},
+    };
+    let mut like =
+        FeedLike::from_cbor(include_bytes!("../benches/fixtures/record_like.cbor")).unwrap();
+    like.subject.extra_cbor.push((
+        "future".into(),
+        encode_value(&Value::Array(vec![
+            Value::Text("keep me"),
+            Value::Bytes(b"opaque"),
+            Value::Unsigned(123),
+        ]))
+        .unwrap(),
+    ));
+    like.via = Some(like.subject.clone());
+    let bytes = like.to_cbor().unwrap();
+    assert_eq!(
+        FeedLike::from_cbor(&bytes).unwrap().to_cbor().unwrap(),
+        bytes
+    );
+
+    for subject in [
+        Value::Bool(false),
+        Value::Map(vec![("cid", Value::Text("cid"))]),
+        Value::Map(vec![
+            ("cid", Value::Text("cid")),
+            ("uri", Value::Unsigned(42)),
+        ]),
+    ] {
+        let Value::Map(mut fields) = shrike::cbor::decode(&bytes).unwrap() else {
+            panic!("map")
+        };
+        *fields.iter_mut().find(|(k, _)| *k == "subject").unwrap() = ("subject", subject);
+        assert!(FeedLike::from_cbor(&encode_value(&Value::Map(fields)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn strong_ref_cbor_roundtrip() {
     let sr = shrike::api::com::atproto::RepoStrongRef {
         uri: shrike::syntax::AtUri::try_from("at://did:plc:abc/app.bsky.feed.post/123").unwrap(),

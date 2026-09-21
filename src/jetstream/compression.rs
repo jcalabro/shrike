@@ -19,8 +19,9 @@
 //!   (klauspost's `MaxWindowSize` clamped by `WithDecoderMaxMemory`), so a
 //!   hostile frame cannot force a huge window allocation;
 //! - the total decompressed output across all frames is capped at `max_out`:
-//!   the decoder is drained incrementally and the call fails with
-//!   [`Error::LimitExceeded`] the moment the running output would exceed it.
+//!   known sizes are checked before decoding; otherwise the decoder is drained
+//!   incrementally and the call fails with [`Error::LimitExceeded`] when the
+//!   running output would exceed it.
 
 use super::error::{Error, Result};
 use std::io::Read;
@@ -200,6 +201,44 @@ fn decompress_one_frame(
     dict: Option<&[u8]>,
     out: &mut Vec<u8>,
 ) -> Result<usize> {
+    // Most archive frames declare their output size. Decode those straight into
+    // the destination, avoiding the stream decoder's window and intermediate
+    // copy. Cap eager reservation even for a dishonest content-size header;
+    // larger and unknown-size frames retain the incremental bounded path.
+    const MAX_BULK_RESERVATION: usize = 8 << 20;
+    let content_size = zstd::zstd_safe::get_frame_content_size(rest)
+        .map_err(|e| Error::Compression(e.to_string()))?;
+    if let Some(size) = content_size {
+        let remaining = max_out.saturating_sub(out.len());
+        if size > remaining as u64 {
+            return Err(Error::LimitExceeded {
+                what: "decompressed output",
+                value: (out.len() as u64).saturating_add(size),
+                limit: max_out as u64,
+            });
+        }
+        if size <= MAX_BULK_RESERVATION as u64 {
+            // Locate exactly one complete frame before reserving. The bulk
+            // decoder then validates its content size, blocks, and checksum.
+            let consumed = zstd::zstd_safe::find_frame_compressed_size(rest)
+                .map_err(|e| Error::Compression(zstd::zstd_safe::get_error_name(e).to_owned()))?;
+            let size = size as usize;
+            out.try_reserve_exact(size)
+                .map_err(|e| Error::Compression(e.to_string()))?;
+            let offset = out.len();
+            let mut destination = std::io::Cursor::new(out);
+            destination.set_position(offset as u64);
+            let mut decoder = zstd::bulk::Decompressor::with_dictionary(dict.unwrap_or(&[]))
+                .map_err(|e| Error::Compression(e.to_string()))?;
+            let written = decoder
+                .decompress_to_buffer(&rest[..consumed], &mut destination)
+                .map_err(|e| Error::Compression(e.to_string()))?;
+            if written != size {
+                return Err(Error::Compression("zstd content size mismatch".to_owned()));
+            }
+            return Ok(consumed);
+        }
+    }
     let mut cursor = std::io::Cursor::new(rest);
     let mut decoder =
         zstd::stream::read::Decoder::with_dictionary(&mut cursor, dict.unwrap_or(&[]))
@@ -331,6 +370,71 @@ mod tests {
 
     fn compress(data: &[u8]) -> Vec<u8> {
         zstd::stream::encode_all(std::io::Cursor::new(data), 3).unwrap()
+    }
+
+    fn compress_sized(data: &[u8], dict: &[u8]) -> Vec<u8> {
+        let mut encoder = zstd::bulk::Compressor::with_dictionary(3, dict).unwrap();
+        encoder.include_checksum(true).unwrap();
+        encoder.compress(data).unwrap()
+    }
+
+    #[test]
+    fn sized_and_streaming_frames_agree_across_reservation_threshold() {
+        for len in [0, 1, 1024, 131_072, 2 << 20, 9 << 20] {
+            let data: Vec<_> = (0..len).map(|i| ((i * 13 + i / 71) % 251) as u8).collect();
+            let sized = compress_sized(&data, &[]);
+            assert_eq!(decompress_bounded(&sized, 16 << 20, None).unwrap(), data);
+            assert_eq!(
+                decompress_bounded(&compress(&data), 16 << 20, None).unwrap(),
+                data
+            );
+        }
+    }
+
+    #[test]
+    fn sized_frames_preserve_dictionary_checksum_and_truncation_checks() {
+        let dict = b"a dictionary of repeated words and record field names".repeat(20);
+        let data = dict.repeat(5);
+        let frame = compress_sized(&data, &dict);
+        assert_eq!(
+            decompress_bounded(&frame, 1 << 20, Some(&dict)).unwrap(),
+            data
+        );
+        assert!(decompress_bounded(&frame, 1 << 20, None).is_err());
+        for end in 1..frame.len() {
+            assert!(decompress_bounded(&frame[..end], 1 << 20, Some(&dict)).is_err());
+        }
+        let mut corrupt = frame.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        assert!(decompress_bounded(&corrupt, 1 << 20, Some(&dict)).is_err());
+        let mut garbage = frame;
+        garbage.extend_from_slice(b"garbage!");
+        assert!(decompress_bounded(&garbage, 1 << 20, Some(&dict)).is_err());
+    }
+
+    #[test]
+    fn mixed_sized_unsized_and_skippable_frames_append_and_share_output_cap() {
+        let mut input = compress_sized(b"first", &[]);
+        input.extend_from_slice(&compress(b" second"));
+        input.extend_from_slice(&0x184D_2A50u32.to_le_bytes());
+        input.extend_from_slice(&0u32.to_le_bytes());
+        input.extend_from_slice(&compress_sized(b"", &[]));
+        input.extend_from_slice(&compress_sized(b" third", &[]));
+        assert_eq!(
+            decompress_bounded(&input, 4 << 20, None).unwrap(),
+            b"first second third"
+        );
+
+        let frame = compress_sized(&vec![42; 6000], &[]);
+        let concat = [frame.as_slice(), frame.as_slice()].concat();
+        assert!(matches!(
+            decompress_bounded(&concat, 10_000, None),
+            Err(Error::LimitExceeded { .. })
+        ));
+        assert_eq!(
+            decompress_bounded(&concat, 12_000, None).unwrap(),
+            vec![42; 12_000]
+        );
     }
 
     #[test]
