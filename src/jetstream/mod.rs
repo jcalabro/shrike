@@ -168,8 +168,8 @@ pub use decode::{
 };
 pub use download::{DownloadedSegment, download_segment};
 pub use engine::{
-    ArchiveSource, ClientArchive, DEFAULT_MAX_REBACKFILL_STALLS, Engine, EngineConfig, EngineSink,
-    StatsHandle,
+    ArchiveSource, ArchiveStream, ClientArchive, DEFAULT_MAX_REBACKFILL_STALLS, Engine,
+    EngineConfig, EngineSink, StatsHandle,
 };
 pub use error::{Error, MAX_PROTOCOL_MESSAGE_LEN, Result};
 pub use event::{
@@ -190,7 +190,7 @@ pub use planner::{
     BlockSpan, PlanPage, PlanSegment, PlanSweep, SegmentMode, SnapshotPlan, plan_page,
     plan_snapshot,
 };
-pub use record::Record;
+pub use record::{Record, record_cbor_to_json};
 pub use retry::{Attempt, RetryConfig};
 pub use segment::{
     BlockIndexEntry, SealedHeader, SegmentReader, decode_block_index, read_sealed_header,

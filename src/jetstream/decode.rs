@@ -71,82 +71,124 @@ pub fn raw_event_to_event(raw: RawEvent) -> Result<Event> {
         rkey: TextColumn::Raw(&raw.rkey),
         rev: TextColumn::Raw(&raw.rev),
     };
-    convert_row(columns, raw.payload)
+    RowConverter::default().convert(columns, raw.payload)
 }
 
-fn convert_row(raw: Columns<'_>, payload: impl AsRef<[u8]> + Into<Bytes>) -> Result<Event> {
-    // Segment sequences are 1-based; a zero seq would corrupt the dedup cursor.
-    if raw.seq == 0 {
-        return Err(Error::MalformedEvent("segment row seq must be positive"));
+// Constant-size, block-local caches. Compare the complete original text before
+// reusing a validated value; changed or malformed strings always take the parser.
+#[derive(Default)]
+struct RowConverter<'a> {
+    did: Option<(&'a str, Did)>,
+    collection: Option<(&'a str, Nsid)>,
+    rev: Option<(&'a str, Tid)>,
+}
+
+fn cached<'a, T: Clone>(
+    cache: &mut Option<(&'a str, T)>,
+    text: &'a str,
+    parse: impl FnOnce(&str) -> Result<T>,
+) -> Result<T> {
+    if let Some((previous, value)) = cache
+        && *previous == text
+    {
+        return Ok(value.clone());
     }
-    let seq = raw.seq;
-    let time_us = if raw.indexed_at != 0 {
-        raw.indexed_at
-    } else {
-        raw.witnessed_at
-    };
-    let did = Did::try_from(str_col(raw.did)?)
-        .map_err(|_| Error::MalformedEvent("segment row did is not a valid DID"))?;
+    let value = parse(text)?;
+    *cache = Some((text, value.clone()));
+    Ok(value)
+}
 
-    let Columns {
-        kind,
-        collection,
-        rkey,
-        rev,
-        ..
-    } = raw;
-
-    let payload = match kind {
-        SegmentKind::Create
-        | SegmentKind::Update
-        | SegmentKind::Delete
-        | SegmentKind::CreateResync => {
-            // Infallible for these variants, but treat `None` as corruption
-            // rather than unwrapping.
-            let operation = kind.to_operation().ok_or(Error::MalformedEvent(
-                "segment commit kind has no operation",
-            ))?;
-            let collection = Nsid::try_from(str_col(collection)?)
-                .map_err(|_| Error::MalformedEvent("segment row collection is not a valid NSID"))?;
-            let rkey = RecordKey::try_from(str_col(rkey)?)
-                .map_err(|_| Error::MalformedEvent("segment row rkey is not a valid record key"))?;
-            let rev = Tid::try_from(str_col(rev)?)
-                .map_err(|_| Error::MalformedEvent("segment row rev is not a valid TID"))?;
-            // A delete carries no record body; a create/update stores its
-            // canonical CBOR lazily. The segment never stores a CID, so the CID
-            // is computed from the record bytes on demand.
-            let record = match operation {
-                Operation::Delete => None,
-                Operation::Create | Operation::Update => Some(Record::from_canonical_cbor(payload)),
-            };
-            EventPayload::Commit(Commit {
-                operation,
-                collection,
-                rkey,
-                rev,
-                record,
-            })
+impl<'a> RowConverter<'a> {
+    fn convert(
+        &mut self,
+        raw: Columns<'a>,
+        payload: impl AsRef<[u8]> + Into<Bytes>,
+    ) -> Result<Event> {
+        // Segment sequences are 1-based; a zero seq would corrupt the dedup cursor.
+        if raw.seq == 0 {
+            return Err(Error::MalformedEvent("segment row seq must be positive"));
         }
-        SegmentKind::Identity => EventPayload::Identity(
-            SyncSubscribeReposIdentity::from_cbor(payload.as_ref())
-                .map_err(|_| Error::MalformedEvent("segment identity payload is not valid CBOR"))?,
-        ),
-        SegmentKind::Account => EventPayload::Account(
-            SyncSubscribeReposAccount::from_cbor(payload.as_ref())
-                .map_err(|_| Error::MalformedEvent("segment account payload is not valid CBOR"))?,
-        ),
-        SegmentKind::Sync => EventPayload::Sync(
-            SyncSubscribeReposSync::from_cbor(payload.as_ref())
-                .map_err(|_| Error::MalformedEvent("segment sync payload is not valid CBOR"))?,
-        ),
-    };
+        let seq = raw.seq;
+        let time_us = if raw.indexed_at != 0 {
+            raw.indexed_at
+        } else {
+            raw.witnessed_at
+        };
+        let did = cached(&mut self.did, str_col(raw.did)?, |s| {
+            Did::try_from(s)
+                .map_err(|_| Error::MalformedEvent("segment row did is not a valid DID"))
+        })?;
 
-    Ok(Event {
-        seq,
-        did,
-        time_us,
-        payload,
-    })
+        let Columns {
+            kind,
+            collection,
+            rkey,
+            rev,
+            ..
+        } = raw;
+
+        let payload = match kind {
+            SegmentKind::Create
+            | SegmentKind::Update
+            | SegmentKind::Delete
+            | SegmentKind::CreateResync => {
+                // Infallible for these variants, but treat `None` as corruption
+                // rather than unwrapping.
+                let operation = kind.to_operation().ok_or(Error::MalformedEvent(
+                    "segment commit kind has no operation",
+                ))?;
+                let collection = cached(&mut self.collection, str_col(collection)?, |s| {
+                    Nsid::try_from(s).map_err(|_| {
+                        Error::MalformedEvent("segment row collection is not a valid NSID")
+                    })
+                })?;
+                let rkey = RecordKey::try_from(str_col(rkey)?).map_err(|_| {
+                    Error::MalformedEvent("segment row rkey is not a valid record key")
+                })?;
+                let rev = cached(&mut self.rev, str_col(rev)?, |s| {
+                    Tid::try_from(s)
+                        .map_err(|_| Error::MalformedEvent("segment row rev is not a valid TID"))
+                })?;
+                // A delete carries no record body; a create/update stores its
+                // canonical CBOR lazily. The segment never stores a CID, so the CID
+                // is computed from the record bytes on demand.
+                let record = match operation {
+                    Operation::Delete => None,
+                    Operation::Create | Operation::Update => {
+                        Some(Record::from_canonical_cbor(payload))
+                    }
+                };
+                EventPayload::Commit(Commit {
+                    operation,
+                    collection,
+                    rkey,
+                    rev,
+                    record,
+                })
+            }
+            SegmentKind::Identity => EventPayload::Identity(
+                SyncSubscribeReposIdentity::from_cbor(payload.as_ref()).map_err(|_| {
+                    Error::MalformedEvent("segment identity payload is not valid CBOR")
+                })?,
+            ),
+            SegmentKind::Account => EventPayload::Account(
+                SyncSubscribeReposAccount::from_cbor(payload.as_ref()).map_err(|_| {
+                    Error::MalformedEvent("segment account payload is not valid CBOR")
+                })?,
+            ),
+            SegmentKind::Sync => EventPayload::Sync(
+                SyncSubscribeReposSync::from_cbor(payload.as_ref())
+                    .map_err(|_| Error::MalformedEvent("segment sync payload is not valid CBOR"))?,
+            ),
+        };
+
+        Ok(Event {
+            seq,
+            did,
+            time_us,
+            payload,
+        })
+    }
 }
 
 /// Decode a raw `getBlock` zstd frame into filtered, validated events.
@@ -154,7 +196,7 @@ fn convert_row(raw: Columns<'_>, payload: impl AsRef<[u8]> + Into<Bytes>) -> Res
 /// Structural block corruption fails the whole call; a single row that fails to
 /// convert is dropped with its error collected (see [`Decoded`]).
 pub fn decode_block_frame_filtered(frame: &[u8], filter: &Filter) -> Result<Decoded> {
-    let body = decompress_bounded(frame, MAX_DECODED_BLOCK_BYTES, None)?;
+    let body = Bytes::from(decompress_bounded(frame, MAX_DECODED_BLOCK_BYTES, None)?);
     let mut out = Decoded::default();
     convert_block_into(&body, filter, &mut out)?;
     Ok(out)
@@ -183,7 +225,7 @@ pub(crate) fn decode_segment_cancellable(
             return Err(Error::Canceled);
         }
         let frame = reader.block_frame(idx)?;
-        let body = decompress_bounded(frame, MAX_DECODED_BLOCK_BYTES, None)?;
+        let body = Bytes::from(decompress_bounded(frame, MAX_DECODED_BLOCK_BYTES, None)?);
         // Materialize directly in segment order, avoiding a temporary event
         // vector and a second move of every event at each block boundary.
         convert_block_into(&body, filter, &mut out)?;
@@ -196,23 +238,59 @@ pub(crate) fn decode_segment_cancellable(
 
 /// Filter and convert a block's rows, preserving valid siblings around
 /// recoverable per-row failures.
-fn convert_block_into(body: &[u8], filter: &Filter, out: &mut Decoded) -> Result<()> {
+fn convert_block_into(body: &Bytes, filter: &Filter, out: &mut Decoded) -> Result<()> {
+    let mut converter = RowConverter::default();
     visit_block(body, |_, raw, payload| {
-        // Filter on the raw columns first; a non-UTF-8 column reads as "" so a
-        // constrained DID/collection predicate rejects it, while an unfiltered
-        // dimension still admits the row (its typed conversion then drops it).
-        let did = raw.did.text().unwrap_or("");
-        let collection = raw.collection.text().unwrap_or("");
-        if !filter.matches_segment(raw.kind.public_kind(), did, collection) {
-            return;
-        }
-        // Independent storage lets a consumer retain one small record without
-        // pinning the entire decompressed block (including rejected rows).
-        match convert_row(raw, Bytes::copy_from_slice(payload)) {
-            Ok(event) => out.events.push(event),
-            Err(err) => out.dropped.push(err),
-        }
+        convert_selected_row(body, filter, out, raw, payload, &mut converter);
     })
+}
+
+pub(crate) fn convert_validated_block(
+    block: super::block::ValidatedBlock,
+    filter: &Filter,
+    max_batch: usize,
+) -> Result<Vec<Decoded>> {
+    let batch_size = max_batch.max(1).min(block.len().max(1));
+    let mut chunks = Vec::new();
+    let mut out = Decoded::default();
+    let mut converter = RowConverter::default();
+    block.visit(|_, raw, payload| {
+        if out.events.capacity() == 0 {
+            out.events.reserve(batch_size);
+        }
+        convert_selected_row(block.body(), filter, &mut out, raw, payload, &mut converter);
+        if out.events.len() == batch_size {
+            chunks.push(core::mem::take(&mut out));
+        }
+    })?;
+    if !out.events.is_empty() || !out.dropped.is_empty() {
+        chunks.push(out);
+    }
+    Ok(chunks)
+}
+
+fn convert_selected_row<'a>(
+    body: &Bytes,
+    filter: &Filter,
+    out: &mut Decoded,
+    raw: Columns<'a>,
+    payload: &[u8],
+    converter: &mut RowConverter<'a>,
+) {
+    // Filter before typed conversion. Invalid UTF-8 remains recoverable for
+    // selected rows, including rows with an unconstrained filter dimension.
+    let did = raw.did.text().unwrap_or("");
+    let collection = raw.collection.text().unwrap_or("");
+    if !filter.matches_segment(raw.kind.public_kind(), did, collection) {
+        return;
+    }
+    // Immutable shared storage remains valid independently of the decoder,
+    // batch, and sibling records. Record::detach releases this block when a
+    // consumer wants to retain only a small payload for a long time.
+    match converter.convert(raw, body.slice_ref(payload)) {
+        Ok(event) => out.events.push(event),
+        Err(err) => out.dropped.push(err),
+    }
 }
 
 /// Reinterpret a raw column as UTF-8, or report it as malformed.

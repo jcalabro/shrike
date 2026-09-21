@@ -147,6 +147,13 @@ bench = false
 
 # --- Jetstream v2 segment codec ---
 [[bin]]
+name = "jetstream_record_json"
+path = "fuzz_targets/jetstream_record_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "jetstream_read_header"
 path = "fuzz_targets/jetstream_read_header.rs"
 test = false

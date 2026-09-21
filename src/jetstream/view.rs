@@ -41,6 +41,9 @@ pub struct CommitView<'a> {
     pub rkey: &'a str,
     pub rev: Tid,
     pub record: Option<&'a [u8]>,
+    /// An already known CID, including a live event's wire-supplied value.
+    /// Archive records leave it absent until the consumer computes it.
+    pub record_cid: Option<crate::cbor::Cid>,
 }
 
 impl EventView<'_> {
@@ -59,13 +62,43 @@ impl EventView<'_> {
                     rkey: RecordKey::try_from(c.rkey)
                         .map_err(|_| Error::MalformedEvent("invalid view record key"))?,
                     rev: c.rev,
-                    record: c.record.map(|r| Record::from_canonical_cbor(r.to_vec())),
+                    record: c.record.map(|r| match c.record_cid {
+                        Some(cid) => Record::with_cid(r.to_vec(), cid),
+                        None => Record::from_canonical_cbor(r.to_vec()),
+                    }),
                 }),
                 EventPayloadView::Identity(v) => EventPayload::Identity(v.clone()),
                 EventPayloadView::Account(v) => EventPayload::Account(v.clone()),
                 EventPayloadView::Sync(v) => EventPayload::Sync(v.clone()),
             },
         })
+    }
+}
+
+impl<'a> EventView<'a> {
+    /// Borrow a validated live event for the archive transform's live phase.
+    pub(crate) fn from_event(event: &'a Event) -> Self {
+        Self {
+            seq: event.seq,
+            did: event.did.as_str(),
+            time_us: event.time_us,
+            payload: match &event.payload {
+                EventPayload::Commit(c) => EventPayloadView::Commit(CommitView {
+                    operation: c.operation,
+                    collection: Cow::Borrowed(c.collection.as_str()),
+                    rkey: c.rkey.as_str(),
+                    rev: c.rev,
+                    record: c.record.as_ref().map(super::record::Record::as_cbor),
+                    record_cid: c
+                        .record
+                        .as_ref()
+                        .and_then(super::record::Record::cached_cid),
+                }),
+                EventPayload::Identity(v) => EventPayloadView::Identity(v.clone()),
+                EventPayload::Account(v) => EventPayloadView::Account(v.clone()),
+                EventPayload::Sync(v) => EventPayloadView::Sync(v.clone()),
+            },
+        }
     }
 }
 
@@ -140,6 +173,7 @@ fn event_view<'a>(
                 rkey,
                 rev,
                 record: (operation != Operation::Delete).then_some(payload),
+                record_cid: None,
             })
         }
         SegmentKind::Identity => EventPayloadView::Identity(

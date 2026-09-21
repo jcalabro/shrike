@@ -41,6 +41,7 @@
 
 use core::future::Future;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use futures::StreamExt;
 use std::sync::Arc;
 
 use super::archive::ArchiveClient;
@@ -87,6 +88,12 @@ pub trait EngineSink<E = Event> {
     fn recoverable(&mut self, error: Error) -> impl Future<Output = bool>;
 }
 
+/// Ordered chunks from a prepared archive entry. A whole segment's structure
+/// is validated before this stream is exposed; sparse entries may fail after
+/// yielding their valid prefix.
+pub type ArchiveStream<'a, E = Event> =
+    futures::stream::LocalBoxStream<'a, Result<DownloadedSegment<E>>>;
+
 /// A source of archive snapshot plan pages and segment downloads.
 ///
 /// The production implementation ([`ClientArchive`]) delegates to
@@ -119,6 +126,35 @@ pub trait ArchiveSource<E = Event> {
         cancel: &CancelToken,
     ) -> impl Future<Output = Result<DownloadedSegment<E>>>;
 
+    /// Prepare an entry for ordered, incremental delivery. Each yielded chunk
+    /// owns its events. The default preserves existing download implementations;
+    /// the production source validates whole segments before constructing chunks.
+    /// `max_batch` is a construction hint; the engine still enforces its limit.
+    fn prepare<'a>(
+        &'a self,
+        segment: &'a PlanSegment,
+        after_seq: u64,
+        before_seq: u64,
+        filter: &'a Filter,
+        cancel: &'a CancelToken,
+        _max_batch: usize,
+    ) -> impl Future<Output = Result<ArchiveStream<'a, E>>>
+    where
+        E: 'a,
+    {
+        async move {
+            let downloaded = self
+                .download(segment, after_seq, before_seq, filter, cancel)
+                .await?;
+            Ok(futures::stream::once(std::future::ready(Ok(downloaded))).boxed_local())
+        }
+    }
+
+    /// Bound prepared entries separately from block-level CPU parallelism.
+    fn prefetch_concurrency(&self) -> usize {
+        self.concurrency()
+    }
+
     /// The maximum number of segment downloads to run concurrently.
     fn concurrency(&self) -> usize;
 
@@ -131,12 +167,17 @@ pub trait ArchiveSource<E = Event> {
 /// The production [`ArchiveSource`], backed by an [`ArchiveClient`].
 pub struct ClientArchive<T> {
     client: ArchiveClient<T>,
+    decode_budget: Arc<tokio::sync::Semaphore>,
 }
 
 impl<T> ClientArchive<T> {
     /// Wrap an [`ArchiveClient`] as an [`ArchiveSource`].
     pub fn new(client: ArchiveClient<T>) -> Self {
-        ClientArchive { client }
+        let workers = client.limits.concurrency.clamp(1, 32);
+        ClientArchive {
+            client,
+            decode_budget: Arc::new(tokio::sync::Semaphore::new(workers)),
+        }
     }
 }
 
@@ -172,6 +213,35 @@ impl<T: HttpTransport> ArchiveSource for ClientArchive<T> {
 
     fn concurrency(&self) -> usize {
         self.client.limits().concurrency
+    }
+
+    fn prefetch_concurrency(&self) -> usize {
+        self.concurrency().clamp(1, 2)
+    }
+
+    async fn prepare<'a>(
+        &'a self,
+        segment: &'a PlanSegment,
+        after_seq: u64,
+        before_seq: u64,
+        filter: &'a Filter,
+        cancel: &'a CancelToken,
+        max_batch: usize,
+    ) -> Result<ArchiveStream<'a>>
+    where
+        Event: 'a,
+    {
+        super::download::prepare_segment(
+            &self.client,
+            segment,
+            after_seq,
+            before_seq,
+            filter,
+            cancel,
+            max_batch,
+            self.decode_budget.clone(),
+        )
+        .await
     }
 
     fn max_plan_pages(&self) -> u32 {
@@ -483,6 +553,62 @@ where
     /// otherwise. The fatal error is the return value only; it is never also
     /// delivered to `sink`.
     pub async fn run<S: EngineSink>(self, sink: &mut S) -> Result<()> {
+        self.run_projected(sink, |batch| batch).await
+    }
+}
+
+impl<T, F, W, D> Engine<MappedArchive<T, F>, W, D>
+where
+    T: HttpTransport,
+    W: WsTransport + Clone,
+    D: DictionarySource + Clone,
+{
+    /// Run an archive transform through replay, live cutover, and re-backfill.
+    /// The same transform receives validated live events after live deduplication.
+    /// Its owned output retains the original Jetstream cursor in `MappedEvent`.
+    /// As with archive transforms, commit side effects in the ordered sink.
+    pub async fn run_mapped<U, S>(self, sink: &mut S) -> Result<()>
+    where
+        U: Send + 'static,
+        F: Fn(super::view::EventView<'_>) -> U + Send + Sync + 'static,
+        S: EngineSink<super::view::MappedEvent<U>>,
+    {
+        let map = self
+            .archive
+            .as_ref()
+            .ok_or(Error::InvalidConfig(
+                "mapped replay requires an archive source",
+            ))?
+            .map
+            .clone();
+        self.run_projected(sink, move |batch: Batch| {
+            Batch::new(
+                batch
+                    .into_events()
+                    .into_iter()
+                    .map(|event| super::view::MappedEvent {
+                        seq: event.seq,
+                        value: map(super::view::EventView::from_event(&event)),
+                    })
+                    .collect(),
+            )
+        })
+        .await
+    }
+}
+
+impl<A, W, D> Engine<A, W, D>
+where
+    W: WsTransport + Clone,
+    D: DictionarySource + Clone,
+{
+    async fn run_projected<E, S, P>(self, sink: &mut S, project: P) -> Result<()>
+    where
+        E: Sequenced,
+        A: ArchiveSource<E>,
+        S: EngineSink<E>,
+        P: Fn(Batch) -> Batch<E>,
+    {
         let Engine {
             archive,
             ws,
@@ -561,6 +687,7 @@ where
 
             let mut bridge = LiveBridge {
                 user: sink,
+                project: &project,
                 stats: stats.clone(),
                 can_backfill,
                 outcome: LiveOutcome::Open,
@@ -716,15 +843,25 @@ where
     E: Sequenced,
     S: EngineSink<E>,
 {
-    let concurrency = arch.concurrency().max(1);
+    let concurrency = arch.prefetch_concurrency().max(1);
     let mut buf: Vec<E> = Vec::new();
 
     let mut downloads = super::ordered::OrderedDownloads::new(
         segments.iter().map(|segment| {
             let stats = stats.clone();
             async move {
-                let _guard = WorkerGuard::new(stats);
-                arch.download(segment, after, before, filter, cancel).await
+                let guard = WorkerGuard::new(stats);
+                let chunks = arch
+                    .prepare(segment, after, before, filter, cancel, max_batch)
+                    .await?;
+                Ok::<_, Error>(
+                    chunks
+                        .map(move |chunk| {
+                            let _keep_alive = &guard;
+                            chunk
+                        })
+                        .boxed_local(),
+                )
             }
         }),
         concurrency,
@@ -739,7 +876,7 @@ where
                 .await;
             return Ok(true);
         }
-        let downloaded = match result {
+        let mut chunks = match result {
             Ok(downloaded) => downloaded,
             Err(Error::Canceled) => {
                 let _ = downloads
@@ -762,77 +899,124 @@ where
             }
         };
 
-        // Each delivery transfers the batch allocation to the consumer. Reserve
-        // the next batch once, instead of repeatedly growing and copying it.
-        // Cap the eager reservation independently of a caller's batch limit.
-        let batch_reservation = max_batch.min(downloaded.events.len()).min(1024);
-        for event in downloaded.events {
-            // Already delivered before this run, or the same boundary event
-            // repeated by a straddling unit or an inclusive segment boundary:
-            // collapse without advancing. These are duplicates of an event we
-            // have already emitted, not distinct data.
-            if event.sequence() <= after || event.sequence() == *floor {
-                continue;
-            }
-            // A *lower* seq inside the window, arriving after a higher one, is a
-            // distinct event out of order: the source violated the global
-            // ordering contract. Merging arbitrary overlap would need unbounded
-            // buffering, so fail loud instead of silently dropping the event.
-            if event.sequence() < *floor {
-                return Err(Error::PlanInvalid(
-                    "archive events are not strictly increasing across segments",
-                ));
-            }
-            *floor = event.sequence();
-            if buf.capacity() == 0 {
-                buf.reserve(batch_reservation);
-            }
-            buf.push(event);
-            if buf.len() >= max_batch
-                && !downloads
+        while let Some(result) = downloads.during(chunks.next()).await {
+            if cancel.is_cancelled() {
+                let _ = downloads
                     .during(flush_archive_batch(&mut buf, stats, sink))
-                    .await
-            {
+                    .await;
                 return Ok(true);
             }
-        }
-
-        // Emit recoverable row drops after flushing the rows that preceded them,
-        // preserving the "valid rows, then the ordered error" contract.
-        if !downloaded.dropped.is_empty() {
-            if !downloads
-                .during(flush_archive_batch(&mut buf, stats, sink))
-                .await
-            {
-                return Ok(true);
-            }
-            for dropped in downloaded.dropped {
-                if !downloads.during(sink.recoverable(dropped)).await {
+            let downloaded = match result {
+                Ok(downloaded) => downloaded,
+                Err(Error::Canceled) => {
+                    let _ = downloads
+                        .during(flush_archive_batch(&mut buf, stats, sink))
+                        .await;
                     return Ok(true);
                 }
-            }
-        }
+                Err(err) => {
+                    if !downloads
+                        .during(flush_archive_batch(&mut buf, stats, sink))
+                        .await
+                        || !downloads.during(sink.recoverable(err)).await
+                    {
+                        return Ok(true);
+                    }
+                    break;
+                }
+            };
 
-        // A blocks-mode entry that failed partway delivers its decoded prefix
-        // above, then its ordered per-entry error; the sweep continues.
-        if let Some(failure) = downloaded.failure {
+            // Decode workers construct final-sized vectors. In the common
+            // ordered case transfer the allocation directly to the consumer,
+            // avoiding an extra move of every event on the delivery thread.
+            let mut next_floor = (*floor).max(after);
+            let ordered_batch = buf.is_empty()
+                && downloaded.events.len() <= max_batch
+                && downloaded.events.iter().all(|event| {
+                    let seq = event.sequence();
+                    if seq <= next_floor {
+                        return false;
+                    }
+                    next_floor = seq;
+                    true
+                });
+            if ordered_batch {
+                *floor = next_floor;
+                buf = downloaded.events;
+            } else {
+                // Each delivery transfers the batch allocation to the consumer. Reserve
+                // the next batch once, instead of repeatedly growing and copying it.
+                // Cap the eager reservation independently of a caller's batch limit.
+                let batch_reservation = max_batch.min(downloaded.events.len()).min(1024);
+                for event in downloaded.events {
+                    // Already delivered before this run, or the same boundary event
+                    // repeated by a straddling unit or an inclusive segment boundary:
+                    // collapse without advancing. These are duplicates of an event we
+                    // have already emitted, not distinct data.
+                    if event.sequence() <= after || event.sequence() == *floor {
+                        continue;
+                    }
+                    // A *lower* seq inside the window, arriving after a higher one, is a
+                    // distinct event out of order: the source violated the global
+                    // ordering contract. Merging arbitrary overlap would need unbounded
+                    // buffering, so fail loud instead of silently dropping the event.
+                    if event.sequence() < *floor {
+                        return Err(Error::PlanInvalid(
+                            "archive events are not strictly increasing across segments",
+                        ));
+                    }
+                    *floor = event.sequence();
+                    if buf.capacity() == 0 {
+                        buf.reserve(batch_reservation);
+                    }
+                    buf.push(event);
+                    if buf.len() >= max_batch
+                        && !downloads
+                            .during(flush_archive_batch(&mut buf, stats, sink))
+                            .await
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+
+            // Emit recoverable row drops after flushing the rows that preceded them,
+            // preserving the "valid rows, then the ordered error" contract.
+            if !downloaded.dropped.is_empty() {
+                if !downloads
+                    .during(flush_archive_batch(&mut buf, stats, sink))
+                    .await
+                {
+                    return Ok(true);
+                }
+                for dropped in downloaded.dropped {
+                    if !downloads.during(sink.recoverable(dropped)).await {
+                        return Ok(true);
+                    }
+                }
+            }
+
+            // A blocks-mode entry that failed partway delivers its decoded prefix
+            // above, then its ordered per-entry error; the sweep continues.
+            if let Some(failure) = downloaded.failure {
+                if !downloads
+                    .during(flush_archive_batch(&mut buf, stats, sink))
+                    .await
+                    || !downloads.during(sink.recoverable(failure)).await
+                {
+                    return Ok(true);
+                }
+                break;
+            }
+
+            // Flush at each chunk boundary so a partial batch need not wait for
+            // construction of the next block.
             if !downloads
                 .during(flush_archive_batch(&mut buf, stats, sink))
                 .await
-                || !downloads.during(sink.recoverable(failure)).await
             {
                 return Ok(true);
             }
-            continue;
-        }
-
-        // Flush at the segment boundary so delivery latency is bounded by one
-        // segment, not by the whole sweep.
-        if !downloads
-            .during(flush_archive_batch(&mut buf, stats, sink))
-            .await
-        {
-            return Ok(true);
         }
     }
 
@@ -890,17 +1074,24 @@ enum LiveOutcome {
 /// `Err`; it never interleaves recoverable errors. So an `Err` here always ends
 /// the session: `CursorTooOld` becomes [`LiveOutcome::Backfill`] when an archive
 /// fallback exists, and every other error becomes [`LiveOutcome::Fatal`].
-struct LiveBridge<'a, S> {
+struct LiveBridge<'a, S, P> {
     user: &'a mut S,
+    project: &'a P,
     stats: Arc<AtomicStats>,
     can_backfill: bool,
     outcome: LiveOutcome,
 }
 
-impl<S: EngineSink> DeliverySink for LiveBridge<'_, S> {
+impl<E, S, P> DeliverySink for LiveBridge<'_, S, P>
+where
+    E: Sequenced,
+    S: EngineSink<E>,
+    P: Fn(Batch) -> Batch<E>,
+{
     async fn deliver(&mut self, item: core::result::Result<Delivery, Error>) -> bool {
         match item {
             Ok(Delivery::Batch(batch)) => {
+                let batch = (self.project)(batch);
                 // The batch is moved into `deliver`, so it has reached the
                 // consumer regardless of the return value; `false` only asks us
                 // to stop sending more (see the `EngineSink` contract), so

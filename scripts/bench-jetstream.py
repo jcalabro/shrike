@@ -30,6 +30,21 @@ import threading
 import time
 
 
+def parse_go_final(line, typed):
+    fields = dict(re.findall(r'([a-z_]+)=([^ ]+)', line))
+    def count(key):
+        return int(fields[key].replace(',', ''))
+    return dict(delivered_events=count('events'), last_processed_seq=count('last_cursor'),
+                decoded=count('decoded') if typed else None,
+                decode_errors=count('decode_errs') if typed else None,
+                typed_likes=typed, residual_gap=0, raw=line)
+
+
+def go_record_error_seq(line):
+    match = re.fullmatch(r'(?:event error: )?jetstream: decode record \(did=.* seq=(\d+)\): cbor decode: .+', line)
+    return int(match[1]) if match else None
+
+
 def worker(config):
     os.chdir(config['directory'])
     os.sched_setaffinity(0, set(config['cpus']))
@@ -48,6 +63,7 @@ def worker(config):
                           uname=list(os.uname()), load=os.getloadavg())), flush=True)
     rng = random.Random(config['seed'])
     expected = None
+    expected_by_label = {}
     for pair in range(-1, config['pairs']):
         order = ['baseline', 'candidate']
         rng.shuffle(order)
@@ -69,11 +85,27 @@ def worker(config):
             run_env['GOMEMLIMIT'] = config[label+'_go_memory_limit']
             proc = subprocess.Popen(command, env=run_env, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True)
-            errors = []
+            errors, metrics = [], []
+            diagnostics_digest = hashlib.sha256()
+            diagnostic_count = 0
+            unexpected_count = 0
+            record_errors_in_window = 0
             def drain():
+                nonlocal diagnostic_count, unexpected_count, record_errors_in_window
                 for line in proc.stderr:
-                    if len(errors) < 100:
-                        errors.append(line.rstrip())
+                    line = line.rstrip()
+                    if line.startswith('@METRIC '):
+                        metrics.append(line.split()[1:])
+                        continue
+                    diagnostic_count += 1
+                    diagnostics_digest.update((line+'\n').encode())
+                    if len(errors) < 4096:
+                        errors.append(line)
+                    seq = go_record_error_seq(line) if config[label+'_kind'] == 'go' else None
+                    if seq is None or not config['allow_go_record_errors']:
+                        unexpected_count += 1
+                    elif config['after'] < seq <= config['before']:
+                        record_errors_in_window += 1
             reader = threading.Thread(target=drain)
             reader.start()
             final = None
@@ -82,30 +114,42 @@ def worker(config):
             status = proc.wait()
             reader.join()
             elapsed = time.perf_counter() - started
-            metrics = [s.split()[1:] for s in errors if s.startswith('@METRIC ')]
-            diagnostics = [s for s in errors if not s.startswith('@METRIC ')]
-            if status or len(metrics) != 1 or diagnostics or final is None:
-                raise RuntimeError(f'Failed {label} run: status={status}, diagnostics={errors}')
+            if status or len(metrics) != 1 or unexpected_count or final is None:
+                print(json.dumps(dict(type='failure', label=label, pair=pair, status=status,
+                                      diagnostics=errors, final=final, metrics=metrics)), flush=True)
+                raise RuntimeError(f'Failed {label} run: status={status}, unexpected={unexpected_count}, samples={errors[:3]}')
             if config[label+'_kind'] == 'go':
-                fields = dict(re.findall(r'([a-z_]+)=([^ ]+)', final))
-                def count(key):
-                    return int(fields[key].replace(',', ''))
-                final = dict(delivered_events=count('events'), last_processed_seq=count('last_cursor'),
-                             decoded=count('decoded'), decode_errors=count('decode_errs'),
-                             typed_likes='--typed-likes-client' in config[label+'_args'],
-                             residual_gap=0, raw=final)
+                final = parse_go_final(final, '--typed-likes-client' in config[label+'_args'])
             else:
                 final = json.loads(final)
-            signature = (final['delivered_events'], final['last_processed_seq'], final['residual_gap'])
+            within_label = (final['delivered_events'], final['last_processed_seq'],
+                            final.get('decoded'), final.get('decode_errors'),
+                            diagnostic_count, diagnostics_digest.hexdigest())
+            if label not in expected_by_label:
+                expected_by_label[label] = within_label
+            if within_label != expected_by_label[label]:
+                raise RuntimeError(f'Nonrepeatable {label} results: {within_label} versus {expected_by_label[label]}')
+            signature = (final['delivered_events'] + record_errors_in_window, final['last_processed_seq'], final['residual_gap'])
             if final.get('typed_likes'):
                 delta = config['typed_error_delta'] if label == 'baseline' else 0
                 signature += (final['decoded'] - delta, final['decode_errors'] + delta)
+            if all('--decode-records' in config[l+'_args'] for l in ['baseline', 'candidate']):
+                signature += (final['decoded'], final['decode_errors'])
+            if (any(config[l+'_kind'] == 'go' for l in ['baseline', 'candidate'])
+                    and any('--decode-records' in config[l+'_args'] for l in ['baseline', 'candidate'])):
+                # Generic-record comparisons must reject the same number of
+                # in-window payloads, not just account for equal envelopes.
+                signature += (record_errors_in_window if config[label+'_kind'] == 'go'
+                              else final['decode_errors'],)
             if expected is None:
                 expected = signature
             if signature != expected or final['residual_gap']:
                 raise RuntimeError(f'Inconsistent results: {signature} versus {expected}')
             wall, user, system, rss, exit_status, voluntary, involuntary, major, minor, fs_in, fs_out = metrics[0]
-            result = dict(type='run', pair=pair, label=label, wall_s=elapsed, time_wall_s=float(wall),
+            result = dict(diagnostics=errors, diagnostic_count=diagnostic_count,
+                          diagnostic_digest=diagnostics_digest.hexdigest(),
+                          diagnostics_truncated=diagnostic_count > len(errors),
+                          go_record_errors_in_window=record_errors_in_window, type='run', pair=pair, label=label, wall_s=elapsed, time_wall_s=float(wall),
                           cpu_s=float(user)+float(system), rss_kib=int(rss),
                           final=final, exit_status=int(exit_status), load=os.getloadavg(),
                           voluntary_switches=int(voluntary), involuntary_switches=int(involuntary),
@@ -150,6 +194,8 @@ def main():
     p.add_argument('--candidate-kind', choices=['rust', 'go'], default='rust')
     p.add_argument('--baseline-go-memory-limit', default='512MiB')
     p.add_argument('--candidate-go-memory-limit', default='512MiB')
+    p.add_argument('--allow-go-record-errors', action='store_true',
+                   help='record Go eager-payload rejections and include their in-window count when comparing lazy Rust envelope totals')
     p.add_argument('--typed-error-delta', type=int, default=0,
                    help='predeclared candidate-minus-baseline typed errors for known contract differences')
     p.add_argument('--baseline-arg', dest='baseline_args', action='append', default=[],

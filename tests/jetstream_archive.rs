@@ -1542,3 +1542,585 @@ async fn sparse_block_mapping_can_progress_while_an_earlier_block_decodes() {
     );
     assert!(out.failure.is_none());
 }
+
+#[tokio::test]
+async fn prepared_whole_matches_owned_window_errors_and_retention() {
+    use futures::StreamExt;
+    use shrike::jetstream::{ArchiveSource, ClientArchive, EventPayload, decode_segment_filtered};
+    let mut blocks: Vec<Vec<Row>> = (0..8)
+        .map(|b| (b * 7 + 1..=b * 7 + 7).map(row).collect())
+        .collect();
+    blocks[0][0].did = vec![255]; // Preserve errors even outside the window.
+    blocks[2][3].rkey = b"bad/key".to_vec();
+    blocks[3][2].collection = b"app.bsky.feed.like".to_vec();
+    blocks[4][1].collection = b"APP.BSKY.FEED.post".to_vec();
+    blocks[6][5].rev = b"bad".to_vec();
+    let (bytes, checksum) = seal(&blocks);
+    for filter in [
+        Filter::new(),
+        Filter::new().collection("app.bsky.feed.post").unwrap(),
+        Filter::new().collection("app.bsky.feed.*").unwrap(),
+        Filter::new().did(DID_A).unwrap(),
+    ] {
+        let mut expected = decode_segment_filtered(&bytes, &filter).unwrap();
+        expected.events.retain(|e| e.seq > 3 && e.seq <= 51);
+        let t = Scripted::new();
+        t.push("seg:probe", Resp::ok(200, bytes.clone()));
+        let archive = ClientArchive::new(client(t));
+        let segment = whole_segment("prepared.jss", checksum.clone());
+        let cancel = CancelToken::new();
+        let mut chunks = archive
+            .prepare(&segment, 3, 51, &filter, &cancel, 64)
+            .await
+            .unwrap();
+        let mut events = Vec::new();
+        let mut dropped = Vec::new();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.unwrap();
+            assert!(chunk.events.len() <= 7);
+            assert!(chunk.failure.is_none());
+            assert!(dropped.is_empty(), "row errors follow all entry events");
+            events.extend(chunk.events);
+            dropped.extend(chunk.dropped);
+        }
+        drop(chunks);
+        drop(archive);
+        assert_eq!(events.len(), expected.events.len());
+        for (actual, expected) in events.iter().zip(&expected.events) {
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+            if let (EventPayload::Commit(a), EventPayload::Commit(b)) =
+                (&actual.payload, &expected.payload)
+            {
+                assert_eq!(
+                    a.record.as_ref().map(|r| r.as_cbor()),
+                    b.record.as_ref().map(|r| r.as_cbor())
+                );
+                let retained = a.record.clone();
+                assert_eq!(
+                    retained.as_ref().map(|r| r.cid()),
+                    b.record.as_ref().map(|r| r.cid())
+                );
+            }
+        }
+        assert_eq!(
+            dropped.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            expected
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[tokio::test]
+async fn prepared_high_expansion_segment_replays_with_a_small_retention_budget() {
+    use futures::StreamExt;
+    use shrike::jetstream::{ArchiveSource, ClientArchive, EventPayload};
+    let blocks = (0..8)
+        .map(|n| {
+            let mut r = row(n + 1);
+            r.payload = vec![0xa5; 64 * 1024]; // Opaque payloads with high compression.
+            vec![r]
+        })
+        .collect::<Vec<_>>();
+    let (bytes, checksum) = seal(&blocks);
+    let mut config = ArchiveConfig::new("archive.example.com", ApiKey::new(SECRET));
+    config.limits.max_segment_bytes = bytes.len() as u64;
+    assert!(config.limits.max_segment_bytes < 64 * 1024);
+    let t = Scripted::new();
+    t.push("seg:probe", Resp::ok(200, bytes));
+    let archive = ClientArchive::new(ArchiveClient::new(t, config).unwrap());
+    let segment = whole_segment("compressed.jss", checksum);
+    let filter = Filter::new();
+    let cancel = CancelToken::new();
+    let mut stream = archive
+        .prepare(&segment, 0, 8, &filter, &cancel, 2)
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.unwrap();
+        assert!(chunk.dropped.is_empty());
+        assert!(chunk.failure.is_none());
+        events.extend(chunk.events);
+    }
+    drop(stream);
+    drop(archive);
+    assert_eq!(
+        events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        (1..=8).collect::<Vec<_>>()
+    );
+    for event in events {
+        let EventPayload::Commit(commit) = event.payload else {
+            panic!("expected commit")
+        };
+        assert_eq!(commit.record.unwrap().as_cbor(), blocks[0][0].payload);
+    }
+}
+
+#[tokio::test]
+async fn prepared_whole_rejects_late_corruption_before_exposing_any_chunk() {
+    use shrike::jetstream::{ArchiveSource, ClientArchive};
+    for kind in 0..3 {
+        let mut blocks = vec![vec![row(1), row(2)], vec![row(3), row(4)]];
+        if kind == 0 {
+            blocks[1][1].kind = 255;
+        }
+        let (mut bytes, checksum) = seal(&blocks);
+        let reader = SegmentReader::open(&bytes).unwrap();
+        let off = reader.blocks()[1].offset as usize;
+        if kind == 1 {
+            bytes[off + 8..off + 12].fill(0);
+        }
+        if kind == 2 {
+            bytes[off..off + 8].fill(0);
+        }
+        let t = Scripted::new();
+        t.push("seg:probe", Resp::ok(200, bytes));
+        let archive = ClientArchive::new(client(t));
+        let segment = whole_segment("corrupt.jss", checksum);
+        assert!(
+            archive
+                .prepare(&segment, 0, 100, &Filter::new(), &CancelToken::new(), 64)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn prepared_sparse_preserves_prefix_then_row_errors_then_failure() {
+    use futures::StreamExt;
+    use shrike::jetstream::{ArchiveSource, ClientArchive};
+    let mut bad = row(3);
+    bad.rev = b"bad".to_vec();
+    let t = Scripted::new();
+    t.push(
+        "block:0",
+        Resp::ok(200, block_frame(&[row(1), row(2), bad])),
+    );
+    t.push("block:1", Resp::ok(200, vec![0; 8]));
+    let archive = ClientArchive::new(client(t));
+    let mut segment = whole_segment("sparse.jss", "0000000000000000".into());
+    segment.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 1 }]);
+    let cancel = CancelToken::new();
+    let filter = Filter::new();
+    let mut chunks = archive
+        .prepare(&segment, 1, 100, &filter, &cancel, 64)
+        .await
+        .unwrap();
+    let first = chunks.next().await.unwrap().unwrap();
+    assert_eq!(first.events.iter().map(|e| e.seq).collect::<Vec<_>>(), [2]);
+    assert!(first.dropped.is_empty());
+    assert!(first.failure.is_none());
+    let last = chunks.next().await.unwrap().unwrap();
+    assert!(last.events.is_empty());
+    assert_eq!(last.dropped.len(), 1);
+    assert!(last.failure.is_some());
+    assert!(chunks.next().await.is_none());
+}
+
+#[tokio::test]
+async fn prepared_sparse_batches_match_atomic_blocks_and_retain_records() {
+    use futures::StreamExt;
+    use shrike::jetstream::{ArchiveSource, ClientArchive, EventPayload};
+
+    let mut blocks: Vec<Vec<Row>> = (0..3)
+        .map(|b| (b * 75 + 1..=b * 75 + 75).map(row).collect())
+        .collect();
+    blocks[0][0].did = vec![255]; // Errors outside the window still matter.
+    blocks[0][40].rev = b"bad".to_vec();
+    blocks[1][3].collection = b"app.bsky.feed.like".to_vec();
+    blocks[1][40].kind = 3; // Deletes need no record backing.
+    blocks[2][74].kind = 255; // Discard this whole block, including its valid prefix.
+    let filter = Filter::new().collection("app.bsky.feed.post").unwrap();
+    let mut segment = whole_segment("sparse-batches.jss", "0000000000000000".into());
+    segment.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 2 }]);
+    let transport = || {
+        let t = Scripted::new();
+        for (i, block) in blocks.iter().enumerate() {
+            t.push(&format!("block:{i}"), Resp::ok(200, block_frame(block)));
+        }
+        t
+    };
+    let expected = download_segment(
+        &client(transport()),
+        &segment,
+        10,
+        140,
+        &filter,
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(expected.events.len(), 128);
+    assert_eq!(expected.dropped.len(), 2);
+    assert!(expected.failure.is_some());
+
+    for max_batch in [1, 7, 64, 1024] {
+        let archive = ClientArchive::new(client(transport()));
+        let cancel = CancelToken::new();
+        let mut chunks = archive
+            .prepare(&segment, 10, 140, &filter, &cancel, max_batch)
+            .await
+            .unwrap();
+        let mut events = Vec::new();
+        let mut errors = Vec::new();
+        let mut failure = None;
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.unwrap();
+            assert!(chunk.events.len() <= max_batch);
+            assert!(errors.is_empty(), "all valid rows precede row errors");
+            assert!(failure.is_none(), "entry failure terminates the stream");
+            events.extend(chunk.events);
+            errors.extend(chunk.dropped);
+            failure = chunk.failure;
+        }
+        drop(chunks);
+        drop(archive);
+        assert_eq!(events.len(), expected.events.len());
+        for (actual, expected) in events.iter().zip(&expected.events) {
+            if let (EventPayload::Commit(a), EventPayload::Commit(b)) =
+                (&actual.payload, &expected.payload)
+            {
+                assert_eq!(
+                    a.record.as_ref().map(|r| r.as_cbor()),
+                    b.record.as_ref().map(|r| r.as_cbor())
+                );
+                assert_eq!(
+                    a.record.as_ref().map(|r| r.cid()),
+                    b.record.as_ref().map(|r| r.cid())
+                );
+            }
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        }
+        assert_eq!(
+            errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            expected
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            failure.as_ref().map(ToString::to_string),
+            expected.failure.as_ref().map(ToString::to_string)
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "set JETSTREAM_CORPUS to a directory of captured getBlock .zst frames"]
+async fn prepared_sparse_matches_captured_corpus() {
+    use futures::StreamExt;
+    use shrike::jetstream::{
+        ArchiveSource, ClientArchive, EventPayload, decode_block_frame_filtered,
+    };
+
+    let directory = std::env::var("JETSTREAM_CORPUS").unwrap();
+    let mut paths: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "zst"))
+        .collect();
+    paths.sort();
+    assert!(!paths.is_empty());
+    let mut compared = 0;
+    for path in &paths {
+        let frame = std::fs::read(path).unwrap();
+        for collection in [None, Some("app.bsky.feed.post"), Some("app.bsky.feed.*")] {
+            let filter = match collection {
+                Some(collection) => Filter::new().collection(collection).unwrap(),
+                None => Filter::new(),
+            };
+            let expected = decode_block_frame_filtered(&frame, &filter).unwrap();
+            for max_batch in [1, 64, 1024] {
+                let t = Scripted::new();
+                t.push("block:0", Resp::ok(200, frame.clone()));
+                let archive = ClientArchive::new(client(t));
+                let mut segment = whole_segment("corpus.jss", "0000000000000000".into());
+                segment.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 0 }]);
+                let cancel = CancelToken::new();
+                let mut chunks = archive
+                    .prepare(&segment, 0, u64::MAX, &filter, &cancel, max_batch)
+                    .await
+                    .unwrap();
+                let mut events = Vec::new();
+                let mut errors = Vec::new();
+                while let Some(chunk) = chunks.next().await {
+                    let chunk = chunk.unwrap();
+                    assert!(chunk.events.len() <= max_batch);
+                    assert!(chunk.failure.is_none());
+                    assert!(errors.is_empty());
+                    events.extend(chunk.events);
+                    errors.extend(chunk.dropped);
+                }
+                drop(chunks);
+                drop(archive);
+                assert_eq!(events.len(), expected.events.len(), "{}", path.display());
+                for (actual, expected) in events.iter().zip(&expected.events) {
+                    assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+                    if let (EventPayload::Commit(a), EventPayload::Commit(b)) =
+                        (&actual.payload, &expected.payload)
+                    {
+                        assert_eq!(
+                            a.record.as_ref().map(|r| r.as_cbor()),
+                            b.record.as_ref().map(|r| r.as_cbor())
+                        );
+                    }
+                    compared += 1;
+                }
+                assert_eq!(
+                    errors.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                    expected
+                        .dropped
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+    println!(
+        "Compared {compared} complete events across {} captured blocks",
+        paths.len()
+    );
+}
+
+#[tokio::test]
+async fn prepared_stream_stops_after_cancellation_and_keeps_delivered_records() {
+    use futures::StreamExt;
+    use shrike::jetstream::{ArchiveSource, ClientArchive, EventPayload};
+    let blocks: Vec<_> = (1..=16).map(|i| vec![row(i)]).collect();
+    let (bytes, checksum) = seal(&blocks);
+    let t = Scripted::new();
+    t.push("seg:probe", Resp::ok(200, bytes));
+    let archive = ClientArchive::new(client(t));
+    let segment = whole_segment("cancel.jss", checksum);
+    let cancel = CancelToken::new();
+    let filter = Filter::new();
+    let mut chunks = archive
+        .prepare(&segment, 0, 100, &filter, &cancel, 64)
+        .await
+        .unwrap();
+    let first = chunks.next().await.unwrap().unwrap();
+    cancel.cancel();
+    assert!(matches!(chunks.next().await, Some(Err(Error::Canceled))));
+    assert!(chunks.next().await.is_none());
+    drop(chunks);
+    drop(archive);
+    assert_eq!(first.events[0].seq, 1);
+    let EventPayload::Commit(commit) = &first.events[0].payload else {
+        panic!("commit");
+    };
+    assert_eq!(commit.record.as_ref().unwrap().as_cbor(), row(1).payload);
+}
+
+#[tokio::test]
+async fn prepared_archive_cutover_deduplicates_boundary_and_stops_cleanly() {
+    use shrike::jetstream::{
+        ClientArchive, Delivery, DialError, DictionarySource, Engine, EngineConfig, EngineSink,
+        Event, EventPayload, LiveConfig, WsConnection, WsError, WsMessage, WsTransport,
+    };
+    use std::{cell::RefCell, rc::Rc};
+    #[derive(Clone)]
+    struct Live(Rc<RefCell<Vec<String>>>);
+    struct Connection(VecDeque<WsMessage>);
+    impl WsConnection for Connection {
+        async fn read(&mut self) -> Result<Option<WsMessage>, WsError> {
+            Ok(self.0.pop_front())
+        }
+        async fn close(&mut self) {}
+    }
+    impl WsTransport for Live {
+        type Conn = Connection;
+        async fn dial(&self, url: String, _: &'static str) -> Result<Connection, DialError> {
+            assert_eq!(query_param(&url, "cursor"), Some("4".into()));
+            self.0.borrow_mut().push(url);
+            let messages = (4..=6)
+                .map(|seq| {
+                    WsMessage::Text(serde_json::to_vec(&serde_json::json!({
+                "$type": "message", "payload": {
+                    "$type": "network.bsky.jetstream.subscribeEvents#commit", "seq": seq,
+                    "did": DID_A, "time": "2024-01-01T00:00:00Z", "operation": "create",
+                    "collection": "app.bsky.feed.post", "rkey": RKEY, "rev": REV, "record": {},
+                    "cid": shrike::cbor::Cid::compute(shrike::cbor::Codec::Drisl, b"wire-supplied CID").to_string()
+                }
+            })).unwrap())
+                })
+                .collect();
+            Ok(Connection(messages))
+        }
+    }
+    #[derive(Clone)]
+    struct NoDictionary;
+    impl DictionarySource for NoDictionary {
+        async fn fetch(&self, _: Option<u32>) -> shrike::jetstream::Result<Vec<u8>> {
+            panic!("compression disabled")
+        }
+    }
+    struct Sink {
+        events: Vec<Event>,
+        stop: usize,
+    }
+    impl EngineSink for Sink {
+        async fn deliver(&mut self, item: Delivery) -> bool {
+            if let Delivery::Batch(batch) = item {
+                self.events.extend(batch.into_events());
+            }
+            self.events.len() < self.stop
+        }
+        async fn recoverable(&mut self, error: Error) -> bool {
+            panic!("unexpected {error}")
+        }
+    }
+    impl EngineSink<shrike::jetstream::MappedEvent<Event>> for Sink {
+        async fn deliver(&mut self, item: Delivery<shrike::jetstream::MappedEvent<Event>>) -> bool {
+            if let Delivery::Batch(batch) = item {
+                self.events
+                    .extend(batch.into_events().into_iter().map(|e| e.value));
+            }
+            self.events.len() < self.stop
+        }
+        async fn recoverable(&mut self, error: Error) -> bool {
+            panic!("unexpected {error}")
+        }
+    }
+    for (stop, mapped) in [(2, false), (6, false), (2, true), (6, true)] {
+        let t = Scripted::new();
+        t.push("plan", plan_page(4, 4, &seg_json("cutover.jss", 0, 1, 5)));
+        let (bytes, _) = seal(&[vec![row(1), row(2)], vec![row(3), row(4), row(5)]]);
+        t.push("seg:probe", Resp::ok(200, bytes));
+        let archive = ClientArchive::new(client(t));
+        let live = Live(Rc::new(RefCell::new(Vec::new())));
+        let mut cfg = LiveConfig::new("archive.example.com", true);
+        cfg.compression = false;
+        cfg.max_batch = 2;
+        let mut sink = Sink {
+            events: Vec::new(),
+            stop,
+        };
+        let stats = if mapped {
+            let engine = Engine::new(
+                Some(archive.map(|e| e.to_owned().unwrap())),
+                live.clone(),
+                NoDictionary,
+                EngineConfig::new(cfg),
+                CancelToken::new(),
+            );
+            let stats = engine.stats();
+            engine.run_mapped(&mut sink).await.unwrap();
+            stats
+        } else {
+            let engine = Engine::new(
+                Some(archive),
+                live.clone(),
+                NoDictionary,
+                EngineConfig::new(cfg),
+                CancelToken::new(),
+            );
+            let stats = engine.stats();
+            engine.run(&mut sink).await.unwrap();
+            stats
+        };
+        assert_eq!(
+            sink.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            (1..=stop as u64).collect::<Vec<_>>()
+        );
+        assert_eq!(live.0.borrow().len(), usize::from(stop == 6));
+        assert_eq!(stats.snapshot().last_processed_seq, stop as u64);
+        assert_eq!(stats.snapshot().delivered_events, stop as u64);
+        assert_eq!(stats.active_downloads(), 0);
+        for event in &sink.events {
+            let EventPayload::Commit(commit) = &event.payload else {
+                panic!("commit");
+            };
+            assert_eq!(commit.record.as_ref().unwrap().as_cbor(), [0xa0]);
+            if event.seq > 4 {
+                assert_eq!(
+                    commit.record.as_ref().unwrap().cid(),
+                    shrike::cbor::Cid::compute(shrike::cbor::Codec::Drisl, b"wire-supplied CID")
+                );
+            }
+        }
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(96))]
+    #[test]
+    fn prepared_pipeline_matches_atomic_decoder(
+        specs in proptest::collection::vec((0u8..12, proptest::bool::ANY), 1..100),
+        width in 1usize..17,
+        max_batch in 1usize..10,
+        filtered in proptest::bool::ANY,
+        corrupt in 0u8..8,
+        after in 0u64..45,
+        span in 1u64..50,
+    ) {
+        use futures::StreamExt;
+        use shrike::jetstream::{ArchiveSource, ClientArchive, EventPayload, decode_segment_filtered};
+        let mut blocks = Vec::new();
+        let mut rows = Vec::new();
+        for (i, (choice, alternate)) in specs.iter().enumerate() {
+            let mut r = row(i as u64 + 1);
+            if *alternate { r.collection = b"app.bsky.feed.like".to_vec(); }
+            match choice {
+                0 => r.did = b"did:web:example.com".to_vec(),
+                1 => r.did = vec![255],
+                2 => r.collection = b"APP.BSKY.FEED.post".to_vec(),
+                3 => r.collection = b"app.bsky.feed.Post".to_vec(),
+                4 => r.collection = b"invalid".to_vec(),
+                5 => r.rev = b"bad".to_vec(),
+                6 => r.rkey = b"bad/key".to_vec(),
+                7 if i % width != 0 && i % width != width - 1 && i + 1 < specs.len() => r.seq = 0,
+                8 => r.rev = b"2222222222222".to_vec(),
+                9 => { r.kind = 3; r.payload.clear(); },
+                10 => { r.kind = 4; r.collection.clear(); }, // Invalid marker CBOR.
+                _ => r.payload = vec![255], // Record remains lazy.
+            }
+            rows.push(r);
+            if rows.len() == width { blocks.push(core::mem::take(&mut rows)); }
+        }
+        if !rows.is_empty() { blocks.push(rows); }
+        if corrupt == 0 { blocks.last_mut().unwrap().last_mut().unwrap().kind = 255; }
+        let (bytes, checksum) = seal(&blocks);
+        let filter = if filtered { Filter::new().collection("app.bsky.feed.post").unwrap() } else { Filter::new() };
+        let expected = decode_segment_filtered(&bytes, &filter);
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let t = Scripted::new();
+            for _ in 0..8 { t.push("seg:probe", Resp::ok(200, bytes.clone())); }
+            let archive = ClientArchive::new(client(t));
+            let segment = whole_segment("property.jss", checksum);
+            let cancel = CancelToken::new();
+            let actual = archive.prepare(&segment, after, after + span, &filter, &cancel, max_batch).await;
+            let Ok(mut expected) = expected else {
+                assert!(actual.is_err(), "structural corruption exposed a stream");
+                return;
+            };
+            expected.events.retain(|e| after < e.seq && e.seq <= after + span);
+            let mut stream = actual.unwrap();
+            let mut events = Vec::new();
+            let mut errors = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.unwrap();
+                assert!(chunk.events.len() <= max_batch);
+                assert!(chunk.failure.is_none());
+                assert!(errors.is_empty(), "row errors preceded valid events");
+                events.extend(chunk.events);
+                errors.extend(chunk.dropped);
+            }
+            let project = |event: &shrike::jetstream::Event| {
+                let record = match &event.payload {
+                    EventPayload::Commit(c) => c.record.as_ref().map(|r| r.as_cbor().to_vec()),
+                    _ => None,
+                };
+                (format!("{event:?}"), record)
+            };
+            assert_eq!(events.iter().map(project).collect::<Vec<_>>(), expected.events.iter().map(project).collect::<Vec<_>>());
+            assert_eq!(errors.iter().map(ToString::to_string).collect::<Vec<_>>(), expected.dropped.iter().map(ToString::to_string).collect::<Vec<_>>());
+        });
+    }
+}

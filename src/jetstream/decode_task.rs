@@ -4,6 +4,41 @@
 use super::cancel::CancelToken;
 use super::error::Result;
 
+/// Share a CPU budget across preparing and consuming prefetched segments. A
+/// dropped waiter releases no permit until its running work actually stops.
+pub(crate) async fn bounded<T, F>(
+    budget: std::sync::Arc<tokio::sync::Semaphore>,
+    cancel: CancelToken,
+    work: F,
+) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    use futures::future::{Either, select};
+    let acquire = budget.acquire_owned();
+    let cancelled = cancel.cancelled();
+    futures::pin_mut!(acquire, cancelled);
+    let permit = match select(acquire, cancelled).await {
+        Either::Left((permit, _)) => permit
+            .map_err(|_| super::error::Error::DownloadFailed("archive decode budget closed"))?,
+        Either::Right(_) => return Err(super::error::Error::Canceled),
+    };
+    let worker_cancel = cancel.clone();
+    run(move |stop| {
+        let _permit = permit;
+        if worker_cancel.is_cancelled() || stop.is_cancelled() {
+            return Err(super::error::Error::Canceled);
+        }
+        let result = work();
+        if worker_cancel.is_cancelled() || stop.is_cancelled() {
+            return Err(super::error::Error::Canceled);
+        }
+        result
+    })
+    .await
+}
+
 pub(crate) async fn run<T, F>(work: F) -> Result<T>
 where
     T: Send + 'static,
@@ -65,6 +100,41 @@ mod tests {
             run::<(), _>(|_| Err(super::super::error::Error::CorruptSegment("test"))).await,
             Err(super::super::error::Error::CorruptSegment("test"))
         ));
+    }
+
+    #[tokio::test]
+    async fn dropped_waiter_holds_budget_until_running_work_exits() {
+        let budget = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let (started, start) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let mut task = Box::pin(bounded(budget.clone(), CancelToken::new(), move || {
+            started.send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(3)).unwrap();
+            Ok(())
+        }));
+        tokio::select! {
+            result = start => result.unwrap(),
+            _ = &mut task => panic!("work finished before release"),
+        }
+        drop(task);
+        assert_eq!(budget.available_permits(), 0);
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            bounded(budget.clone(), cancel, || -> Result<()> {
+                panic!("cancelled queued work must not start")
+            })
+            .await,
+            Err(super::super::error::Error::Canceled)
+        ));
+        assert_eq!(budget.available_permits(), 0);
+        release.send(()).unwrap();
+        let permit = tokio::time::timeout(Duration::from_secs(3), budget.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(permit);
+        assert_eq!(budget.available_permits(), 1);
     }
 
     #[tokio::test]

@@ -144,18 +144,7 @@ impl<'a> Decoder<'a> {
                         "unsupported CBOR tag: {tag_num} (only tag 42 is allowed)"
                     )));
                 }
-                // Inner value must be a bytestring
-                let inner = self.decode()?;
-                let bytes = match inner {
-                    Value::Bytes(b) => b,
-                    _ => {
-                        return Err(CborError::InvalidCbor(
-                            "tag 42 must wrap a bytestring".into(),
-                        ));
-                    }
-                };
-                let cid = Cid::from_tag42_bytes(bytes)?;
-                Ok(Value::Cid(cid))
+                Ok(Value::Cid(self.read_tag42_body()?))
             }
             7 => {
                 // Simple values and floats
@@ -207,6 +196,21 @@ impl<'a> Decoder<'a> {
             }
             _ => Err(CborError::InvalidCbor("invalid major type".into())),
         }
+    }
+
+    /// A CID tag wraps a byte string directly, never another container or tag.
+    /// Parsing that fixed shape avoids recursion that bypasses the depth budget.
+    pub(crate) fn read_tag42_body(&mut self) -> Result<Cid, CborError> {
+        let inner = self.read_byte()?;
+        if inner >> 5 != 2 {
+            return Err(CborError::InvalidCbor(
+                "tag 42 must wrap a bytestring".into(),
+            ));
+        }
+        let len = self.read_argument(inner & 0x1f)?;
+        let len = usize::try_from(len)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        Cid::from_tag42_bytes(self.read_slice(len)?)
     }
 
     /// Read typed fields without allocating a top-level generic map. The
@@ -829,6 +833,22 @@ mod tests {
     fn reject_tag42_non_bytestring() {
         // tag 42 (0xd8 0x2a) wrapping an integer instead of a bytestring.
         assert!(crate::cbor::decode(&[0xd8, 0x2a, 0x01]).is_err());
+    }
+
+    #[test]
+    fn reject_nested_cid_tags_without_recursing() {
+        // Found by the record JSON differential fuzzer. Tags must wrap bytes
+        // directly; nesting them must not bypass the container depth limit.
+        let mut bytes = [0xd8, 0x2a].repeat(65_536);
+        bytes.push(0x40);
+        assert!(crate::cbor::decode(&bytes).is_err());
+        let arena = bumpalo::Bump::new();
+        assert!(Decoder::new(&bytes).decode_bump(&arena).is_err());
+        for inner in [0x00, 0x60, 0x80, 0xa0, 0xf6, 0xd8] {
+            let bytes = [0xd8, 0x2a, inner];
+            assert!(crate::cbor::decode(&bytes).is_err());
+            assert!(Decoder::new(&bytes).decode_bump(&arena).is_err());
+        }
     }
 
     #[test]

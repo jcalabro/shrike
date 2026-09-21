@@ -46,7 +46,7 @@
 //! rows inside it, so overlapping plan segments never double-count.
 
 use bytes::Bytes;
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use std::sync::Arc;
 
 use super::archive::{
@@ -218,6 +218,183 @@ pub async fn download_segment<T: HttpTransport>(
         Arc::new(OwnedDecode),
     )
     .await
+}
+
+/// Validate the complete whole-segment structure before exposing any chunks.
+/// Only decompressed columnar storage is retained during preparation; full
+/// owned events are constructed in a bounded pipeline during consumption.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn prepare_segment<'a, T: HttpTransport>(
+    client: &'a ArchiveClient<T>,
+    segment: &'a PlanSegment,
+    after: u64,
+    before: u64,
+    filter: &'a Filter,
+    cancel: &'a CancelToken,
+    max_batch: usize,
+    budget: Arc<tokio::sync::Semaphore>,
+) -> Result<super::engine::ArchiveStream<'a>> {
+    let concurrency = client.limits().concurrency.clamp(1, 32);
+    let filter = Arc::new(filter.clone());
+    let chunks = match &segment.mode {
+        SegmentMode::Whole => {
+            let bytes = Bytes::from(download_whole(client, segment, cancel).await?);
+            let frames = {
+                let reader = SegmentReader::open(&bytes)?;
+                (0..reader.block_count())
+                    .map(|idx| reader.block_frame(idx).map(|f| bytes.slice_ref(f)))
+                    .collect::<Result<Vec<_>>>()?
+            };
+            drop(bytes);
+            let mut decoded = stream::iter(frames)
+                .map(|frame| {
+                    super::decode_task::bounded(budget.clone(), cancel.clone(), move || {
+                        let body = super::compression::decompress_bounded(
+                            &frame,
+                            super::compression::MAX_DECODED_BLOCK_BYTES,
+                            None,
+                        )?;
+                        Ok((frame, super::block::ValidatedBlock::new(body)?))
+                    })
+                })
+                .buffered(concurrency);
+            // Compressed input is already capped. Keep at most one segment-size
+            // budget of decompressed storage, plus the bounded in-flight blocks.
+            // Highly compressed segments retain compressed frames beyond that
+            // budget and decompress them again during consumption. Every frame
+            // is still fully validated before any event becomes visible.
+            let keep_limit = client.limits().max_segment_bytes;
+            let mut kept = 0u64;
+            let mut blocks = Vec::new();
+            while let Some((frame, block)) = decoded.try_next().await? {
+                let size = block.body().len() as u64;
+                if size <= keep_limit.saturating_sub(kept) {
+                    kept += size;
+                    blocks.push(PreparedBlock::Decoded(block));
+                } else {
+                    blocks.push(PreparedBlock::Compressed(frame));
+                }
+            }
+            drop(decoded);
+            if cancel.is_cancelled() {
+                return Err(Error::Canceled);
+            }
+            stream::iter(blocks)
+                .map(move |block| {
+                    let filter = filter.clone();
+                    super::decode_task::bounded(budget.clone(), cancel.clone(), move || {
+                        super::decode::convert_validated_block(block.decode()?, &filter, max_batch)
+                    })
+                })
+                .buffered(concurrency)
+                .map_ok(|chunks| stream::iter(chunks.into_iter().map(Ok)))
+                .try_flatten()
+                .boxed_local()
+        }
+        SegmentMode::Blocks(spans) => {
+            let indices = spans.iter().flat_map(|s| s.first..=s.last);
+            stream::iter(indices)
+                .map(move |idx| {
+                    let filter = filter.clone();
+                    let budget = budget.clone();
+                    async move {
+                        let url = client.xrpc_url(
+                            GET_BLOCK_METHOD,
+                            Some(&format!("segment={}&blockIndex={idx}", segment.name,)),
+                        );
+                        let response = download_fetch(
+                            client,
+                            cancel,
+                            client.limits().max_block_frame_bytes,
+                            None,
+                            || {
+                                HttpRequest::get(url.clone())
+                                    .header("accept", "application/octet-stream")
+                            },
+                        )
+                        .await?;
+                        if response.status != 200 {
+                            return Err(Error::DownloadFailed(
+                                "getBlock returned an unexpected status",
+                            ));
+                        }
+                        super::decode_task::bounded(budget, cancel.clone(), move || {
+                            let body = super::compression::decompress_bounded(
+                                &response.body,
+                                super::compression::MAX_DECODED_BLOCK_BYTES,
+                                None,
+                            )?;
+                            super::decode::convert_validated_block(
+                                super::block::ValidatedBlock::new(body)?,
+                                &filter,
+                                max_batch,
+                            )
+                        })
+                        .await
+                    }
+                })
+                .buffered(concurrency)
+                .map_ok(|chunks| stream::iter(chunks.into_iter().map(Ok)))
+                .try_flatten()
+                .boxed_local()
+        }
+    };
+    // Preserve the existing entry-level row-error order: valid events first,
+    // followed by row errors in block order, then a sparse-entry failure.
+    Ok(stream::unfold(
+        (chunks, Vec::new(), false),
+        move |(mut chunks, mut dropped, done)| async move {
+            if done {
+                return None;
+            }
+            if cancel.is_cancelled() {
+                return Some((Err(Error::Canceled), (chunks, dropped, true)));
+            }
+            match chunks.next().await {
+                Some(Ok(mut decoded)) => {
+                    dropped.append(&mut decoded.dropped);
+                    Some((Ok(window(decoded, after, before)), (chunks, dropped, false)))
+                }
+                Some(Err(Error::Canceled)) => Some((Err(Error::Canceled), (chunks, dropped, true))),
+                failure => {
+                    let failure = failure.and_then(Result::err);
+                    if dropped.is_empty() && failure.is_none() {
+                        return None;
+                    }
+                    Some((
+                        Ok(DownloadedSegment {
+                            events: Vec::new(),
+                            dropped,
+                            failure,
+                        }),
+                        (chunks, Vec::new(), true),
+                    ))
+                }
+            }
+        },
+    )
+    .boxed_local())
+}
+
+enum PreparedBlock {
+    Decoded(super::block::ValidatedBlock),
+    Compressed(Bytes),
+}
+
+impl PreparedBlock {
+    fn decode(self) -> Result<super::block::ValidatedBlock> {
+        match self {
+            Self::Decoded(block) => Ok(block),
+            Self::Compressed(frame) => {
+                let body = super::compression::decompress_bounded(
+                    &frame,
+                    super::compression::MAX_DECODED_BLOCK_BYTES,
+                    None,
+                )?;
+                super::block::ValidatedBlock::new(body)
+            }
+        }
+    }
 }
 
 async fn download_segment_with<T: HttpTransport, D: ArchiveDecode>(

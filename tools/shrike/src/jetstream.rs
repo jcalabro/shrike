@@ -26,6 +26,7 @@ use shrike::jetstream::{
 };
 
 #[derive(clap::Args)]
+#[command(group(clap::ArgGroup::new("mapped").args(["scoped", "decode_records"]).multiple(true)))]
 pub struct Args {
     /// Jetstream host, without a scheme (e.g. jetstream.us-east.bsky.network).
     /// Required: with no default, an accidental invocation cannot silently start
@@ -83,12 +84,17 @@ pub struct Args {
     #[arg(long, requires = "stats")]
     pub typed_likes: bool,
 
+    /// Decode every record to owned atproto JSON and compute its CID in stats.
+    /// Archive decoding runs in parallel; output reports successes and errors.
+    #[arg(long, requires = "stats", conflicts_with = "typed_likes")]
+    pub decode_records: bool,
+
     /// Experimental scoped archive transform; decode before owning records.
     #[arg(long, requires_all = ["snapshot_only", "stats"])]
     pub scoped: bool,
 
-    /// Native CPU workers per whole segment in scoped mode (1..=32).
-    #[arg(long, requires = "scoped")]
+    /// Native CPU workers per whole segment for scoped/record decoding (1..=32).
+    #[arg(long, requires = "mapped")]
     pub decode_workers: Option<std::num::NonZeroUsize>,
 
     /// Concurrent archive segments and block/stripe requests per segment.
@@ -148,11 +154,12 @@ pub async fn run(args: Args) -> Result<()> {
         }
     });
 
-    if args.scoped {
+    if args.scoped || (needs_archive && args.decode_records) {
         let typed = args.typed_likes;
+        let records = args.decode_records;
         let archive = archive
             .map(|a| {
-                let mapped = a.map(move |event| map_scoped(event, typed));
+                let mapped = a.map(move |event| map_scoped(event, typed, records));
                 mapped.with_decode_workers(args.decode_workers.map(|n| n.get()).unwrap_or(1))
             })
             .transpose()?;
@@ -161,15 +168,16 @@ pub async fn run(args: Args) -> Result<()> {
             output: Output::Stats { json: args.json },
             stats: engine.stats(),
             typed_likes: typed,
+            decode_records: records,
             decoded: 0,
             decode_errors: 0,
             started: Instant::now(),
             last_report: Instant::now(),
         };
         engine
-            .run_snapshot(&mut sink)
+            .run_mapped(&mut sink)
             .await
-            .context("scoped snapshot failed")?;
+            .context("mapped replay failed")?;
         let _ = emit_stats(&sink, args.json);
         return Ok(());
     }
@@ -186,6 +194,7 @@ pub async fn run(args: Args) -> Result<()> {
         output,
         stats: stats.clone(),
         typed_likes: args.typed_likes,
+        decode_records: args.decode_records,
         decoded: 0,
         decode_errors: 0,
         started: Instant::now(),
@@ -270,6 +279,7 @@ struct CliSink {
     output: Output,
     stats: StatsHandle,
     typed_likes: bool,
+    decode_records: bool,
     decoded: u64,
     decode_errors: u64,
     started: Instant,
@@ -286,6 +296,19 @@ impl EngineSink for CliSink {
                         let (decoded, errors) = decode_likes(&batch);
                         self.decoded += decoded;
                         self.decode_errors += errors;
+                    }
+                    if self.decode_records {
+                        for event in batch.events() {
+                            if let EventPayload::Commit(commit) = &event.payload
+                                && let Some(record) = &commit.record
+                            {
+                                if decode_record(record.as_cbor()) {
+                                    self.decoded += 1;
+                                } else {
+                                    self.decode_errors += 1;
+                                }
+                            }
+                        }
                     }
                     if self.last_report.elapsed() >= Duration::from_secs(1) {
                         self.last_report = Instant::now();
@@ -315,7 +338,22 @@ impl EngineSink for CliSink {
     }
 }
 
-fn map_scoped(event: shrike::jetstream::EventView<'_>, typed: bool) -> u8 {
+fn map_scoped(event: shrike::jetstream::EventView<'_>, typed: bool, records: bool) -> u8 {
+    if records {
+        return match &event.payload {
+            shrike::jetstream::EventPayloadView::Commit(c) => match c.record {
+                Some(record) => {
+                    if decode_record(record) {
+                        1
+                    } else {
+                        2
+                    }
+                }
+                None => 0,
+            },
+            _ => 0,
+        };
+    }
     if typed
         && let shrike::jetstream::EventPayloadView::Commit(c) = &event.payload
         && c.collection == "app.bsky.feed.like"
@@ -331,6 +369,26 @@ fn map_scoped(event: shrike::jetstream::EventView<'_>, typed: bool) -> u8 {
     } else {
         std::hint::black_box(event);
         0
+    }
+}
+
+fn decode_record(record: &[u8]) -> bool {
+    // Byte strings and CIDs also become JSON objects ($bytes/$link), but only
+    // a CBOR map is a record. The decoder below validates its complete body.
+    if !matches!(record.first(), Some(byte) if byte >> 5 == 5) {
+        return false;
+    }
+    match shrike::jetstream::record_cbor_to_json(record) {
+        Ok(value) if value.is_object() => {
+            // Match generic record consumption: materialize all fields and
+            // compute the record CID, independent of its collection/schema.
+            std::hint::black_box(value);
+            std::hint::black_box(
+                shrike::cbor::Cid::compute(shrike::cbor::Codec::Drisl, record).to_string(),
+            );
+            true
+        }
+        _ => false,
     }
 }
 
@@ -514,6 +572,7 @@ fn emit_stats(sink: &CliSink, json: bool) -> io::Result<()> {
             "elapsed_seconds": elapsed,
             "events_per_second": rate,
             "typed_likes": sink.typed_likes,
+            "decode_records": sink.decode_records,
             "decoded": sink.decoded,
             "decode_errors": sink.decode_errors,
         });
@@ -524,7 +583,7 @@ fn emit_stats(sink: &CliSink, json: bool) -> io::Result<()> {
     } else {
         writeln!(
             out,
-            "pages={} tip={} planned={} gap={} delivered={} processed={} downloads={} elapsed={elapsed:.3}s events_per_second={rate:.0} typed_likes={} decoded={} decode_errors={}",
+            "pages={} tip={} planned={} gap={} delivered={} processed={} downloads={} elapsed={elapsed:.3}s events_per_second={rate:.0} typed_likes={} decode_records={} decoded={} decode_errors={}",
             s.pages,
             s.sealed_tip_seq,
             s.planned_through_seq,
@@ -533,6 +592,7 @@ fn emit_stats(sink: &CliSink, json: bool) -> io::Result<()> {
             s.last_processed_seq,
             downloads,
             sink.typed_likes,
+            sink.decode_records,
             sink.decoded,
             sink.decode_errors,
         )?;
@@ -552,6 +612,80 @@ fn emit_info(info: &Info) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn generic_stats_decode_arbitrary_records_and_reject_invalid_roots() {
+        let cid = shrike::cbor::Cid::compute(shrike::cbor::Codec::Drisl, b"record");
+        let value = serde_json::json!({
+            "$type": "org.example.unknown",
+            "nested": [{"integer": -42, "flag": true, "empty": null}],
+            "bytes": {"$bytes": "AAEC"},
+            "link": {"$link": cid.to_string()},
+        });
+        let cbor = shrike::jetstream::record_json_to_dag_cbor(&value).expect("valid record");
+        assert!(decode_record(&cbor));
+        assert!(decode_record(&[0xa0]));
+        for invalid in [
+            &[][..],
+            &[0xff],
+            &[0xa1],
+            &[0x80],
+            &[0xf6],
+            &[0x41, 0x00],
+            &[0xa0, 0x00],
+            &[0xa1, 0x61, b'x', 0xfb, 0, 0, 0, 0, 0, 0, 0, 0],
+        ] {
+            assert!(!decode_record(invalid), "accepted {invalid:?}");
+        }
+        let link = shrike::jetstream::record_json_to_dag_cbor(
+            &serde_json::json!({"$link": cid.to_string()}),
+        )
+        .expect("valid CID");
+        assert!(!decode_record(&link));
+    }
+
+    #[test]
+    fn generic_stats_flags_allow_live_cutover_and_enforce_requirements() {
+        use clap::Parser;
+        for valid in [
+            vec!["shrike", "jetstream", "--stats", "--decode-records"],
+            vec![
+                "shrike",
+                "jetstream",
+                "--stats",
+                "--decode-records",
+                "--decode-workers=2",
+            ],
+        ] {
+            assert!(
+                crate::Cli::try_parse_from(valid.into_iter().chain(["--host=localhost:8080"]))
+                    .is_ok()
+            );
+        }
+        for invalid in [
+            vec!["shrike", "jetstream", "--decode-records"],
+            vec![
+                "shrike",
+                "jetstream",
+                "--stats",
+                "--decode-records",
+                "--typed-likes",
+            ],
+            vec!["shrike", "jetstream", "--stats", "--decode-workers=2"],
+            vec![
+                "shrike",
+                "jetstream",
+                "--stats",
+                "--decode-records",
+                "--decode-workers=0",
+            ],
+        ] {
+            assert!(
+                crate::Cli::try_parse_from(invalid.into_iter().chain(["--host=localhost:8080"]))
+                    .is_err()
+            );
+        }
+    }
+
     fn args() -> Args {
         Args {
             host: "jetstream.us-east.bsky.network".into(),
@@ -567,6 +701,7 @@ mod tests {
             json: false,
             stats: false,
             typed_likes: false,
+            decode_records: false,
             scoped: false,
             decode_workers: None,
             download_concurrency: None,

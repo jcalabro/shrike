@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 use bytes::Bytes;
 
 use super::error::{Error, Result};
-use crate::cbor::{Cid, Codec, Decoder, Value};
+use crate::cbor::{Cid, Codec, Value};
 
 /// A record's canonical DAG-CBOR body plus its (cached) CID.
 ///
@@ -91,6 +91,16 @@ impl Record {
         &self.cbor
     }
 
+    /// Copy this record into independent storage, preserving its cached CID.
+    ///
+    /// Archive records can share a decompressed block with their siblings.
+    /// Retaining a record is always safe; detach it when retaining a small
+    /// payload should not keep that larger block alive. Existing clones keep
+    /// their original storage.
+    pub fn detach(&mut self) {
+        self.cbor = Bytes::copy_from_slice(&self.cbor);
+    }
+
     /// The record's CID, computed from its canonical bytes on first call and
     /// cached, or the wire-supplied CID when the commit carried one.
     pub fn cid(&self) -> Cid {
@@ -99,14 +109,17 @@ impl Record {
             .get_or_init(|| Cid::compute(Codec::Drisl, &self.cbor))
     }
 
+    pub(crate) fn cached_cid(&self) -> Option<Cid> {
+        self.cid.get().copied()
+    }
+
     /// Decode the record into a borrowed generic DAG-CBOR [`Value`].
     ///
     /// Text and byte strings borrow from the record's buffer (zero-copy). This
     /// is the untyped escape hatch; prefer a generated `Type::from_cbor` for a
     /// known schema.
     pub fn decode_value(&self) -> Result<Value<'_>> {
-        Decoder::new(&self.cbor)
-            .decode()
+        crate::cbor::decode(&self.cbor)
             .map_err(|_| Error::InvalidRecord("record is not valid DAG-CBOR"))
     }
 
@@ -116,8 +129,16 @@ impl Record {
     /// data model) and CID links become `{"$link":"<cid>"}`, inverting
     /// [`super::json_cbor::record_json_to_dag_cbor`].
     pub fn to_json(&self) -> Result<serde_json::Value> {
-        value_to_json(&self.decode_value()?)
+        record_cbor_to_json(&self.cbor)
     }
+}
+
+/// Decode borrowed DAG-CBOR into owned atproto JSON without first copying its
+/// encoded bytes. This is also useful inside a scoped archive transform.
+pub fn record_cbor_to_json(cbor: &[u8]) -> Result<serde_json::Value> {
+    let value = crate::cbor::decode(cbor)
+        .map_err(|_| Error::InvalidRecord("record is not valid DAG-CBOR"))?;
+    value_to_json(&value)
 }
 
 impl Clone for Record {
@@ -203,6 +224,18 @@ mod tests {
     }
 
     #[test]
+    fn record_decoding_rejects_trailing_bytes() {
+        for suffix in [&[0x00][..], &[0xa0], &[0xff], b"trailing"] {
+            let mut bytes = hello_five();
+            bytes.extend_from_slice(suffix);
+            let record = Record::from_canonical_cbor(bytes.clone());
+            assert!(record.decode_value().is_err());
+            assert!(record.to_json().is_err());
+            assert!(record_cbor_to_json(&bytes).is_err());
+        }
+    }
+
+    #[test]
     fn computes_and_caches_cid() {
         let bytes = hello_five();
         let record = Record::from_canonical_cbor(bytes.clone());
@@ -230,6 +263,33 @@ mod tests {
         assert_eq!(clone.as_cbor(), record.as_cbor());
         // The clone carries the cached CID.
         assert_eq!(clone.cid.get(), Some(&cid));
+    }
+
+    #[test]
+    fn detached_record_releases_shared_storage_and_preserves_cid() {
+        let mut block = vec![0; 1024];
+        let payload = hello_five();
+        block[100..100 + payload.len()].copy_from_slice(&payload);
+        let block = Bytes::from(block);
+        let mut record = Record::with_cid(
+            block.slice(100..100 + payload.len()),
+            Cid::compute(Codec::Drisl, b"wire CID"),
+        );
+        let clone = record.clone();
+        let cid = record.cid();
+        let shared_ptr = record.as_cbor().as_ptr();
+        record.detach();
+        assert_ne!(record.as_cbor().as_ptr(), shared_ptr);
+        assert_eq!(clone.as_cbor().as_ptr(), shared_ptr);
+        assert_eq!(record.cid.get(), Some(&cid));
+        drop(block);
+        drop(clone);
+        assert_eq!(record.as_cbor(), payload);
+        assert_eq!(
+            record.decode_value().unwrap(),
+            Value::Map(vec![("hello", Value::Unsigned(5))])
+        );
+        assert_eq!(record.cid(), cid);
     }
 
     #[test]

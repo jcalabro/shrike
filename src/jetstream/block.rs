@@ -208,134 +208,229 @@ pub(crate) struct Columns<'a> {
 /// callers must discard all visited rows if this returns Err.
 pub(crate) fn visit_block<'a>(
     body: &'a [u8],
-    mut visit: impl FnMut(usize, Columns<'a>, &'a [u8]),
+    visit: impl FnMut(usize, Columns<'a>, &'a [u8]),
 ) -> Result<()> {
-    let n = read_u32(body, 0)? as usize;
-    if n == 0 {
-        // An empty block is exactly four zero bytes; anything more is corruption.
-        if body.len() != 4 {
-            return Err(Error::CorruptSegment("empty block has trailing bytes"));
+    BlockLayout::parse(body)?.visit(body, visit)
+}
+
+/// Structurally checked, immutable block storage. Separating the layout pass
+/// from conversion lets a whole segment be checked before any event is emitted.
+pub(crate) struct ValidatedBlock {
+    body: bytes::Bytes,
+    layout: BlockLayout,
+}
+
+impl ValidatedBlock {
+    pub(crate) fn new(body: Vec<u8>) -> Result<Self> {
+        let layout = BlockLayout::parse(&body)?;
+        Ok(Self {
+            body: body.into(),
+            layout,
+        })
+    }
+
+    pub(crate) fn body(&self) -> &bytes::Bytes {
+        &self.body
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.layout.n
+    }
+
+    pub(crate) fn visit<'a>(
+        &'a self,
+        visit: impl FnMut(usize, Columns<'a>, &'a [u8]),
+    ) -> Result<()> {
+        self.layout.visit(&self.body, visit)
+    }
+}
+
+struct BlockLayout {
+    n: usize,
+    fixed: usize,
+    coll_start: usize,
+    did_start: usize,
+    rkey_start: usize,
+    rev_start: usize,
+    payload_start: usize,
+}
+
+impl BlockLayout {
+    fn parse(body: &[u8]) -> Result<Self> {
+        let n = read_u32(body, 0)? as usize;
+        if n == 0 {
+            // An empty block is exactly four zero bytes; anything more is corruption.
+            if body.len() != 4 {
+                return Err(Error::CorruptSegment("empty block has trailing bytes"));
+            }
+            return Ok(Self {
+                n,
+                fixed: 4,
+                coll_start: 4,
+                did_start: 4,
+                rkey_start: 4,
+                rev_start: 4,
+                payload_start: 4,
+            });
         }
-        return Ok(());
+        if n > MAX_BLOCK_EVENTS {
+            return Err(Error::LimitExceeded {
+                what: "block events",
+                value: n as u64,
+                limit: MAX_BLOCK_EVENTS as u64,
+            });
+        }
+
+        // Fixed region: the 4-byte count plus n * FIXED_PER_EVENT.
+        let fixed = n
+            .checked_mul(FIXED_PER_EVENT)
+            .and_then(|v| v.checked_add(4))
+            .ok_or(Error::CorruptSegment("fixed region size overflow"))?;
+        if body.len() < fixed {
+            return Err(Error::Truncated("block fixed columns"));
+        }
+
+        // Column base offsets within the fixed region.
+        let seq_off = 4;
+        let wit_off = seq_off + 8 * n;
+        let idx_off = wit_off + 8 * n;
+        let kind_off = idx_off + 8 * n;
+        let coll_len_off = kind_off + n;
+        let did_len_off = coll_len_off + n;
+        let rkey_len_off = did_len_off + 2 * n;
+        let rev_len_off = rkey_len_off + n;
+        let plen_off = rev_len_off + n;
+
+        // Read the length columns and accumulate blob-region sizes in u64 so the
+        // sums cannot overflow on 32-bit wasm (did_len alone can reach 65535).
+        let (mut sum_coll, mut sum_did, mut sum_rkey, mut sum_rev, mut sum_payload) =
+            (0u64, 0u64, 0u64, 0u64, 0u64);
+        for i in 0..n {
+            SegmentKind::from_u8(body[kind_off + i])?;
+            let cl = body[coll_len_off + i];
+            let dl = read_u16(body, did_len_off + 2 * i)?;
+            let kl = body[rkey_len_off + i];
+            let vl = body[rev_len_off + i];
+            let pl = read_u32(body, plen_off + 4 * i)?;
+            sum_coll += u64::from(cl);
+            sum_did += u64::from(dl);
+            sum_rkey += u64::from(kl);
+            sum_rev += u64::from(vl);
+            sum_payload += u64::from(pl);
+        }
+
+        // The blob regions must account for the rest of the buffer exactly.
+        let total_blob = sum_coll
+            .checked_add(sum_did)
+            .and_then(|v| v.checked_add(sum_rkey))
+            .and_then(|v| v.checked_add(sum_rev))
+            .and_then(|v| v.checked_add(sum_payload))
+            .ok_or(Error::CorruptSegment("blob region size overflow"))?;
+        let expected = (fixed as u64)
+            .checked_add(total_blob)
+            .ok_or(Error::CorruptSegment("block size overflow"))?;
+        if expected != body.len() as u64 {
+            return Err(if expected > body.len() as u64 {
+                Error::Truncated("block blob regions")
+            } else {
+                Error::CorruptSegment("block has trailing bytes")
+            });
+        }
+
+        // After the exact-fit check, all region offsets are in-bounds usizes.
+        let coll_start = fixed;
+        let did_start = coll_start + sum_coll as usize;
+        let rkey_start = did_start + sum_did as usize;
+        let rev_start = rkey_start + sum_rkey as usize;
+        let payload_start = rev_start + sum_rev as usize;
+
+        Ok(Self {
+            n,
+            fixed,
+            coll_start,
+            did_start,
+            rkey_start,
+            rev_start,
+            payload_start,
+        })
     }
-    if n > MAX_BLOCK_EVENTS {
-        return Err(Error::LimitExceeded {
-            what: "block events",
-            value: n as u64,
-            limit: MAX_BLOCK_EVENTS as u64,
-        });
-    }
 
-    // Fixed region: the 4-byte count plus n * FIXED_PER_EVENT.
-    let fixed = n
-        .checked_mul(FIXED_PER_EVENT)
-        .and_then(|v| v.checked_add(4))
-        .ok_or(Error::CorruptSegment("fixed region size overflow"))?;
-    if body.len() < fixed {
-        return Err(Error::Truncated("block fixed columns"));
-    }
+    // Only called with the immutable buffer validated by `parse`.
+    fn visit<'a>(
+        &self,
+        body: &'a [u8],
+        mut visit: impl FnMut(usize, Columns<'a>, &'a [u8]),
+    ) -> Result<()> {
+        let Self {
+            n,
+            fixed,
+            coll_start,
+            did_start,
+            rkey_start,
+            rev_start,
+            payload_start,
+        } = *self;
+        if n == 0 {
+            return Ok(());
+        }
+        let seq_off = 4;
+        let wit_off = seq_off + 8 * n;
+        let idx_off = wit_off + 8 * n;
+        let kind_off = idx_off + 8 * n;
+        let coll_len_off = kind_off + n;
+        let did_len_off = coll_len_off + n;
+        let rkey_len_off = did_len_off + 2 * n;
+        let rev_len_off = rkey_len_off + n;
+        let plen_off = rev_len_off + n;
 
-    // Column base offsets within the fixed region.
-    let seq_off = 4;
-    let wit_off = seq_off + 8 * n;
-    let idx_off = wit_off + 8 * n;
-    let kind_off = idx_off + 8 * n;
-    let coll_len_off = kind_off + n;
-    let did_len_off = coll_len_off + n;
-    let rkey_len_off = did_len_off + 2 * n;
-    let rev_len_off = rkey_len_off + n;
-    let plen_off = rev_len_off + n;
-
-    // Read the length columns and accumulate blob-region sizes in u64 so the
-    // sums cannot overflow on 32-bit wasm (did_len alone can reach 65535).
-    let (mut sum_coll, mut sum_did, mut sum_rkey, mut sum_rev, mut sum_payload) =
-        (0u64, 0u64, 0u64, 0u64, 0u64);
-    for i in 0..n {
-        let cl = body[coll_len_off + i];
-        let dl = read_u16(body, did_len_off + 2 * i)?;
-        let kl = body[rkey_len_off + i];
-        let vl = body[rev_len_off + i];
-        let pl = read_u32(body, plen_off + 4 * i)?;
-        sum_coll += u64::from(cl);
-        sum_did += u64::from(dl);
-        sum_rkey += u64::from(kl);
-        sum_rev += u64::from(vl);
-        sum_payload += u64::from(pl);
-    }
-
-    // The blob regions must account for the rest of the buffer exactly.
-    let total_blob = sum_coll
-        .checked_add(sum_did)
-        .and_then(|v| v.checked_add(sum_rkey))
-        .and_then(|v| v.checked_add(sum_rev))
-        .and_then(|v| v.checked_add(sum_payload))
-        .ok_or(Error::CorruptSegment("blob region size overflow"))?;
-    let expected = (fixed as u64)
-        .checked_add(total_blob)
-        .ok_or(Error::CorruptSegment("block size overflow"))?;
-    if expected != body.len() as u64 {
-        return Err(if expected > body.len() as u64 {
-            Error::Truncated("block blob regions")
-        } else {
-            Error::CorruptSegment("block has trailing bytes")
-        });
-    }
-
-    // After the exact-fit check, all region offsets are in-bounds usizes.
-    let coll_start = fixed;
-    let did_start = coll_start + sum_coll as usize;
-    let rkey_start = did_start + sum_did as usize;
-    let rev_start = rkey_start + sum_rkey as usize;
-    let payload_start = rev_start + sum_rev as usize;
-
-    let checked_text = simdutf8::basic::from_utf8(&body[coll_start..payload_start]).ok();
-    let column = |start: usize, end: usize| match checked_text
-        .and_then(|text| text.get(start - coll_start..end - coll_start))
-    {
-        Some(text) => TextColumn::Checked(text),
-        None => TextColumn::Raw(&body[start..end]),
-    };
-    let (mut c, mut d, mut k, mut v, mut p) =
-        (coll_start, did_start, rkey_start, rev_start, payload_start);
-    // The fixed-region check above proves these slices contain exactly n
-    // complete values. Iterating fixed-width arrays avoids repeating checked
-    // offset arithmetic and fallible integer reads for every valid row.
-    let seqs = body[seq_off..wit_off].as_chunks::<8>().0;
-    let witnessed = body[wit_off..idx_off].as_chunks::<8>().0;
-    let indexed = body[idx_off..kind_off].as_chunks::<8>().0;
-    let did_lens = body[did_len_off..rkey_len_off].as_chunks::<2>().0;
-    let payload_lens = body[plen_off..fixed].as_chunks::<4>().0;
-    for (i, ((((seq, wit), idx), dl), pl)) in seqs
-        .iter()
-        .zip(witnessed)
-        .zip(indexed)
-        .zip(did_lens)
-        .zip(payload_lens)
-        .enumerate()
-    {
-        let cl = body[coll_len_off + i] as usize;
-        let dl = u16::from_le_bytes(*dl) as usize;
-        let kl = body[rkey_len_off + i] as usize;
-        let vl = body[rev_len_off + i] as usize;
-        let pl = u32::from_le_bytes(*pl) as usize;
-        let columns = Columns {
-            seq: u64::from_le_bytes(*seq),
-            witnessed_at: i64::from_le_bytes(*wit),
-            indexed_at: i64::from_le_bytes(*idx),
-            kind: SegmentKind::from_u8(body[kind_off + i])?,
-            collection: column(c, c + cl),
-            did: column(d, d + dl),
-            rkey: column(k, k + kl),
-            rev: column(v, v + vl),
+        let checked_text = simdutf8::basic::from_utf8(&body[coll_start..payload_start]).ok();
+        let column = |start: usize, end: usize| match checked_text
+            .and_then(|text| text.get(start - coll_start..end - coll_start))
+        {
+            Some(text) => TextColumn::Checked(text),
+            None => TextColumn::Raw(&body[start..end]),
         };
-        visit(n, columns, &body[p..p + pl]);
-        c += cl;
-        d += dl;
-        k += kl;
-        v += vl;
-        p += pl;
+        let (mut c, mut d, mut k, mut v, mut p) =
+            (coll_start, did_start, rkey_start, rev_start, payload_start);
+        // The fixed-region check above proves these slices contain exactly n
+        // complete values. Iterating fixed-width arrays avoids repeating checked
+        // offset arithmetic and fallible integer reads for every valid row.
+        let seqs = body[seq_off..wit_off].as_chunks::<8>().0;
+        let witnessed = body[wit_off..idx_off].as_chunks::<8>().0;
+        let indexed = body[idx_off..kind_off].as_chunks::<8>().0;
+        let did_lens = body[did_len_off..rkey_len_off].as_chunks::<2>().0;
+        let payload_lens = body[plen_off..fixed].as_chunks::<4>().0;
+        for (i, ((((seq, wit), idx), dl), pl)) in seqs
+            .iter()
+            .zip(witnessed)
+            .zip(indexed)
+            .zip(did_lens)
+            .zip(payload_lens)
+            .enumerate()
+        {
+            let cl = body[coll_len_off + i] as usize;
+            let dl = u16::from_le_bytes(*dl) as usize;
+            let kl = body[rkey_len_off + i] as usize;
+            let vl = body[rev_len_off + i] as usize;
+            let pl = u32::from_le_bytes(*pl) as usize;
+            let columns = Columns {
+                seq: u64::from_le_bytes(*seq),
+                witnessed_at: i64::from_le_bytes(*wit),
+                indexed_at: i64::from_le_bytes(*idx),
+                kind: SegmentKind::from_u8(body[kind_off + i])?,
+                collection: column(c, c + cl),
+                did: column(d, d + dl),
+                rkey: column(k, k + kl),
+                rev: column(v, v + vl),
+            };
+            visit(n, columns, &body[p..p + pl]);
+            c += cl;
+            d += dl;
+            k += kl;
+            v += vl;
+            p += pl;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn read_u16(b: &[u8], off: usize) -> Result<u16> {
