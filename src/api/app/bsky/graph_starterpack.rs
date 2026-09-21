@@ -136,6 +136,85 @@ impl GraphStarterpackFeedItem {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct GraphStarterpackFeedItemCborView<'a> {
+    pub uri: crate::syntax::AtUriRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> GraphStarterpackFeedItemCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<GraphStarterpackFeedItem, crate::cbor::CborError> {
+        Ok(GraphStarterpackFeedItem {
+            uri: self.uri.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_uri: Option<crate::syntax::AtUriRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x75\x72\x69", |decoder| {
+            field_uri = Some(
+                crate::syntax::AtUriRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"uri" => {
+                    field_uri = Some(
+                        crate::syntax::AtUriRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            uri: field_uri.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'uri'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// NSID for the GraphStarterpack record.
 pub const NSID_GRAPH_STARTERPACK: &str = "app.bsky.graph.starterpack";
 
@@ -501,6 +580,197 @@ impl GraphStarterpack {
             description_facets: field_description_facets,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct GraphStarterpackCborView<'a> {
+    pub list: crate::syntax::AtUriRef<'a>,
+    pub name: &'a str,
+    pub r#type: &'a str,
+    pub feeds: Vec<GraphStarterpackFeedItem>,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub description: Option<&'a str>,
+    pub description_facets: Vec<crate::api::app::bsky::RichtextFacet>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> GraphStarterpackCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<GraphStarterpack, crate::cbor::CborError> {
+        Ok(GraphStarterpack {
+            list: self.list.to_owned(),
+            name: self.name.to_owned(),
+            r#type: self.r#type.to_owned(),
+            feeds: self.feeds.clone(),
+            created_at: self.created_at.to_owned(),
+            description: self.description.as_ref().map(|value| (*value).to_owned()),
+            description_facets: self.description_facets.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_list: Option<crate::syntax::AtUriRef<'a>> = None;
+        let mut field_name: Option<&'a str> = None;
+        let mut field_type: Option<&'a str> = None;
+        let mut field_feeds: Vec<GraphStarterpackFeedItem> = Vec::new();
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_description: Option<&'a str> = None;
+        let mut field_description_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6c\x69\x73\x74", |decoder| {
+            field_list = Some(
+                crate::syntax::AtUriRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x24\x74\x79\x70\x65", |decoder| {
+            field_type = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x66\x65\x65\x64\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_feeds.push(GraphStarterpackFeedItem::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x65\x73\x63\x72\x69\x70\x74\x69\x6f\x6e",
+            |decoder| {
+                field_description = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x71\x64\x65\x73\x63\x72\x69\x70\x74\x69\x6f\x6e\x46\x61\x63\x65\x74\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_description_facets
+                            .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"list" => {
+                    field_list = Some(
+                        crate::syntax::AtUriRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"$type" => {
+                    field_type = Some(decoder.text()?);
+                }
+                b"feeds" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_feeds.push(GraphStarterpackFeedItem::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"description" => {
+                    field_description = Some(decoder.text()?);
+                }
+                b"descriptionFacets" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_description_facets
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            list: field_list.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
+            })?,
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            r#type: field_type.unwrap_or("app.bsky.graph.starterpack"),
+            feeds: field_feeds,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            description: field_description,
+            description_facets: field_description_facets,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

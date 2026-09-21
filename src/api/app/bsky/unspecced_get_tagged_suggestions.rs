@@ -215,3 +215,107 @@ impl UnspeccedGetTaggedSuggestionsSuggestion {
         })
     }
 }
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct UnspeccedGetTaggedSuggestionsSuggestionCborView<'a> {
+    pub tag: &'a str,
+    pub subject: &'a str,
+    pub subject_type: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> UnspeccedGetTaggedSuggestionsSuggestionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<UnspeccedGetTaggedSuggestionsSuggestion, crate::cbor::CborError> {
+        Ok(UnspeccedGetTaggedSuggestionsSuggestion {
+            tag: self.tag.to_owned(),
+            subject: self.subject.to_owned(),
+            subject_type: self.subject_type.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_tag: Option<&'a str> = None;
+        let mut field_subject: Option<&'a str> = None;
+        let mut field_subject_type: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x74\x61\x67", |decoder| {
+            field_tag = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x75\x62\x6a\x65\x63\x74", |decoder| {
+            field_subject = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x73\x75\x62\x6a\x65\x63\x74\x54\x79\x70\x65",
+            |decoder| {
+                field_subject_type = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"tag" => {
+                    field_tag = Some(decoder.text()?);
+                }
+                b"subject" => {
+                    field_subject = Some(decoder.text()?);
+                }
+                b"subjectType" => {
+                    field_subject_type = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            tag: field_tag.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'tag'".into())
+            })?,
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            subject_type: field_subject_type.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subjectType'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}

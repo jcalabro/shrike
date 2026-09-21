@@ -90,6 +90,10 @@ fn main() {
     // Archive seeds reach column validation and decompression past the headers.
     let frame = include_bytes!("../../../testdata/jetstream/golden/golden_block.bin");
     write_seed("jetstream_decode_block_frame", "golden", frame);
+    let segment = include_bytes!("../../../testdata/jetstream/golden/golden_seal.bin");
+    for target in ["jetstream_decode_segment", "jetstream_read_header"] {
+        write_seed(target, "golden", segment);
+    }
     if let Ok(body) = shrike::jetstream::decompress_bounded(frame, 1 << 20, None) {
         write_seed("jetstream_decode_block_body", "golden", &body);
     }

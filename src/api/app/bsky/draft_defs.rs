@@ -748,6 +748,221 @@ impl DraftDefsDraft {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftCborView<'a> {
+    pub langs: Vec<crate::syntax::Language>,
+    pub posts: Vec<DraftDefsDraftPost>,
+    pub device_id: Option<&'a str>,
+    pub device_name: Option<&'a str>,
+    pub threadgate_allow: Vec<DraftDefsDraftThreadgateAllowUnion>,
+    pub postgate_embedding_rules: Vec<DraftDefsDraftPostgateEmbeddingRulesUnion>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraft, crate::cbor::CborError> {
+        Ok(DraftDefsDraft {
+            langs: self.langs.clone(),
+            posts: self.posts.clone(),
+            device_id: self.device_id.as_ref().map(|value| (*value).to_owned()),
+            device_name: self.device_name.as_ref().map(|value| (*value).to_owned()),
+            threadgate_allow: self.threadgate_allow.clone(),
+            postgate_embedding_rules: self.postgate_embedding_rules.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_langs: Vec<crate::syntax::Language> = Vec::new();
+        let mut field_posts: Vec<DraftDefsDraftPost> = Vec::new();
+        let mut field_device_id: Option<&'a str> = None;
+        let mut field_device_name: Option<&'a str> = None;
+        let mut field_threadgate_allow: Vec<DraftDefsDraftThreadgateAllowUnion> = Vec::new();
+        let mut field_postgate_embedding_rules: Vec<DraftDefsDraftPostgateEmbeddingRulesUnion> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x6c\x61\x6e\x67\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    if let crate::cbor::Value::Text(s) = item {
+                        field_langs.push(
+                            crate::syntax::Language::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected text in array".into(),
+                        ));
+                    }
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x70\x6f\x73\x74\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_posts.push(DraftDefsDraftPost::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x64\x65\x76\x69\x63\x65\x49\x64", |decoder| {
+            field_device_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x64\x65\x76\x69\x63\x65\x4e\x61\x6d\x65", |decoder| {
+            field_device_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x74\x68\x72\x65\x61\x64\x67\x61\x74\x65\x41\x6c\x6c\x6f\x77",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        let raw = crate::cbor::encode_value(&item)?;
+                        let mut dec = crate::cbor::Decoder::new(&raw);
+                        field_threadgate_allow
+                            .push(DraftDefsDraftThreadgateAllowUnion::decode_cbor(&mut dec)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(b"\x76\x70\x6f\x73\x74\x67\x61\x74\x65\x45\x6d\x62\x65\x64\x64\x69\x6e\x67\x52\x75\x6c\x65\x73", |decoder| {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_postgate_embedding_rules.push(DraftDefsDraftPostgateEmbeddingRulesUnion::decode_cbor(&mut dec)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"langs" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_langs.push(crate::syntax::Language::try_from(s).map_err(
+                                    |e| crate::cbor::CborError::InvalidCbor(e.to_string()),
+                                )?);
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"posts" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_posts.push(DraftDefsDraftPost::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"deviceId" => {
+                    field_device_id = Some(decoder.text()?);
+                }
+                b"deviceName" => {
+                    field_device_name = Some(decoder.text()?);
+                }
+                b"threadgateAllow" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_threadgate_allow
+                                .push(DraftDefsDraftThreadgateAllowUnion::decode_cbor(&mut dec)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"postgateEmbeddingRules" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_postgate_embedding_rules.push(
+                                DraftDefsDraftPostgateEmbeddingRulesUnion::decode_cbor(&mut dec)?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            langs: field_langs,
+            posts: field_posts,
+            device_id: field_device_id,
+            device_name: field_device_name,
+            threadgate_allow: field_threadgate_allow,
+            postgate_embedding_rules: field_postgate_embedding_rules,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftEmbedCaption object from app.bsky.draft.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -915,6 +1130,108 @@ impl DraftDefsDraftEmbedCaption {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedCaptionCborView<'a> {
+    pub lang: crate::syntax::Language,
+    pub content: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedCaptionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedCaption, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedCaption {
+            lang: self.lang.clone(),
+            content: self.content.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_lang: Option<crate::syntax::Language> = None;
+        let mut field_content: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6c\x61\x6e\x67", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_lang = Some(
+                    crate::syntax::Language::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x74\x65\x6e\x74", |decoder| {
+            field_content = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"lang" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_lang = Some(
+                            crate::syntax::Language::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"content" => {
+                    field_content = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            lang: field_lang.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lang'".into())
+            })?,
+            content: field_content.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'content'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftEmbedExternal object from app.bsky.draft.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1041,6 +1358,79 @@ impl DraftDefsDraftEmbedExternal {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedExternalCborView<'a> {
+    pub uri: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedExternalCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedExternal, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedExternal {
+            uri: self.uri.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_uri: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x75\x72\x69", |decoder| {
+            field_uri = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"uri" => {
+                    field_uri = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            uri: field_uri.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'uri'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1191,6 +1581,102 @@ impl DraftDefsDraftEmbedGallery {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedGalleryCborView<'a> {
+    pub items: DraftDefsDraftEmbedGalleryItems,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedGalleryCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedGallery, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedGallery {
+            items: self.items.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_items: Option<DraftDefsDraftEmbedGalleryItems> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x69\x74\x65\x6d\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                let mut decoded: DraftDefsDraftEmbedGalleryItems = Vec::new();
+                for item in items {
+                    let raw = crate::cbor::encode_value(&item)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    decoded.push(DraftDefsDraftEmbedGalleryItemsItem::decode_cbor(&mut dec)?);
+                }
+                field_items = Some(decoded);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"items" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        let mut decoded: DraftDefsDraftEmbedGalleryItems = Vec::new();
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            decoded
+                                .push(DraftDefsDraftEmbedGalleryItemsItem::decode_cbor(&mut dec)?);
+                        }
+                        field_items = Some(decoded);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            items: field_items.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'items'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1489,6 +1975,91 @@ impl DraftDefsDraftEmbedImage {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedImageCborView<'a> {
+    pub alt: Option<&'a str>,
+    pub local_ref: DraftDefsDraftEmbedLocalRefCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedImageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedImage, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedImage {
+            alt: self.alt.as_ref().map(|value| (*value).to_owned()),
+            local_ref: self.local_ref.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_local_ref: Option<DraftDefsDraftEmbedLocalRefCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6c\x6f\x63\x61\x6c\x52\x65\x66", |decoder| {
+            field_local_ref = Some(DraftDefsDraftEmbedLocalRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"localRef" => {
+                    field_local_ref =
+                        Some(DraftDefsDraftEmbedLocalRefCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt,
+            local_ref: field_local_ref.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'localRef'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftEmbedLocalRef object from app.bsky.draft.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1620,6 +2191,79 @@ impl DraftDefsDraftEmbedLocalRef {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedLocalRefCborView<'a> {
+    pub path: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedLocalRefCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedLocalRef, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedLocalRef {
+            path: self.path.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_path: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x70\x61\x74\x68", |decoder| {
+            field_path = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"path" => {
+                    field_path = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            path: field_path.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'path'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftEmbedRecord object from app.bsky.draft.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1741,6 +2385,82 @@ impl DraftDefsDraftEmbedRecord {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedRecordCborView<'a> {
+    pub record: crate::api::com::atproto::RepoStrongRefCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedRecordCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedRecord, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedRecord {
+            record: self.record.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_record: Option<crate::api::com::atproto::RepoStrongRefCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x72\x65\x63\x6f\x72\x64", |decoder| {
+            field_record =
+                Some(crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"record" => {
+                    field_record = Some(
+                        crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            record: field_record.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'record'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1944,6 +2664,116 @@ impl DraftDefsDraftEmbedVideo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftEmbedVideoCborView<'a> {
+    pub alt: Option<&'a str>,
+    pub captions: Vec<DraftDefsDraftEmbedCaption>,
+    pub local_ref: DraftDefsDraftEmbedLocalRefCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftEmbedVideoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftEmbedVideo, crate::cbor::CborError> {
+        Ok(DraftDefsDraftEmbedVideo {
+            alt: self.alt.as_ref().map(|value| (*value).to_owned()),
+            captions: self.captions.clone(),
+            local_ref: self.local_ref.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_captions: Vec<DraftDefsDraftEmbedCaption> = Vec::new();
+        let mut field_local_ref: Option<DraftDefsDraftEmbedLocalRefCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x63\x61\x70\x74\x69\x6f\x6e\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_captions.push(DraftDefsDraftEmbedCaption::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6c\x6f\x63\x61\x6c\x52\x65\x66", |decoder| {
+            field_local_ref = Some(DraftDefsDraftEmbedLocalRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"captions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_captions.push(DraftDefsDraftEmbedCaption::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"localRef" => {
+                    field_local_ref =
+                        Some(DraftDefsDraftEmbedLocalRefCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt,
+            captions: field_captions,
+            local_ref: field_local_ref.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'localRef'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2462,6 +3292,233 @@ impl DraftDefsDraftPost {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftPostCborView<'a> {
+    pub text: &'a str,
+    pub labels: Option<DraftDefsDraftPostLabelsUnion>,
+    pub embed_images: Vec<DraftDefsDraftEmbedImage>,
+    pub embed_videos: Vec<DraftDefsDraftEmbedVideo>,
+    pub embed_gallery: Option<DraftDefsDraftEmbedGalleryCborView<'a>>,
+    pub embed_records: Vec<DraftDefsDraftEmbedRecord>,
+    pub embed_externals: Vec<DraftDefsDraftEmbedExternal>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftPostCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftPost, crate::cbor::CborError> {
+        Ok(DraftDefsDraftPost {
+            text: self.text.to_owned(),
+            labels: self.labels.clone(),
+            embed_images: self.embed_images.clone(),
+            embed_videos: self.embed_videos.clone(),
+            embed_gallery: self
+                .embed_gallery
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            embed_records: self.embed_records.clone(),
+            embed_externals: self.embed_externals.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_text: Option<&'a str> = None;
+        let mut field_labels: Option<DraftDefsDraftPostLabelsUnion> = None;
+        let mut field_embed_images: Vec<DraftDefsDraftEmbedImage> = Vec::new();
+        let mut field_embed_videos: Vec<DraftDefsDraftEmbedVideo> = Vec::new();
+        let mut field_embed_gallery: Option<DraftDefsDraftEmbedGalleryCborView<'a>> = None;
+        let mut field_embed_records: Vec<DraftDefsDraftEmbedRecord> = Vec::new();
+        let mut field_embed_externals: Vec<DraftDefsDraftEmbedExternal> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x74\x65\x78\x74", |decoder| {
+            field_text = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6c\x61\x62\x65\x6c\x73", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_labels = Some(DraftDefsDraftPostLabelsUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x65\x6d\x62\x65\x64\x49\x6d\x61\x67\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_embed_images.push(DraftDefsDraftEmbedImage::from_cbor_value(item)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6b\x65\x6d\x62\x65\x64\x56\x69\x64\x65\x6f\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_embed_videos.push(DraftDefsDraftEmbedVideo::from_cbor_value(item)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x65\x6d\x62\x65\x64\x47\x61\x6c\x6c\x65\x72\x79",
+            |decoder| {
+                field_embed_gallery =
+                    Some(DraftDefsDraftEmbedGalleryCborView::decode_cbor(decoder)?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x65\x6d\x62\x65\x64\x52\x65\x63\x6f\x72\x64\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_embed_records.push(DraftDefsDraftEmbedRecord::from_cbor_value(item)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x65\x6d\x62\x65\x64\x45\x78\x74\x65\x72\x6e\x61\x6c\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_embed_externals
+                            .push(DraftDefsDraftEmbedExternal::from_cbor_value(item)?);
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"text" => {
+                    field_text = Some(decoder.text()?);
+                }
+                b"labels" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_labels = Some(DraftDefsDraftPostLabelsUnion::decode_cbor(&mut dec)?);
+                }
+                b"embedImages" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_embed_images
+                                .push(DraftDefsDraftEmbedImage::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"embedVideos" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_embed_videos
+                                .push(DraftDefsDraftEmbedVideo::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"embedGallery" => {
+                    field_embed_gallery =
+                        Some(DraftDefsDraftEmbedGalleryCborView::decode_cbor(decoder)?);
+                }
+                b"embedRecords" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_embed_records
+                                .push(DraftDefsDraftEmbedRecord::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"embedExternals" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_embed_externals
+                                .push(DraftDefsDraftEmbedExternal::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            text: field_text.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
+            })?,
+            labels: field_labels,
+            embed_images: field_embed_images,
+            embed_videos: field_embed_videos,
+            embed_gallery: field_embed_gallery,
+            embed_records: field_embed_records,
+            embed_externals: field_embed_externals,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftView — View to present drafts data to users.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2703,6 +3760,146 @@ impl DraftDefsDraftView {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftViewCborView<'a> {
+    pub id: crate::syntax::Tid,
+    pub draft: DraftDefsDraftCborView<'a>,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub updated_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftView, crate::cbor::CborError> {
+        Ok(DraftDefsDraftView {
+            id: self.id,
+            draft: self.draft.to_owned()?,
+            created_at: self.created_at.to_owned(),
+            updated_at: self.updated_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<crate::syntax::Tid> = None;
+        let mut field_draft: Option<DraftDefsDraftCborView<'a>> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_id = Some(
+                    crate::syntax::Tid::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x64\x72\x61\x66\x74", |decoder| {
+            field_draft = Some(DraftDefsDraftCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(
+                            crate::syntax::Tid::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"draft" => {
+                    field_draft = Some(DraftDefsDraftCborView::decode_cbor(decoder)?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            draft: field_draft.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'draft'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            updated_at: field_updated_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updatedAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// DraftDefsDraftWithId — A draft with an identifier, used to store drafts in private storage (stash).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2864,6 +4061,108 @@ impl DraftDefsDraftWithId {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct DraftDefsDraftWithIdCborView<'a> {
+    pub id: crate::syntax::Tid,
+    pub draft: DraftDefsDraftCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> DraftDefsDraftWithIdCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<DraftDefsDraftWithId, crate::cbor::CborError> {
+        Ok(DraftDefsDraftWithId {
+            id: self.id,
+            draft: self.draft.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<crate::syntax::Tid> = None;
+        let mut field_draft: Option<DraftDefsDraftCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_id = Some(
+                    crate::syntax::Tid::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x64\x72\x61\x66\x74", |decoder| {
+            field_draft = Some(DraftDefsDraftCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(
+                            crate::syntax::Tid::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"draft" => {
+                    field_draft = Some(DraftDefsDraftCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            draft: field_draft.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'draft'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

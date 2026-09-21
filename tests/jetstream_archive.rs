@@ -36,97 +36,10 @@ use shrike::jetstream::{
 // decoder verify. Rows here use valid atproto syntax so every row converts.
 // ---------------------------------------------------------------------------
 
-const RESERVED_HEADER_BYTES: usize = 256;
-const BLOCK_INDEX_ENTRY_SIZE: usize = 52;
-
-const DID_A: &str = "did:plc:abcdefghijklmnopqrstuvwx";
-const RKEY: &str = "3l3qo2vuowo2b";
-const REV: &str = "3l3qo2vutsw2b";
-
-/// One create-commit row with a minimal (empty-map) CBOR record body.
-fn row(seq: u64) -> Row {
-    Row {
-        seq,
-        witnessed_at: seq as i64 * 100,
-        indexed_at: 0,
-        kind: 1, // create
-        collection: b"app.bsky.feed.post".to_vec(),
-        did: DID_A.as_bytes().to_vec(),
-        rkey: RKEY.as_bytes().to_vec(),
-        rev: REV.as_bytes().to_vec(),
-        payload: vec![0xA0], // CBOR {}
-    }
-}
-
-struct Row {
-    seq: u64,
-    witnessed_at: i64,
-    indexed_at: i64,
-    kind: u8,
-    collection: Vec<u8>,
-    did: Vec<u8>,
-    rkey: Vec<u8>,
-    rev: Vec<u8>,
-    payload: Vec<u8>,
-}
-
-/// Encode the decompressed columnar body for one block.
-fn block_body(rows: &[Row]) -> Vec<u8> {
-    let n = rows.len();
-    let mut b = Vec::new();
-    b.extend_from_slice(&(n as u32).to_le_bytes());
-    if n == 0 {
-        return b;
-    }
-    for r in rows {
-        b.extend_from_slice(&r.seq.to_le_bytes());
-    }
-    for r in rows {
-        b.extend_from_slice(&r.witnessed_at.to_le_bytes());
-    }
-    for r in rows {
-        b.extend_from_slice(&r.indexed_at.to_le_bytes());
-    }
-    for r in rows {
-        b.push(r.kind);
-    }
-    for r in rows {
-        b.push(r.collection.len() as u8);
-    }
-    for r in rows {
-        b.extend_from_slice(&(r.did.len() as u16).to_le_bytes());
-    }
-    for r in rows {
-        b.push(r.rkey.len() as u8);
-    }
-    for r in rows {
-        b.push(r.rev.len() as u8);
-    }
-    for r in rows {
-        b.extend_from_slice(&(r.payload.len() as u32).to_le_bytes());
-    }
-    for r in rows {
-        b.extend_from_slice(&r.collection);
-    }
-    for r in rows {
-        b.extend_from_slice(&r.did);
-    }
-    for r in rows {
-        b.extend_from_slice(&r.rkey);
-    }
-    for r in rows {
-        b.extend_from_slice(&r.rev);
-    }
-    for r in rows {
-        b.extend_from_slice(&r.payload);
-    }
-    b
-}
-
-/// The compressed zstd frame for a single block, as `getBlock` returns it.
-fn block_frame(rows: &[Row]) -> Vec<u8> {
-    zstd::bulk::compress(&block_body(rows), 3).expect("compress block")
-}
+#[allow(dead_code)]
+#[path = "support/jetstream_segment.rs"]
+mod segment_fixture;
+use segment_fixture::*;
 
 #[test]
 fn filtered_records_survive_their_input_and_sibling_events() {
@@ -232,6 +145,28 @@ fn borrowed_decode_matches_owned_rows_including_recoverable_failures() {
         }
         let got = decode_block_frame_filtered(&block_frame(&rows), &filter).unwrap();
         assert_eq!(got.events.iter().map(project).collect::<Vec<_>>(), expected);
+        let mapped =
+            shrike::jetstream::decode_block_frame_mapped(&block_frame(&rows), &filter, &|e| {
+                e.to_owned().unwrap()
+            })
+            .unwrap();
+        assert_eq!(
+            mapped
+                .events
+                .iter()
+                .map(|e| project(&e.value))
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            mapped
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            errors
+        );
+
         assert_eq!(
             got.dropped
                 .iter()
@@ -288,94 +223,6 @@ fn whole_segment_matches_individual_blocks_with_filtered_and_malformed_rows() {
     blocks[4][0].kind = 255;
     let (corrupt, _) = seal(&blocks);
     assert!(decode_segment_filtered(&corrupt, &Filter::new()).is_err());
-}
-
-/// Assemble a complete sealed segment and return its bytes plus the lowercase
-/// 16-hex checksum the plan would name for it.
-fn seal(blocks: &[Vec<Row>]) -> (Vec<u8>, String) {
-    use core::hash::Hasher;
-    use twox_hash::XxHash3_64;
-
-    let mut file = vec![0u8; RESERVED_HEADER_BYTES];
-    let mut index: Vec<[u8; BLOCK_INDEX_ENTRY_SIZE]> = Vec::new();
-    let mut ev_count = 0u32;
-    let (mut min_seq, mut max_seq) = (u64::MAX, 0u64);
-    let (mut min_w, mut max_w) = (i64::MAX, i64::MIN);
-
-    for rows in blocks {
-        let body = block_body(rows);
-        let frame = zstd::bulk::compress(&body, 3).expect("compress block");
-        let offset = file.len() as u64;
-        file.extend_from_slice(&(frame.len() as u64).to_le_bytes());
-        file.extend_from_slice(&frame);
-
-        let (mut bmin_s, mut bmax_s) = (u64::MAX, 0u64);
-        let (mut bmin_w, mut bmax_w) = (i64::MAX, i64::MIN);
-        for r in rows {
-            ev_count += 1;
-            bmin_s = bmin_s.min(r.seq);
-            bmax_s = bmax_s.max(r.seq);
-            bmin_w = bmin_w.min(r.witnessed_at);
-            bmax_w = bmax_w.max(r.witnessed_at);
-        }
-        if rows.is_empty() {
-            bmin_s = 0;
-            bmax_s = 0;
-            bmin_w = 0;
-            bmax_w = 0;
-        } else {
-            min_seq = min_seq.min(bmin_s);
-            max_seq = max_seq.max(bmax_s);
-            min_w = min_w.min(bmin_w);
-            max_w = max_w.max(bmax_w);
-        }
-
-        let mut e = [0u8; BLOCK_INDEX_ENTRY_SIZE];
-        e[0..8].copy_from_slice(&offset.to_le_bytes());
-        e[8..12].copy_from_slice(&(frame.len() as u32).to_le_bytes());
-        e[12..16].copy_from_slice(&(body.len() as u32).to_le_bytes());
-        e[16..20].copy_from_slice(&(rows.len() as u32).to_le_bytes());
-        e[20..28].copy_from_slice(&bmin_s.to_le_bytes());
-        e[28..36].copy_from_slice(&bmax_s.to_le_bytes());
-        e[36..44].copy_from_slice(&bmin_w.to_le_bytes());
-        e[44..52].copy_from_slice(&bmax_w.to_le_bytes());
-        index.push(e);
-    }
-
-    let footer_offset = file.len() as u64;
-    for e in &index {
-        file.extend_from_slice(e);
-    }
-    let file_len = file.len() as u64;
-
-    if ev_count == 0 {
-        min_seq = 0;
-        max_seq = 0;
-        min_w = 0;
-        max_w = 0;
-    }
-
-    file[0..4].copy_from_slice(b"jss0");
-    file[12..14].copy_from_slice(&1u16.to_le_bytes());
-    file[14..18].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
-    file[18..22].copy_from_slice(&ev_count.to_le_bytes());
-    file[22..26].copy_from_slice(&0u32.to_le_bytes());
-    file[26..34].copy_from_slice(&min_seq.to_le_bytes());
-    file[34..42].copy_from_slice(&max_seq.to_le_bytes());
-    file[42..50].copy_from_slice(&min_w.to_le_bytes());
-    file[50..58].copy_from_slice(&max_w.to_le_bytes());
-    file[58..66].copy_from_slice(&footer_offset.to_le_bytes());
-    file[66..74].copy_from_slice(&file_len.to_le_bytes());
-    file[74..82].copy_from_slice(&file_len.to_le_bytes());
-    file[82..90].copy_from_slice(&file_len.to_le_bytes());
-    file[90..98].copy_from_slice(&footer_offset.to_le_bytes());
-
-    let mut hasher = XxHash3_64::new();
-    hasher.write(&file[12..RESERVED_HEADER_BYTES]);
-    hasher.write(&file[footer_offset as usize..]);
-    let checksum = hasher.finish();
-    file[4..12].copy_from_slice(&checksum.to_le_bytes());
-    (file, format!("{checksum:016x}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +480,55 @@ async fn whole_non_ranged_200_download() {
         Some(&format!("Bearer {SECRET}")[..])
     );
     assert!(!log[0].url.contains(SECRET));
+}
+
+#[tokio::test(start_paused = true)]
+async fn whole_content_length_hint_cannot_truncate_or_bypass_the_body_cap() {
+    let (bytes, checksum) = seal(&[vec![row(1), row(2), row(3)]]);
+    for hint in [0, 1, bytes.len() as u64, u64::MAX] {
+        let t = Scripted::new();
+        t.push(
+            "seg:probe",
+            Resp::ok(200, bytes.clone()).with_header("content-length", &hint.to_string()),
+        );
+        let mut config = ArchiveConfig::new("archive.example.com", ApiKey::new(SECRET));
+        config.limits.max_segment_bytes = bytes.len() as u64;
+        let c = ArchiveClient::new(t, config).unwrap();
+        let out = download_segment(
+            &c,
+            &whole_segment("seg-hint.jss", checksum.clone()),
+            0,
+            100,
+            &Filter::new(),
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+    let t = Scripted::new();
+    t.push(
+        "seg:probe",
+        Resp::ok(200, bytes.clone()).with_header("content-length", "1"),
+    );
+    let mut config = ArchiveConfig::new("archive.example.com", ApiKey::new(SECRET));
+    config.limits.max_segment_bytes = bytes.len() as u64 - 2;
+    let c = ArchiveClient::new(t, config).unwrap();
+    assert!(matches!(
+        download_segment(
+            &c,
+            &whole_segment("seg-hint.jss", checksum),
+            0,
+            100,
+            &Filter::new(),
+            &CancelToken::new(),
+        )
+        .await,
+        Err(Error::DownloadFailed(_))
+    ));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1418,4 +1314,231 @@ fn rejects_url_shaped_host_that_could_redirect_the_key() {
 fn accepts_and_normalizes_well_formed_host() {
     let config = ArchiveConfig::new("https://Archive.Example.com", ApiKey::new(SECRET));
     ArchiveClient::new(Scripted::new(), config).expect("normalized host builds a client");
+}
+
+#[tokio::test(start_paused = true)]
+async fn mapped_download_preserves_prefix_failure_and_cancellation_contracts() {
+    use shrike::jetstream::download_segment_mapped;
+    let blocks = vec![vec![row(1), row(2)], vec![row(3)]];
+    let (mut bytes, checksum) = seal(&blocks);
+    let reader = SegmentReader::open(&bytes).unwrap();
+    let off = reader.blocks()[1].offset as usize + 8;
+    bytes[off..off + 4].fill(0);
+    let t = Scripted::new();
+    t.push("seg:probe", Resp::ok(200, bytes));
+    let c = client(t);
+    let seg = whole_segment("s0.jss", checksum);
+    assert!(
+        download_segment_mapped(&c, &seg, 0, 100, &Filter::new(), &CancelToken::new(), |e| e
+            .to_owned()
+            .unwrap())
+        .await
+        .is_err()
+    );
+
+    let t = Scripted::new();
+    t.push("block:0", Resp::ok(200, block_frame(&blocks[0])));
+    t.push("block:1", Resp::ok(200, vec![0; 8]));
+    let c = client(t);
+    let mut seg = seg;
+    seg.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 1 }]);
+    let out = download_segment_mapped(&c, &seg, 1, 100, &Filter::new(), &CancelToken::new(), |e| {
+        e.to_owned().unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        out.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(out.events[0].value.seq, 2);
+    assert!(out.failure.is_some());
+    assert!(out.dropped.is_empty());
+
+    let t = Scripted::new();
+    t.push("block:0", Resp::ok(200, block_frame(&blocks[0])));
+    seg.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 0 }]);
+    let c = client(t);
+    let cancel = CancelToken::new();
+    let stop = cancel.clone();
+    let result = download_segment_mapped(&c, &seg, 0, 100, &Filter::new(), &cancel, move |_| {
+        stop.cancel()
+    })
+    .await;
+    assert!(matches!(result, Err(Error::Canceled)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn mapped_snapshot_retains_outputs_and_reports_only_delivered_progress() {
+    use shrike::jetstream::{
+        ClientArchive, Delivery, Engine, EngineConfig, EngineSink, Event, LiveConfig, MappedEvent,
+    };
+    struct Sink {
+        events: Vec<Event>,
+        stop_after: usize,
+    }
+    impl EngineSink<MappedEvent<Event>> for Sink {
+        async fn deliver(&mut self, item: Delivery<MappedEvent<Event>>) -> bool {
+            if let Delivery::Batch(batch) = item {
+                self.events
+                    .extend(batch.into_events().into_iter().map(|e| e.value));
+            }
+            self.events.len() < self.stop_after
+        }
+        async fn recoverable(&mut self, error: Error) -> bool {
+            panic!("unexpected error: {error}")
+        }
+    }
+    for (stop_after, precancel) in [(usize::MAX, false), (2, false), (usize::MAX, true)] {
+        let t = Scripted::new();
+        t.push("plan", plan_page(4, 4, &seg_json("s0.jss", 0, 1, 5)));
+        let (bytes, _) = seal(&[vec![row(1), row(2), row(3)], vec![row(4), row(5)]]);
+        t.push("seg:probe", Resp::ok(200, bytes));
+        let archive = ClientArchive::new(client(t.clone())).map(|e| e.to_owned().unwrap());
+        let mut live = LiveConfig::new("archive.example.com", true);
+        live.max_batch = 2;
+        let mut config = EngineConfig::new(live);
+        config.snapshot_only = true;
+        config.after_seq = 1;
+        config.before_seq = Some(4);
+        let cancel = CancelToken::new();
+        if precancel {
+            cancel.cancel();
+        }
+        // Snapshot processing does not require live/dictionary transports.
+        let engine = Engine::new(Some(archive), (), (), config, cancel);
+        let stats = engine.stats();
+        let mut sink = Sink {
+            events: Vec::new(),
+            stop_after,
+        };
+        engine.run_snapshot(&mut sink).await.unwrap();
+        let expected = if precancel {
+            vec![]
+        } else if stop_after == 2 {
+            vec![2, 3]
+        } else {
+            vec![2, 3, 4]
+        };
+        assert_eq!(
+            sink.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            expected
+        );
+        let stats = stats.snapshot();
+        assert_eq!(stats.delivered_events, expected.len() as u64);
+        assert_eq!(
+            stats.last_processed_seq,
+            expected.last().copied().unwrap_or(1)
+        );
+        assert_eq!(stats.pages, u64::from(!precancel && stop_after != 2));
+        if precancel {
+            assert!(t.log().is_empty());
+        }
+    }
+}
+
+#[test]
+fn bulk_metadata_checks_each_utf8_boundary_and_rejected_row() {
+    use shrike::jetstream::{decode_block_frame_filtered, decode_block_frame_mapped};
+    // The complete metadata region is valid UTF-8, but each of these two
+    // collection fields holds half of one code point. Neither may become a str.
+    let mut rows = vec![row(1), row(2), row(3)];
+    rows[0].collection = vec![0xc3];
+    rows[1].collection = vec![0xa9];
+    for filter in [
+        Filter::new(),
+        Filter::new().collection("app.bsky.feed.post").unwrap(),
+    ] {
+        let frame = block_frame(&rows);
+        let owned = decode_block_frame_filtered(&frame, &filter).unwrap();
+        let mapped =
+            decode_block_frame_mapped(&frame, &filter, &|e| e.to_owned().unwrap()).unwrap();
+        assert_eq!(
+            owned.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![3]
+        );
+        assert_eq!(
+            mapped.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![3]
+        );
+        assert_eq!(owned.dropped.len(), 2);
+        assert_eq!(
+            mapped
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            owned
+                .dropped
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+    }
+    // One malformed byte makes the bulk scan fall back; valid sibling rows
+    // still succeed, and every selected column still receives syntax checks.
+    rows[0].collection = b"app.bsky.feed.post".to_vec();
+    rows[0].did = vec![0xff];
+    rows[1].collection = b"APP.BSKY.FEED.post".to_vec();
+    let frame = block_frame(&rows);
+    let filter = Filter::new().collection("app.bsky.feed.post").unwrap();
+    let mapped = decode_block_frame_mapped(&frame, &filter, &|e| e.to_owned().unwrap()).unwrap();
+    assert_eq!(
+        mapped.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(mapped.dropped.len(), 1);
+}
+
+#[tokio::test]
+async fn sparse_block_mapping_can_progress_while_an_earlier_block_decodes() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::time::{Duration, Instant};
+    let t = Scripted::new();
+    t.push("block:0", Resp::ok(200, block_frame(&[row(1)])));
+    t.push("block:1", Resp::ok(200, block_frame(&[row(2)])));
+    let c = client(t);
+    let mut seg = whole_segment("s0.jss", "0000000000000000".into());
+    seg.mode = SegmentMode::Blocks(vec![BlockSpan { first: 0, last: 1 }]);
+    let later_started = Arc::new(AtomicBool::new(false));
+    let observed_overlap = Arc::new(AtomicBool::new(false));
+    let started = later_started.clone();
+    let observed = observed_overlap.clone();
+    let out = shrike::jetstream::download_segment_mapped(
+        &c,
+        &seg,
+        0,
+        10,
+        &Filter::new(),
+        &CancelToken::new(),
+        move |event| {
+            if event.seq == 1 {
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while !started.load(Ordering::Acquire) && Instant::now() < deadline {
+                    std::thread::yield_now();
+                }
+                observed.store(started.load(Ordering::Acquire), Ordering::Release);
+            } else {
+                started.store(true, Ordering::Release);
+            }
+            event.seq
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        observed_overlap.load(Ordering::Acquire),
+        "later decoding was blocked behind the earlier callback"
+    );
+    assert_eq!(
+        out.events
+            .iter()
+            .map(|e| (e.seq, e.value))
+            .collect::<Vec<_>>(),
+        vec![(1, 1), (2, 2)]
+    );
+    assert!(out.failure.is_none());
 }

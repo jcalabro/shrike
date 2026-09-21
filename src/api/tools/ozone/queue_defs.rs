@@ -322,6 +322,208 @@ impl QueueDefsAssignmentView {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct QueueDefsAssignmentViewCborView<'a> {
+    pub id: i64,
+    pub did: crate::syntax::Did,
+    pub end_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub queue: QueueDefsQueueViewCborView<'a>,
+    pub start_at: crate::syntax::DatetimeRef<'a>,
+    pub moderator: Option<crate::api::tools::ozone::TeamDefsMemberCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> QueueDefsAssignmentViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<QueueDefsAssignmentView, crate::cbor::CborError> {
+        Ok(QueueDefsAssignmentView {
+            id: self.id,
+            did: self.did.clone(),
+            end_at: self.end_at.as_ref().map(|value| (*value).to_owned()),
+            queue: self.queue.to_owned()?,
+            start_at: self.start_at.to_owned(),
+            moderator: self
+                .moderator
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<i64> = None;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_end_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_queue: Option<QueueDefsQueueViewCborView<'a>> = None;
+        let mut field_start_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_moderator: Option<crate::api::tools::ozone::TeamDefsMemberCborView<'a>> =
+            None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_id = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_id = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x65\x6e\x64\x41\x74", |decoder| {
+            field_end_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x71\x75\x65\x75\x65", |decoder| {
+            field_queue = Some(QueueDefsQueueViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x74\x61\x72\x74\x41\x74", |decoder| {
+            field_start_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x6d\x6f\x64\x65\x72\x61\x74\x6f\x72", |decoder| {
+            field_moderator =
+                Some(crate::api::tools::ozone::TeamDefsMemberCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_id = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_id = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"endAt" => {
+                    field_end_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"queue" => {
+                    field_queue = Some(QueueDefsQueueViewCborView::decode_cbor(decoder)?);
+                }
+                b"startAt" => {
+                    field_start_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"moderator" => {
+                    field_moderator = Some(
+                        crate::api::tools::ozone::TeamDefsMemberCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            end_at: field_end_at,
+            queue: field_queue.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'queue'".into())
+            })?,
+            start_at: field_start_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'startAt'".into())
+            })?,
+            moderator: field_moderator,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// QueueDefsQueueStats object from tools.ozone.queue.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -809,6 +1011,359 @@ impl QueueDefsQueueStats {
             avg_handling_time_sec: field_avg_handling_time_sec,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct QueueDefsQueueStatsCborView<'a> {
+    pub action_rate: Option<i64>,
+    pub last_updated: Option<crate::syntax::DatetimeRef<'a>>,
+    pub inbound_count: Option<i64>,
+    pub pending_count: Option<i64>,
+    pub actioned_count: Option<i64>,
+    pub escalated_count: Option<i64>,
+    pub avg_handling_time_sec: Option<i64>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> QueueDefsQueueStatsCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<QueueDefsQueueStats, crate::cbor::CborError> {
+        Ok(QueueDefsQueueStats {
+            action_rate: self.action_rate,
+            last_updated: self.last_updated.as_ref().map(|value| (*value).to_owned()),
+            inbound_count: self.inbound_count,
+            pending_count: self.pending_count,
+            actioned_count: self.actioned_count,
+            escalated_count: self.escalated_count,
+            avg_handling_time_sec: self.avg_handling_time_sec,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_action_rate: Option<i64> = None;
+        let mut field_last_updated: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_inbound_count: Option<i64> = None;
+        let mut field_pending_count: Option<i64> = None;
+        let mut field_actioned_count: Option<i64> = None;
+        let mut field_escalated_count: Option<i64> = None;
+        let mut field_avg_handling_time_sec: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x6a\x61\x63\x74\x69\x6f\x6e\x52\x61\x74\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_action_rate = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_action_rate = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x6c\x61\x73\x74\x55\x70\x64\x61\x74\x65\x64",
+            |decoder| {
+                field_last_updated = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x69\x6e\x62\x6f\x75\x6e\x64\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_inbound_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_inbound_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x70\x65\x6e\x64\x69\x6e\x67\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_pending_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_pending_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6d\x61\x63\x74\x69\x6f\x6e\x65\x64\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_actioned_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_actioned_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x65\x73\x63\x61\x6c\x61\x74\x65\x64\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_escalated_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_escalated_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x72\x61\x76\x67\x48\x61\x6e\x64\x6c\x69\x6e\x67\x54\x69\x6d\x65\x53\x65\x63",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_avg_handling_time_sec = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_avg_handling_time_sec = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"actionRate" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_action_rate = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_action_rate = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"lastUpdated" => {
+                    field_last_updated = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"inboundCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_inbound_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_inbound_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"pendingCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_pending_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_pending_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"actionedCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_actioned_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_actioned_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"escalatedCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_escalated_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_escalated_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"avgHandlingTimeSec" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_avg_handling_time_sec = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_avg_handling_time_sec = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            action_rate: field_action_rate,
+            last_updated: field_last_updated,
+            inbound_count: field_inbound_count,
+            pending_count: field_pending_count,
+            actioned_count: field_actioned_count,
+            escalated_count: field_escalated_count,
+            avg_handling_time_sec: field_avg_handling_time_sec,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1459,6 +2014,405 @@ impl QueueDefsQueueView {
             recommended_policies: field_recommended_policies,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct QueueDefsQueueViewCborView<'a> {
+    pub id: i64,
+    pub name: &'a str,
+    pub stats: QueueDefsQueueStatsCborView<'a>,
+    pub enabled: bool,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub created_by: crate::syntax::Did,
+    pub deleted_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub updated_at: crate::syntax::DatetimeRef<'a>,
+    pub collection: Option<crate::syntax::Nsid>,
+    pub description: Option<&'a str>,
+    pub report_types: Vec<String>,
+    pub subject_types: Vec<String>,
+    pub recommended_policies: Vec<String>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> QueueDefsQueueViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<QueueDefsQueueView, crate::cbor::CborError> {
+        Ok(QueueDefsQueueView {
+            id: self.id,
+            name: self.name.to_owned(),
+            stats: self.stats.to_owned()?,
+            enabled: self.enabled,
+            created_at: self.created_at.to_owned(),
+            created_by: self.created_by.clone(),
+            deleted_at: self.deleted_at.as_ref().map(|value| (*value).to_owned()),
+            updated_at: self.updated_at.to_owned(),
+            collection: self.collection.clone(),
+            description: self.description.as_ref().map(|value| (*value).to_owned()),
+            report_types: self.report_types.clone(),
+            subject_types: self.subject_types.clone(),
+            recommended_policies: self.recommended_policies.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<i64> = None;
+        let mut field_name: Option<&'a str> = None;
+        let mut field_stats: Option<QueueDefsQueueStatsCborView<'a>> = None;
+        let mut field_enabled: Option<bool> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_created_by: Option<crate::syntax::Did> = None;
+        let mut field_deleted_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_collection: Option<crate::syntax::Nsid> = None;
+        let mut field_description: Option<&'a str> = None;
+        let mut field_report_types: Vec<String> = Vec::new();
+        let mut field_subject_types: Vec<String> = Vec::new();
+        let mut field_recommended_policies: Vec<String> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_id = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_id = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x73\x74\x61\x74\x73", |decoder| {
+            field_stats = Some(QueueDefsQueueStatsCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x65\x6e\x61\x62\x6c\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_enabled = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x42\x79", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_created_by = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x64\x65\x6c\x65\x74\x65\x64\x41\x74", |decoder| {
+            field_deleted_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x63\x6f\x6c\x6c\x65\x63\x74\x69\x6f\x6e", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_collection = Some(
+                    crate::syntax::Nsid::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x65\x73\x63\x72\x69\x70\x74\x69\x6f\x6e",
+            |decoder| {
+                field_description = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6b\x72\x65\x70\x6f\x72\x74\x54\x79\x70\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        if let crate::cbor::Value::Text(s) = item {
+                            field_report_types.push(s.to_string());
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text in array".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x73\x75\x62\x6a\x65\x63\x74\x54\x79\x70\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        if let crate::cbor::Value::Text(s) = item {
+                            field_subject_types.push(s.to_string());
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text in array".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x73\x72\x65\x63\x6f\x6d\x6d\x65\x6e\x64\x65\x64\x50\x6f\x6c\x69\x63\x69\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        if let crate::cbor::Value::Text(s) = item {
+                            field_recommended_policies.push(s.to_string());
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text in array".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_id = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_id = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"stats" => {
+                    field_stats = Some(QueueDefsQueueStatsCborView::decode_cbor(decoder)?);
+                }
+                b"enabled" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_enabled = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"createdBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"deletedAt" => {
+                    field_deleted_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"collection" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_collection = Some(
+                            crate::syntax::Nsid::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"description" => {
+                    field_description = Some(decoder.text()?);
+                }
+                b"reportTypes" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_report_types.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"subjectTypes" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_subject_types.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"recommendedPolicies" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_recommended_policies.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            stats: field_stats.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'stats'".into())
+            })?,
+            enabled: field_enabled.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'enabled'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            created_by: field_created_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdBy'".into())
+            })?,
+            deleted_at: field_deleted_at,
+            updated_at: field_updated_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updatedAt'".into())
+            })?,
+            collection: field_collection,
+            description: field_description,
+            report_types: field_report_types,
+            subject_types: field_subject_types,
+            recommended_policies: field_recommended_policies,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

@@ -203,6 +203,156 @@ impl JetstreamPlanSnapshotBlockRange {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct JetstreamPlanSnapshotBlockRangeCborView<'a> {
+    pub last: i64,
+    pub first: i64,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> JetstreamPlanSnapshotBlockRangeCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<JetstreamPlanSnapshotBlockRange, crate::cbor::CborError> {
+        Ok(JetstreamPlanSnapshotBlockRange {
+            last: self.last,
+            first: self.first,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_last: Option<i64> = None;
+        let mut field_first: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6c\x61\x73\x74", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_last = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_last = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x66\x69\x72\x73\x74", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_first = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_first = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"last" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_last = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_last = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"first" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_first = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_first = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            last: field_last.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'last'".into())
+            })?,
+            first: field_first.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'first'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JetstreamPlanSnapshotInput {
@@ -648,6 +798,266 @@ impl JetstreamPlanSnapshotSegment {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct JetstreamPlanSnapshotSegmentCborView<'a> {
+    pub mode: &'a str,
+    pub name: &'a str,
+    pub index: i64,
+    pub blocks: Vec<JetstreamPlanSnapshotBlockRange>,
+    pub max_seq: i64,
+    pub min_seq: i64,
+    pub checksum: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> JetstreamPlanSnapshotSegmentCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<JetstreamPlanSnapshotSegment, crate::cbor::CborError> {
+        Ok(JetstreamPlanSnapshotSegment {
+            mode: self.mode.to_owned(),
+            name: self.name.to_owned(),
+            index: self.index,
+            blocks: self.blocks.clone(),
+            max_seq: self.max_seq,
+            min_seq: self.min_seq,
+            checksum: self.checksum.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_mode: Option<&'a str> = None;
+        let mut field_name: Option<&'a str> = None;
+        let mut field_index: Option<i64> = None;
+        let mut field_blocks: Vec<JetstreamPlanSnapshotBlockRange> = Vec::new();
+        let mut field_max_seq: Option<i64> = None;
+        let mut field_min_seq: Option<i64> = None;
+        let mut field_checksum: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6d\x6f\x64\x65", |decoder| {
+            field_mode = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x69\x6e\x64\x65\x78", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_index = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_index = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x62\x6c\x6f\x63\x6b\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_blocks.push(JetstreamPlanSnapshotBlockRange::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x61\x78\x53\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_max_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_max_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x69\x6e\x53\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_min_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_min_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x63\x68\x65\x63\x6b\x73\x75\x6d", |decoder| {
+            field_checksum = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"mode" => {
+                    field_mode = Some(decoder.text()?);
+                }
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"index" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_index = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_index = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"blocks" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_blocks
+                                .push(JetstreamPlanSnapshotBlockRange::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"maxSeq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_max_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_max_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"minSeq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_min_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_min_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"checksum" => {
+                    field_checksum = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            mode: field_mode.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'mode'".into())
+            })?,
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            index: field_index.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'index'".into())
+            })?,
+            blocks: field_blocks,
+            max_seq: field_max_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'maxSeq'".into())
+            })?,
+            min_seq: field_min_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'minSeq'".into())
+            })?,
+            checksum: field_checksum.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'checksum'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// JetstreamPlanSnapshotStats object from network.bsky.jetstream.planSnapshot.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -956,6 +1366,259 @@ impl JetstreamPlanSnapshotStats {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct JetstreamPlanSnapshotStatsCborView<'a> {
+    pub entries: i64,
+    pub blocks_matched: i64,
+    pub segments_matched: i64,
+    pub segments_examined: i64,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> JetstreamPlanSnapshotStatsCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<JetstreamPlanSnapshotStats, crate::cbor::CborError> {
+        Ok(JetstreamPlanSnapshotStats {
+            entries: self.entries,
+            blocks_matched: self.blocks_matched,
+            segments_matched: self.segments_matched,
+            segments_examined: self.segments_examined,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_entries: Option<i64> = None;
+        let mut field_blocks_matched: Option<i64> = None;
+        let mut field_segments_matched: Option<i64> = None;
+        let mut field_segments_examined: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x65\x6e\x74\x72\x69\x65\x73", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_entries = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_entries = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6d\x62\x6c\x6f\x63\x6b\x73\x4d\x61\x74\x63\x68\x65\x64",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_blocks_matched = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_blocks_matched = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6f\x73\x65\x67\x6d\x65\x6e\x74\x73\x4d\x61\x74\x63\x68\x65\x64",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_segments_matched = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_segments_matched = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x73\x65\x67\x6d\x65\x6e\x74\x73\x45\x78\x61\x6d\x69\x6e\x65\x64",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_segments_examined = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_segments_examined = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"entries" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_entries = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_entries = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"blocksMatched" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_blocks_matched = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_blocks_matched = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"segmentsMatched" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_segments_matched = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_segments_matched = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"segmentsExamined" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_segments_examined = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_segments_examined = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            entries: field_entries.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'entries'".into())
+            })?,
+            blocks_matched: field_blocks_matched.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'blocksMatched'".into())
+            })?,
+            segments_matched: field_segments_matched.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'segmentsMatched'".into(),
+                )
+            })?,
+            segments_examined: field_segments_examined.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'segmentsExamined'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

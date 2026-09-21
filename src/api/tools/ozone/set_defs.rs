@@ -167,6 +167,93 @@ impl SetDefsSet {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SetDefsSetCborView<'a> {
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SetDefsSetCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SetDefsSet, crate::cbor::CborError> {
+        Ok(SetDefsSet {
+            name: self.name.to_owned(),
+            description: self.description.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_name: Option<&'a str> = None;
+        let mut field_description: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x65\x73\x63\x72\x69\x70\x74\x69\x6f\x6e",
+            |decoder| {
+                field_description = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"description" => {
+                    field_description = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            description: field_description,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// SetDefsSetView object from tools.ozone.set.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -455,6 +542,176 @@ impl SetDefsSetView {
             description: field_description,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SetDefsSetViewCborView<'a> {
+    pub name: &'a str,
+    pub set_size: i64,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub updated_at: crate::syntax::DatetimeRef<'a>,
+    pub description: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SetDefsSetViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SetDefsSetView, crate::cbor::CborError> {
+        Ok(SetDefsSetView {
+            name: self.name.to_owned(),
+            set_size: self.set_size,
+            created_at: self.created_at.to_owned(),
+            updated_at: self.updated_at.to_owned(),
+            description: self.description.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_name: Option<&'a str> = None;
+        let mut field_set_size: Option<i64> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_description: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x65\x74\x53\x69\x7a\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_set_size = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_set_size = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x65\x73\x63\x72\x69\x70\x74\x69\x6f\x6e",
+            |decoder| {
+                field_description = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"setSize" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_set_size = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_set_size = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"description" => {
+                    field_description = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            set_size: field_set_size.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'setSize'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            updated_at: field_updated_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updatedAt'".into())
+            })?,
+            description: field_description,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

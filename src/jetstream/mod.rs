@@ -1032,3 +1032,15 @@ mod tests {
         }
     }
 }
+
+mod view;
+pub use view::{
+    CommitView, EventPayloadView, EventView, MappedDecoded, MappedEvent, decode_block_frame_mapped,
+    decode_segment_mapped,
+};
+
+pub use event::Sequenced;
+
+pub use download::download_segment_mapped;
+
+pub use engine::MappedArchive;

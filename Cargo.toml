@@ -15,6 +15,10 @@ rust-version = "1.92"
 [package.metadata.docs.rs]
 all-features = true
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [workspace]
 resolver = "2"
 members = [

@@ -394,11 +394,25 @@ pub(crate) enum BodyReadError {
 /// checking `cancel` between chunks. Bounds memory against an oversized or
 /// unterminated body.
 pub(crate) async fn read_body_bounded<B: HttpBody>(
-    mut body: B,
+    body: B,
     limit: u64,
     cancel: &CancelToken,
 ) -> core::result::Result<Vec<u8>, BodyReadError> {
+    read_body_bounded_hint(body, limit, None, cancel).await
+}
+
+/// A bounded read with an optional allocation hint. The hint never determines
+/// how many bytes to read or relaxes the cap; incorrect headers are harmless.
+pub(crate) async fn read_body_bounded_hint<B: HttpBody>(
+    mut body: B,
+    limit: u64,
+    hint: Option<u64>,
+    cancel: &CancelToken,
+) -> core::result::Result<Vec<u8>, BodyReadError> {
     let mut out: Vec<u8> = Vec::new();
+    let mut reserve = hint
+        .filter(|&n| n <= limit)
+        .and_then(|n| usize::try_from(n).ok());
     loop {
         if cancel.is_cancelled() {
             return Err(BodyReadError::Canceled);
@@ -408,6 +422,13 @@ pub(crate) async fn read_body_bounded<B: HttpBody>(
                 let next = out.len() as u64 + chunk.len() as u64;
                 if next > limit {
                     return Err(BodyReadError::TooLarge);
+                }
+                // Reserve only once data arrives, without touching unused
+                // pages. Failure of this optional hint falls back to growth.
+                if !chunk.is_empty()
+                    && let Some(capacity) = reserve.take()
+                {
+                    let _ = out.try_reserve_exact(capacity);
                 }
                 out.extend_from_slice(&chunk);
             }

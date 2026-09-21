@@ -190,6 +190,122 @@ impl EmbedImagesImage {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedImagesImageCborView<'a> {
+    pub alt: &'a str,
+    pub image: crate::api::Blob,
+    pub aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedImagesImageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedImagesImage, crate::cbor::CborError> {
+        Ok(EmbedImagesImage {
+            alt: self.alt.to_owned(),
+            image: self.image.clone(),
+            aspect_ratio: self
+                .aspect_ratio
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_image: Option<crate::api::Blob> = None;
+        let mut field_aspect_ratio: Option<
+            crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>,
+        > = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x69\x6d\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_image = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x61\x73\x70\x65\x63\x74\x52\x61\x74\x69\x6f",
+            |decoder| {
+                field_aspect_ratio = Some(
+                    crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"image" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_image = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                b"aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'alt'".into())
+            })?,
+            image: field_image.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'image'".into())
+            })?,
+            aspect_ratio: field_aspect_ratio,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// EmbedImages — A set of images embedded in a Bluesky record (eg, a post).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -328,6 +444,91 @@ impl EmbedImages {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedImagesCborView<'a> {
+    pub images: Vec<EmbedImagesImage>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedImagesCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedImages, crate::cbor::CborError> {
+        Ok(EmbedImages {
+            images: self.images.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_images: Vec<EmbedImagesImage> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x69\x6d\x61\x67\x65\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_images.push(EmbedImagesImage::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"images" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_images.push(EmbedImagesImage::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            images: field_images,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// EmbedImagesView — A set of images embedded in a Bluesky record (eg, a post).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -462,6 +663,91 @@ impl EmbedImagesView {
             images: field_images,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedImagesViewCborView<'a> {
+    pub images: Vec<EmbedImagesViewImage>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedImagesViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedImagesView, crate::cbor::CborError> {
+        Ok(EmbedImagesView {
+            images: self.images.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_images: Vec<EmbedImagesViewImage> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x69\x6d\x61\x67\x65\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_images.push(EmbedImagesViewImage::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"images" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_images.push(EmbedImagesViewImage::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            images: field_images,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -688,6 +974,129 @@ impl EmbedImagesViewImage {
             aspect_ratio: field_aspect_ratio,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedImagesViewImageCborView<'a> {
+    pub alt: &'a str,
+    pub thumb: &'a str,
+    pub fullsize: &'a str,
+    pub aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedImagesViewImageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedImagesViewImage, crate::cbor::CborError> {
+        Ok(EmbedImagesViewImage {
+            alt: self.alt.to_owned(),
+            thumb: self.thumb.to_owned(),
+            fullsize: self.fullsize.to_owned(),
+            aspect_ratio: self
+                .aspect_ratio
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_thumb: Option<&'a str> = None;
+        let mut field_fullsize: Option<&'a str> = None;
+        let mut field_aspect_ratio: Option<
+            crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>,
+        > = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x74\x68\x75\x6d\x62", |decoder| {
+            field_thumb = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x66\x75\x6c\x6c\x73\x69\x7a\x65", |decoder| {
+            field_fullsize = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x61\x73\x70\x65\x63\x74\x52\x61\x74\x69\x6f",
+            |decoder| {
+                field_aspect_ratio = Some(
+                    crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"thumb" => {
+                    field_thumb = Some(decoder.text()?);
+                }
+                b"fullsize" => {
+                    field_fullsize = Some(decoder.text()?);
+                }
+                b"aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'alt'".into())
+            })?,
+            thumb: field_thumb.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'thumb'".into())
+            })?,
+            fullsize: field_fullsize.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'fullsize'".into())
+            })?,
+            aspect_ratio: field_aspect_ratio,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

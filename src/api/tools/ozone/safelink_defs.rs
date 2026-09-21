@@ -423,6 +423,235 @@ impl SafelinkDefsEvent {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SafelinkDefsEventCborView<'a> {
+    pub id: i64,
+    pub url: &'a str,
+    pub action: &'a str,
+    pub reason: &'a str,
+    pub comment: Option<&'a str>,
+    pub pattern: &'a str,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub created_by: crate::syntax::Did,
+    pub event_type: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SafelinkDefsEventCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SafelinkDefsEvent, crate::cbor::CborError> {
+        Ok(SafelinkDefsEvent {
+            id: self.id,
+            url: self.url.to_owned(),
+            action: self.action.to_owned(),
+            reason: self.reason.to_owned(),
+            comment: self.comment.as_ref().map(|value| (*value).to_owned()),
+            pattern: self.pattern.to_owned(),
+            created_at: self.created_at.to_owned(),
+            created_by: self.created_by.clone(),
+            event_type: self.event_type.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<i64> = None;
+        let mut field_url: Option<&'a str> = None;
+        let mut field_action: Option<&'a str> = None;
+        let mut field_reason: Option<&'a str> = None;
+        let mut field_comment: Option<&'a str> = None;
+        let mut field_pattern: Option<&'a str> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_created_by: Option<crate::syntax::Did> = None;
+        let mut field_event_type: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_id = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_id = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x75\x72\x6c", |decoder| {
+            field_url = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_action = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x72\x65\x61\x73\x6f\x6e", |decoder| {
+            field_reason = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6d\x6d\x65\x6e\x74", |decoder| {
+            field_comment = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x70\x61\x74\x74\x65\x72\x6e", |decoder| {
+            field_pattern = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x42\x79", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_created_by = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x65\x76\x65\x6e\x74\x54\x79\x70\x65", |decoder| {
+            field_event_type = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_id = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_id = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"url" => {
+                    field_url = Some(decoder.text()?);
+                }
+                b"action" => {
+                    field_action = Some(decoder.text()?);
+                }
+                b"reason" => {
+                    field_reason = Some(decoder.text()?);
+                }
+                b"comment" => {
+                    field_comment = Some(decoder.text()?);
+                }
+                b"pattern" => {
+                    field_pattern = Some(decoder.text()?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"createdBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"eventType" => {
+                    field_event_type = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            url: field_url.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'url'".into())
+            })?,
+            action: field_action.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'action'".into())
+            })?,
+            reason: field_reason.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reason'".into())
+            })?,
+            comment: field_comment,
+            pattern: field_pattern.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'pattern'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            created_by: field_created_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdBy'".into())
+            })?,
+            event_type: field_event_type.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'eventType'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// SafelinkDefsEventType is a string type from tools.ozone.safelink.defs.
 pub type SafelinkDefsEventType = String;
 
@@ -804,6 +1033,196 @@ impl SafelinkDefsUrlRule {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SafelinkDefsUrlRuleCborView<'a> {
+    pub url: &'a str,
+    pub action: &'a str,
+    pub reason: &'a str,
+    pub comment: Option<&'a str>,
+    pub pattern: &'a str,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub created_by: crate::syntax::Did,
+    pub updated_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SafelinkDefsUrlRuleCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SafelinkDefsUrlRule, crate::cbor::CborError> {
+        Ok(SafelinkDefsUrlRule {
+            url: self.url.to_owned(),
+            action: self.action.to_owned(),
+            reason: self.reason.to_owned(),
+            comment: self.comment.as_ref().map(|value| (*value).to_owned()),
+            pattern: self.pattern.to_owned(),
+            created_at: self.created_at.to_owned(),
+            created_by: self.created_by.clone(),
+            updated_at: self.updated_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_url: Option<&'a str> = None;
+        let mut field_action: Option<&'a str> = None;
+        let mut field_reason: Option<&'a str> = None;
+        let mut field_comment: Option<&'a str> = None;
+        let mut field_pattern: Option<&'a str> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_created_by: Option<crate::syntax::Did> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x75\x72\x6c", |decoder| {
+            field_url = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_action = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x72\x65\x61\x73\x6f\x6e", |decoder| {
+            field_reason = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6d\x6d\x65\x6e\x74", |decoder| {
+            field_comment = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x70\x61\x74\x74\x65\x72\x6e", |decoder| {
+            field_pattern = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x42\x79", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_created_by = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"url" => {
+                    field_url = Some(decoder.text()?);
+                }
+                b"action" => {
+                    field_action = Some(decoder.text()?);
+                }
+                b"reason" => {
+                    field_reason = Some(decoder.text()?);
+                }
+                b"comment" => {
+                    field_comment = Some(decoder.text()?);
+                }
+                b"pattern" => {
+                    field_pattern = Some(decoder.text()?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"createdBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            url: field_url.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'url'".into())
+            })?,
+            action: field_action.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'action'".into())
+            })?,
+            reason: field_reason.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reason'".into())
+            })?,
+            comment: field_comment,
+            pattern: field_pattern.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'pattern'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            created_by: field_created_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdBy'".into())
+            })?,
+            updated_at: field_updated_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updatedAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

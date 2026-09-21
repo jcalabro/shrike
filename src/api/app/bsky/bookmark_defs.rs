@@ -126,6 +126,82 @@ impl BookmarkDefsBookmark {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct BookmarkDefsBookmarkCborView<'a> {
+    pub subject: crate::api::com::atproto::RepoStrongRefCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> BookmarkDefsBookmarkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<BookmarkDefsBookmark, crate::cbor::CborError> {
+        Ok(BookmarkDefsBookmark {
+            subject: self.subject.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_subject: Option<crate::api::com::atproto::RepoStrongRefCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x73\x75\x62\x6a\x65\x63\x74", |decoder| {
+            field_subject =
+                Some(crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"subject" => {
+                    field_subject = Some(
+                        crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// BookmarkDefsBookmarkView object from app.bsky.bookmark.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -507,6 +583,118 @@ impl BookmarkDefsBookmarkView {
             created_at: field_created_at,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct BookmarkDefsBookmarkViewCborView<'a> {
+    pub item: BookmarkDefsBookmarkViewItemUnion,
+    pub subject: crate::api::com::atproto::RepoStrongRefCborView<'a>,
+    pub created_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> BookmarkDefsBookmarkViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<BookmarkDefsBookmarkView, crate::cbor::CborError> {
+        Ok(BookmarkDefsBookmarkView {
+            item: self.item.clone(),
+            subject: self.subject.to_owned()?,
+            created_at: self.created_at.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_item: Option<BookmarkDefsBookmarkViewItemUnion> = None;
+        let mut field_subject: Option<crate::api::com::atproto::RepoStrongRefCborView<'a>> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x69\x74\x65\x6d", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_item = Some(BookmarkDefsBookmarkViewItemUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x75\x62\x6a\x65\x63\x74", |decoder| {
+            field_subject =
+                Some(crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"item" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_item = Some(BookmarkDefsBookmarkViewItemUnion::decode_cbor(&mut dec)?);
+                }
+                b"subject" => {
+                    field_subject = Some(
+                        crate::api::com::atproto::RepoStrongRefCborView::decode_cbor(decoder)?,
+                    );
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            item: field_item.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'item'".into())
+            })?,
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            created_at: field_created_at,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

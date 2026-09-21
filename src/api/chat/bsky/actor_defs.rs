@@ -99,6 +99,66 @@ impl ActorDefsDirectConvoMember {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ActorDefsDirectConvoMemberCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ActorDefsDirectConvoMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ActorDefsDirectConvoMember, crate::cbor::CborError> {
+        Ok(ActorDefsDirectConvoMember {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ActorDefsGroupConvoMember — A current group convo member.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -259,6 +319,94 @@ impl ActorDefsGroupConvoMember {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ActorDefsGroupConvoMemberCborView<'a> {
+    pub role: &'a str,
+    pub added_by: Option<ActorDefsProfileViewBasicCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ActorDefsGroupConvoMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ActorDefsGroupConvoMember, crate::cbor::CborError> {
+        Ok(ActorDefsGroupConvoMember {
+            role: self.role.to_owned(),
+            added_by: self
+                .added_by
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_role: Option<&'a str> = None;
+        let mut field_added_by: Option<ActorDefsProfileViewBasicCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x72\x6f\x6c\x65", |decoder| {
+            field_role = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x61\x64\x64\x65\x64\x42\x79", |decoder| {
+            field_added_by = Some(ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"role" => {
+                    field_role = Some(decoder.text()?);
+                }
+                b"addedBy" => {
+                    field_added_by = Some(ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            added_by: field_added_by,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ActorDefsMemberRole is a string type from chat.bsky.actor.defs.
 pub type ActorDefsMemberRole = String;
 
@@ -357,6 +505,66 @@ impl ActorDefsPastGroupConvoMember {
         Ok(ActorDefsPastGroupConvoMember {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ActorDefsPastGroupConvoMemberCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ActorDefsPastGroupConvoMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ActorDefsPastGroupConvoMember, crate::cbor::CborError> {
+        Ok(ActorDefsPastGroupConvoMember {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1060,6 +1268,306 @@ impl ActorDefsProfileViewBasic {
             verification: field_verification,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ActorDefsProfileViewBasicCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub kind: Option<ActorDefsProfileViewBasicKindUnion>,
+    pub avatar: Option<&'a str>,
+    pub handle: crate::syntax::Handle,
+    pub labels: Vec<crate::api::com::atproto::LabelDefsLabel>,
+    pub viewer: Option<crate::api::app::bsky::ActorDefsViewerStateCborView<'a>>,
+    pub created_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub associated: Option<crate::api::app::bsky::ActorDefsProfileAssociatedCborView<'a>>,
+    pub display_name: Option<&'a str>,
+    pub chat_disabled: Option<bool>,
+    pub verification: Option<crate::api::app::bsky::ActorDefsVerificationStateCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ActorDefsProfileViewBasicCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ActorDefsProfileViewBasic, crate::cbor::CborError> {
+        Ok(ActorDefsProfileViewBasic {
+            did: self.did.clone(),
+            kind: self.kind.clone(),
+            avatar: self.avatar.as_ref().map(|value| (*value).to_owned()),
+            handle: self.handle.clone(),
+            labels: self.labels.clone(),
+            viewer: self
+                .viewer
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            created_at: self.created_at.as_ref().map(|value| (*value).to_owned()),
+            associated: self
+                .associated
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            display_name: self.display_name.as_ref().map(|value| (*value).to_owned()),
+            chat_disabled: self.chat_disabled,
+            verification: self
+                .verification
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_kind: Option<ActorDefsProfileViewBasicKindUnion> = None;
+        let mut field_avatar: Option<&'a str> = None;
+        let mut field_handle: Option<crate::syntax::Handle> = None;
+        let mut field_labels: Vec<crate::api::com::atproto::LabelDefsLabel> = Vec::new();
+        let mut field_viewer: Option<crate::api::app::bsky::ActorDefsViewerStateCborView<'a>> =
+            None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_associated: Option<
+            crate::api::app::bsky::ActorDefsProfileAssociatedCborView<'a>,
+        > = None;
+        let mut field_display_name: Option<&'a str> = None;
+        let mut field_chat_disabled: Option<bool> = None;
+        let mut field_verification: Option<
+            crate::api::app::bsky::ActorDefsVerificationStateCborView<'a>,
+        > = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6b\x69\x6e\x64", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_kind = Some(ActorDefsProfileViewBasicKindUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x76\x61\x74\x61\x72", |decoder| {
+            field_avatar = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x68\x61\x6e\x64\x6c\x65", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_handle = Some(
+                    crate::syntax::Handle::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6c\x61\x62\x65\x6c\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_labels.push(crate::api::com::atproto::LabelDefsLabel::from_cbor_value(
+                        item,
+                    )?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x76\x69\x65\x77\x65\x72", |decoder| {
+            field_viewer =
+                Some(crate::api::app::bsky::ActorDefsViewerStateCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x61\x73\x73\x6f\x63\x69\x61\x74\x65\x64", |decoder| {
+            field_associated = Some(
+                crate::api::app::bsky::ActorDefsProfileAssociatedCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x69\x73\x70\x6c\x61\x79\x4e\x61\x6d\x65",
+            |decoder| {
+                field_display_name = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x63\x68\x61\x74\x44\x69\x73\x61\x62\x6c\x65\x64",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Bool(b) = value {
+                    field_chat_disabled = Some(b);
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x76\x65\x72\x69\x66\x69\x63\x61\x74\x69\x6f\x6e",
+            |decoder| {
+                field_verification = Some(
+                    crate::api::app::bsky::ActorDefsVerificationStateCborView::decode_cbor(
+                        decoder,
+                    )?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"kind" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_kind = Some(ActorDefsProfileViewBasicKindUnion::decode_cbor(&mut dec)?);
+                }
+                b"avatar" => {
+                    field_avatar = Some(decoder.text()?);
+                }
+                b"handle" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_handle = Some(
+                            crate::syntax::Handle::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"labels" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_labels.push(
+                                crate::api::com::atproto::LabelDefsLabel::from_cbor_value(item)?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"viewer" => {
+                    field_viewer = Some(
+                        crate::api::app::bsky::ActorDefsViewerStateCborView::decode_cbor(decoder)?,
+                    );
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"associated" => {
+                    field_associated = Some(
+                        crate::api::app::bsky::ActorDefsProfileAssociatedCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"displayName" => {
+                    field_display_name = Some(decoder.text()?);
+                }
+                b"chatDisabled" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_chat_disabled = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"verification" => {
+                    field_verification = Some(
+                        crate::api::app::bsky::ActorDefsVerificationStateCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            kind: field_kind,
+            avatar: field_avatar,
+            handle: field_handle.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'handle'".into())
+            })?,
+            labels: field_labels,
+            viewer: field_viewer,
+            created_at: field_created_at,
+            associated: field_associated,
+            display_name: field_display_name,
+            chat_disabled: field_chat_disabled,
+            verification: field_verification,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

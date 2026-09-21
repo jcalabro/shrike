@@ -144,6 +144,92 @@ impl AgeassuranceDefsConfig {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigCborView<'a> {
+    pub regions: Vec<AgeassuranceDefsConfigRegion>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<AgeassuranceDefsConfig, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfig {
+            regions: self.regions.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_regions: Vec<AgeassuranceDefsConfigRegion> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x72\x65\x67\x69\x6f\x6e\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_regions.push(AgeassuranceDefsConfigRegion::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"regions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_regions
+                                .push(AgeassuranceDefsConfigRegion::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            regions: field_regions,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsConfigRegion — The Age Assurance configuration for a specific region.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -790,6 +876,246 @@ impl AgeassuranceDefsConfigRegion {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionCborView<'a> {
+    pub rules: Vec<AgeassuranceDefsConfigRegionRulesUnion>,
+    pub platforms: Vec<String>,
+    pub region_code: Option<&'a str>,
+    pub country_code: &'a str,
+    pub min_access_age: i64,
+    pub additional_verification_methods: Vec<String>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<AgeassuranceDefsConfigRegion, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegion {
+            rules: self.rules.clone(),
+            platforms: self.platforms.clone(),
+            region_code: self.region_code.as_ref().map(|value| (*value).to_owned()),
+            country_code: self.country_code.to_owned(),
+            min_access_age: self.min_access_age,
+            additional_verification_methods: self.additional_verification_methods.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rules: Vec<AgeassuranceDefsConfigRegionRulesUnion> = Vec::new();
+        let mut field_platforms: Vec<String> = Vec::new();
+        let mut field_region_code: Option<&'a str> = None;
+        let mut field_country_code: Option<&'a str> = None;
+        let mut field_min_access_age: Option<i64> = None;
+        let mut field_additional_verification_methods: Vec<String> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x72\x75\x6c\x65\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    let raw = crate::cbor::encode_value(&item)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_rules.push(AgeassuranceDefsConfigRegionRulesUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x70\x6c\x61\x74\x66\x6f\x72\x6d\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    if let crate::cbor::Value::Text(s) = item {
+                        field_platforms.push(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected text in array".into(),
+                        ));
+                    }
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x72\x65\x67\x69\x6f\x6e\x43\x6f\x64\x65", |decoder| {
+            field_region_code = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x63\x6f\x75\x6e\x74\x72\x79\x43\x6f\x64\x65",
+            |decoder| {
+                field_country_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x6d\x69\x6e\x41\x63\x63\x65\x73\x73\x41\x67\x65",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_min_access_age = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_min_access_age = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(b"\x78\x1d\x61\x64\x64\x69\x74\x69\x6f\x6e\x61\x6c\x56\x65\x72\x69\x66\x69\x63\x61\x74\x69\x6f\x6e\x4d\x65\x74\x68\x6f\x64\x73", |decoder| {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_additional_verification_methods.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor("expected text in array".into()));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rules" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            let raw = crate::cbor::encode_value(&item)?;
+                            let mut dec = crate::cbor::Decoder::new(&raw);
+                            field_rules.push(AgeassuranceDefsConfigRegionRulesUnion::decode_cbor(
+                                &mut dec,
+                            )?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"platforms" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_platforms.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"regionCode" => {
+                    field_region_code = Some(decoder.text()?);
+                }
+                b"countryCode" => {
+                    field_country_code = Some(decoder.text()?);
+                }
+                b"minAccessAge" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_min_access_age = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_min_access_age = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"additionalVerificationMethods" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_additional_verification_methods.push(s.to_string());
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rules: field_rules,
+            platforms: field_platforms,
+            region_code: field_region_code,
+            country_code: field_country_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'countryCode'".into())
+            })?,
+            min_access_age: field_min_access_age.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'minAccessAge'".into())
+            })?,
+            additional_verification_methods: field_additional_verification_methods,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsConfigRegionRuleDefault — Age Assurance rule that applies by default.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -916,6 +1242,81 @@ impl AgeassuranceDefsConfigRegionRuleDefault {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleDefaultCborView<'a> {
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleDefaultCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleDefault, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleDefault {
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1088,6 +1489,100 @@ impl AgeassuranceDefsConfigRegionRuleIfAccountNewerThan {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfAccountNewerThanCborView<'a> {
+    pub date: crate::syntax::DatetimeRef<'a>,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfAccountNewerThanCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfAccountNewerThan, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfAccountNewerThan {
+            date: self.date.to_owned(),
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_date: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x64\x61\x74\x65", |decoder| {
+            field_date = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"date" => {
+                    field_date = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            date: field_date.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'date'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsConfigRegionRuleIfAccountOlderThan — Age Assurance rule that applies if the account is older than a certain date.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1252,6 +1747,100 @@ impl AgeassuranceDefsConfigRegionRuleIfAccountOlderThan {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfAccountOlderThanCborView<'a> {
+    pub date: crate::syntax::DatetimeRef<'a>,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfAccountOlderThanCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfAccountOlderThan, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfAccountOlderThan {
+            date: self.date.to_owned(),
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_date: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x64\x61\x74\x65", |decoder| {
+            field_date = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"date" => {
+                    field_date = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            date: field_date.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'date'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1438,6 +2027,126 @@ impl AgeassuranceDefsConfigRegionRuleIfAssuredOverAge {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfAssuredOverAgeCborView<'a> {
+    pub age: i64,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfAssuredOverAgeCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfAssuredOverAge, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfAssuredOverAge {
+            age: self.age,
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_age: Option<i64> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_age = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_age = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"age" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_age = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_age = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            age: field_age.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'age'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsConfigRegionRuleIfAssuredUnderAge — Age Assurance rule that applies if the user has been assured to be under a certain age.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1616,6 +2325,126 @@ impl AgeassuranceDefsConfigRegionRuleIfAssuredUnderAge {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfAssuredUnderAgeCborView<'a> {
+    pub age: i64,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfAssuredUnderAgeCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfAssuredUnderAge, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfAssuredUnderAge {
+            age: self.age,
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_age: Option<i64> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_age = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_age = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"age" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_age = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_age = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            age: field_age.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'age'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1802,6 +2631,126 @@ impl AgeassuranceDefsConfigRegionRuleIfDeclaredOverAge {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfDeclaredOverAgeCborView<'a> {
+    pub age: i64,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfDeclaredOverAgeCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfDeclaredOverAge, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfDeclaredOverAge {
+            age: self.age,
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_age: Option<i64> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_age = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_age = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"age" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_age = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_age = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            age: field_age.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'age'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAge — Age Assurance rule that applies if the user has declared themselves under a certain age.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1980,6 +2929,126 @@ impl AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAge {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAgeCborView<'a> {
+    pub age: i64,
+    pub access: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAgeCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAge, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsConfigRegionRuleIfDeclaredUnderAge {
+            age: self.age,
+            access: self.access.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_age: Option<i64> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_age = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_age = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"age" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_age = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_age = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            age: field_age.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'age'".into())
+            })?,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2477,6 +3546,206 @@ impl AgeassuranceDefsEvent {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsEventCborView<'a> {
+    pub email: Option<&'a str>,
+    pub access: &'a str,
+    pub init_ip: Option<&'a str>,
+    pub init_ua: Option<&'a str>,
+    pub status: &'a str,
+    pub attempt_id: &'a str,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub complete_ip: Option<&'a str>,
+    pub complete_ua: Option<&'a str>,
+    pub region_code: Option<&'a str>,
+    pub country_code: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsEventCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<AgeassuranceDefsEvent, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsEvent {
+            email: self.email.as_ref().map(|value| (*value).to_owned()),
+            access: self.access.to_owned(),
+            init_ip: self.init_ip.as_ref().map(|value| (*value).to_owned()),
+            init_ua: self.init_ua.as_ref().map(|value| (*value).to_owned()),
+            status: self.status.to_owned(),
+            attempt_id: self.attempt_id.to_owned(),
+            created_at: self.created_at.to_owned(),
+            complete_ip: self.complete_ip.as_ref().map(|value| (*value).to_owned()),
+            complete_ua: self.complete_ua.as_ref().map(|value| (*value).to_owned()),
+            region_code: self.region_code.as_ref().map(|value| (*value).to_owned()),
+            country_code: self.country_code.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_email: Option<&'a str> = None;
+        let mut field_access: Option<&'a str> = None;
+        let mut field_init_ip: Option<&'a str> = None;
+        let mut field_init_ua: Option<&'a str> = None;
+        let mut field_status: Option<&'a str> = None;
+        let mut field_attempt_id: Option<&'a str> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_complete_ip: Option<&'a str> = None;
+        let mut field_complete_ua: Option<&'a str> = None;
+        let mut field_region_code: Option<&'a str> = None;
+        let mut field_country_code: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x65\x6d\x61\x69\x6c", |decoder| {
+            field_email = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x69\x6e\x69\x74\x49\x70", |decoder| {
+            field_init_ip = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x69\x6e\x69\x74\x55\x61", |decoder| {
+            field_init_ua = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x74\x61\x74\x75\x73", |decoder| {
+            field_status = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x61\x74\x74\x65\x6d\x70\x74\x49\x64", |decoder| {
+            field_attempt_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x63\x6f\x6d\x70\x6c\x65\x74\x65\x49\x70", |decoder| {
+            field_complete_ip = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x63\x6f\x6d\x70\x6c\x65\x74\x65\x55\x61", |decoder| {
+            field_complete_ua = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x72\x65\x67\x69\x6f\x6e\x43\x6f\x64\x65", |decoder| {
+            field_region_code = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x63\x6f\x75\x6e\x74\x72\x79\x43\x6f\x64\x65",
+            |decoder| {
+                field_country_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"email" => {
+                    field_email = Some(decoder.text()?);
+                }
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                b"initIp" => {
+                    field_init_ip = Some(decoder.text()?);
+                }
+                b"initUa" => {
+                    field_init_ua = Some(decoder.text()?);
+                }
+                b"status" => {
+                    field_status = Some(decoder.text()?);
+                }
+                b"attemptId" => {
+                    field_attempt_id = Some(decoder.text()?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"completeIp" => {
+                    field_complete_ip = Some(decoder.text()?);
+                }
+                b"completeUa" => {
+                    field_complete_ua = Some(decoder.text()?);
+                }
+                b"regionCode" => {
+                    field_region_code = Some(decoder.text()?);
+                }
+                b"countryCode" => {
+                    field_country_code = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            email: field_email,
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            init_ip: field_init_ip,
+            init_ua: field_init_ua,
+            status: field_status.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'status'".into())
+            })?,
+            attempt_id: field_attempt_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'attemptId'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            complete_ip: field_complete_ip,
+            complete_ua: field_complete_ua,
+            region_code: field_region_code,
+            country_code: field_country_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'countryCode'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsState — The user's computed Age Assurance state.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2682,6 +3951,115 @@ impl AgeassuranceDefsState {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsStateCborView<'a> {
+    pub access: &'a str,
+    pub status: &'a str,
+    pub last_initiated_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsStateCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<AgeassuranceDefsState, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsState {
+            access: self.access.to_owned(),
+            status: self.status.to_owned(),
+            last_initiated_at: self
+                .last_initiated_at
+                .as_ref()
+                .map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_access: Option<&'a str> = None;
+        let mut field_status: Option<&'a str> = None;
+        let mut field_last_initiated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x61\x63\x63\x65\x73\x73", |decoder| {
+            field_access = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x74\x61\x74\x75\x73", |decoder| {
+            field_status = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x6c\x61\x73\x74\x49\x6e\x69\x74\x69\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_last_initiated_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"access" => {
+                    field_access = Some(decoder.text()?);
+                }
+                b"status" => {
+                    field_status = Some(decoder.text()?);
+                }
+                b"lastInitiatedAt" => {
+                    field_last_initiated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            access: field_access.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'access'".into())
+            })?,
+            status: field_status.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'status'".into())
+            })?,
+            last_initiated_at: field_last_initiated_at,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// AgeassuranceDefsStateMetadata — Additional metadata needed to compute Age Assurance state client-side.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2821,6 +4199,89 @@ impl AgeassuranceDefsStateMetadata {
             account_created_at: field_account_created_at,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct AgeassuranceDefsStateMetadataCborView<'a> {
+    pub account_created_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> AgeassuranceDefsStateMetadataCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<AgeassuranceDefsStateMetadata, crate::cbor::CborError> {
+        Ok(AgeassuranceDefsStateMetadata {
+            account_created_at: self
+                .account_created_at
+                .as_ref()
+                .map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_account_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(
+            b"\x70\x61\x63\x63\x6f\x75\x6e\x74\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_account_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"accountCreatedAt" => {
+                    field_account_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            account_created_at: field_account_created_at,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

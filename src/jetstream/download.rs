@@ -51,12 +51,12 @@ use std::sync::Arc;
 
 use super::archive::{
     ArchiveClient, BodyReadError, SendError, now_unix_secs, parse_xrpc_error, read_body_bounded,
-    read_body_exact,
+    read_body_bounded_hint, read_body_exact,
 };
 use super::cancel::CancelToken;
 use super::decode::{Decoded, decode_block_frame_filtered, decode_segment_cancellable};
 use super::error::{Error, Result};
-use super::event::Event;
+use super::event::{Event, Sequenced};
 use super::filter::Filter;
 use super::planner::{PlanSegment, SegmentMode};
 use super::retry::{Attempt, with_retry};
@@ -69,16 +69,128 @@ const GET_SEGMENT_METHOD: &str = "network.bsky.jetstream.getSegment";
 const GET_BLOCK_METHOD: &str = "network.bsky.jetstream.getBlock";
 
 /// A downloaded, decoded, and windowed segment.
-#[derive(Debug, Default)]
-pub struct DownloadedSegment {
+#[derive(Debug)]
+pub struct DownloadedSegment<E = Event> {
     /// The events inside the snapshot window, in sequence order.
-    pub events: Vec<Event>,
+    pub events: Vec<E>,
     /// Row-level decode failures (invalid siblings), preserved for reporting.
     pub dropped: Vec<Error>,
     /// A per-entry failure that stopped this segment partway: in blocks mode the
     /// decoded prefix in `events` is still valid and deliverable, and the error
     /// follows it in order (the Go client's emit-prefix-then-error contract).
     pub failure: Option<Error>,
+}
+
+impl<E> Default for DownloadedSegment<E> {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            dropped: Vec::new(),
+            failure: None,
+        }
+    }
+}
+
+trait ArchiveDecode: Send + Sync + 'static {
+    type Item: Sequenced + Send + 'static;
+    fn decode(
+        &self,
+        bytes: &[u8],
+        filter: &Filter,
+        whole: bool,
+        cancelled: impl Fn() -> bool + Sync,
+    ) -> Result<Decoded<Self::Item>>;
+}
+
+struct OwnedDecode;
+impl ArchiveDecode for OwnedDecode {
+    type Item = Event;
+    fn decode(
+        &self,
+        bytes: &[u8],
+        filter: &Filter,
+        whole: bool,
+        cancelled: impl Fn() -> bool + Sync,
+    ) -> Result<Decoded<Event>> {
+        if whole {
+            decode_segment_cancellable(bytes, filter, cancelled)
+        } else {
+            decode_block_frame_filtered(bytes, filter)
+        }
+    }
+}
+
+struct ViewDecode<F> {
+    map: F,
+    workers: usize,
+}
+impl<T, F> ArchiveDecode for ViewDecode<F>
+where
+    T: Send + 'static,
+    F: Fn(super::view::EventView<'_>) -> T + Send + Sync + 'static,
+{
+    type Item = super::view::MappedEvent<T>;
+    fn decode(
+        &self,
+        bytes: &[u8],
+        filter: &Filter,
+        whole: bool,
+        cancelled: impl Fn() -> bool + Sync,
+    ) -> Result<Decoded<Self::Item>> {
+        if whole {
+            super::view::decode_segment_workers(bytes, filter, &self.map, cancelled, self.workers)
+        } else {
+            super::view::decode_block_frame_mapped(bytes, filter, &self.map)
+        }
+    }
+}
+
+/// Transform validated borrowed archive rows into caller-owned results. The
+/// transform may run concurrently and before a later failure invalidates its
+/// output. Only returned events should produce externally visible side effects.
+pub async fn download_segment_mapped<T, U, F>(
+    client: &ArchiveClient<T>,
+    segment: &PlanSegment,
+    after: u64,
+    before: u64,
+    filter: &Filter,
+    cancel: &CancelToken,
+    map: F,
+) -> Result<DownloadedSegment<super::view::MappedEvent<U>>>
+where
+    T: HttpTransport,
+    U: Send + 'static,
+    F: Fn(super::view::EventView<'_>) -> U + Send + Sync + 'static,
+{
+    download_segment_mapped_workers(client, segment, after, before, filter, cancel, map, 1).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn download_segment_mapped_workers<T, U, F>(
+    client: &ArchiveClient<T>,
+    segment: &PlanSegment,
+    after: u64,
+    before: u64,
+    filter: &Filter,
+    cancel: &CancelToken,
+    map: F,
+    workers: usize,
+) -> Result<DownloadedSegment<super::view::MappedEvent<U>>>
+where
+    T: HttpTransport,
+    U: Send + 'static,
+    F: Fn(super::view::EventView<'_>) -> U + Send + Sync + 'static,
+{
+    download_segment_with(
+        client,
+        segment,
+        after,
+        before,
+        filter,
+        cancel,
+        Arc::new(ViewDecode { map, workers }),
+    )
+    .await
 }
 
 /// Download one planned segment and return its windowed events.
@@ -96,6 +208,27 @@ pub async fn download_segment<T: HttpTransport>(
     filter: &Filter,
     cancel: &CancelToken,
 ) -> Result<DownloadedSegment> {
+    download_segment_with(
+        client,
+        segment,
+        after_seq,
+        before_seq,
+        filter,
+        cancel,
+        Arc::new(OwnedDecode),
+    )
+    .await
+}
+
+async fn download_segment_with<T: HttpTransport, D: ArchiveDecode>(
+    client: &ArchiveClient<T>,
+    segment: &PlanSegment,
+    after_seq: u64,
+    before_seq: u64,
+    filter: &Filter,
+    cancel: &CancelToken,
+    decoder: Arc<D>,
+) -> Result<DownloadedSegment<D::Item>> {
     match &segment.mode {
         SegmentMode::Whole => {
             // `download_whole` returns bytes that already passed structural
@@ -106,8 +239,14 @@ pub async fn download_segment<T: HttpTransport>(
             // consistent new generation and delivered, as in Go; the snapshot
             // window still clips its rows.
             let bytes = download_whole(client, segment, cancel).await?;
-            let decoded =
-                decode_archive(bytes, Arc::new(filter.clone()), true, cancel.clone()).await?;
+            let decoded = decode_archive(
+                bytes,
+                Arc::new(filter.clone()),
+                true,
+                cancel.clone(),
+                decoder,
+            )
+            .await?;
             Ok(window(decoded, after_seq, before_seq))
         }
         SegmentMode::Blocks(spans) => {
@@ -119,42 +258,40 @@ pub async fn download_segment<T: HttpTransport>(
                 before_seq,
                 filter,
                 cancel,
+                decoder,
             )
             .await
         }
     }
 }
 
-async fn decode_archive(
+async fn decode_archive<D: ArchiveDecode>(
     bytes: Vec<u8>,
     filter: Arc<Filter>,
     whole_segment: bool,
     cancel: CancelToken,
-) -> Result<Decoded> {
+    decoder: Arc<D>,
+) -> Result<Decoded<D::Item>> {
     super::decode_task::run(move |stop| {
         let cancelled = || cancel.is_cancelled() || stop.is_cancelled();
         if cancelled() {
             return Err(Error::Canceled);
         }
-        if whole_segment {
-            decode_segment_cancellable(&bytes, &filter, cancelled)
-        } else {
-            let decoded = decode_block_frame_filtered(&bytes, &filter)?;
-            if cancelled() {
-                return Err(Error::Canceled);
-            }
-            Ok(decoded)
+        let decoded = decoder.decode(&bytes, &filter, whole_segment, cancelled)?;
+        if cancelled() {
+            return Err(Error::Canceled);
         }
+        Ok(decoded)
     })
     .await
 }
 
 /// Apply the snapshot window `(after, before]` to a decoded segment's events,
 /// keeping row-level drops.
-fn window(mut decoded: Decoded, after: u64, before: u64) -> DownloadedSegment {
+fn window<E: Sequenced>(mut decoded: Decoded<E>, after: u64, before: u64) -> DownloadedSegment<E> {
     decoded
         .events
-        .retain(|event| event.seq > after && event.seq <= before);
+        .retain(|event| event.sequence() > after && event.sequence() <= before);
     DownloadedSegment {
         events: decoded.events,
         dropped: decoded.dropped,
@@ -163,7 +300,8 @@ fn window(mut decoded: Decoded, after: u64, before: u64) -> DownloadedSegment {
 }
 
 /// Fetch and reassemble a `blocks`-mode segment under bounded concurrency.
-async fn download_blocks<T: HttpTransport>(
+#[allow(clippy::too_many_arguments)]
+async fn download_blocks<T: HttpTransport, D: ArchiveDecode>(
     client: &ArchiveClient<T>,
     name: &str,
     spans: &[super::planner::BlockSpan],
@@ -171,18 +309,24 @@ async fn download_blocks<T: HttpTransport>(
     before: u64,
     filter: &Filter,
     cancel: &CancelToken,
-) -> Result<DownloadedSegment> {
+    decoder: Arc<D>,
+) -> Result<DownloadedSegment<D::Item>> {
     let indices: Vec<u32> = spans.iter().flat_map(|s| s.first..=s.last).collect();
     let concurrency = client.limits().concurrency.max(1);
     let frame_limit = client.limits().max_block_frame_bytes;
     let filter = Arc::new(filter.clone());
 
-    // `buffered` preserves input order, so frames come back in block order.
-    let mut frames = stream::iter(indices.into_iter().map(|idx| {
+    // Each bounded job fetches and decodes its block. Keeping both stages in
+    // the stream lets HTTP reads continue while native CPU work runs, and lets
+    // independent blocks use available cores. `buffered` retains block order;
+    // completed results still occupy slots until consumed.
+    let mut blocks = stream::iter(indices.into_iter().map(|idx| {
         let url = client.xrpc_url(
             GET_BLOCK_METHOD,
             Some(&format!("segment={name}&blockIndex={idx}")),
         );
+        let filter = filter.clone();
+        let decoder = decoder.clone();
         async move {
             let result = download_fetch(client, cancel, frame_limit, None, || {
                 HttpRequest::get(url.clone()).header("accept", "application/octet-stream")
@@ -193,27 +337,19 @@ async fn download_blocks<T: HttpTransport>(
                     "getBlock returned an unexpected status",
                 ));
             }
-            Ok(result.body)
+            // Only owned bytes, filters and results cross the CPU task boundary;
+            // the HTTP transport remains on its original executor.
+            decode_archive(result.body, filter, false, cancel.clone(), decoder).await
         }
     }))
     .buffered(concurrency);
 
     let mut out = DownloadedSegment::default();
-    while let Some(frame) = frames.next().await {
-        // A failed or corrupt block ends the entry but keeps the decoded prefix:
-        // the caller delivers the prefix, then the ordered per-entry error, as
-        // the Go client does. Cancellation still aborts the whole download.
-        let frame = match frame {
-            Ok(frame) => frame,
-            Err(Error::Canceled) => return Err(Error::Canceled),
-            Err(err) => {
-                out.failure = Some(err);
-                return Ok(out);
-            }
-        };
-        // One decode job per active segment, bounded by the outer ordered
-        // download stream. Its HTTP futures and transport never cross threads.
-        let decoded = match decode_archive(frame, filter.clone(), false, cancel.clone()).await {
+    while let Some(decoded) = blocks.next().await {
+        // Preserve the decoded prefix followed by the first ordered block
+        // failure. Dropping the stream cancels pending decoder jobs. Explicit
+        // cancellation still aborts the entire download, as before.
+        let decoded = match decoded {
             Ok(decoded) => decoded,
             Err(Error::Canceled) => return Err(Error::Canceled),
             Err(err) => {
@@ -222,7 +358,7 @@ async fn download_blocks<T: HttpTransport>(
             }
         };
         for event in decoded.events {
-            if event.seq > after && event.seq <= before {
+            if event.sequence() > after && event.sequence() <= before {
                 out.events.push(event);
             }
         }
@@ -338,41 +474,58 @@ async fn try_download_whole<T: HttpTransport>(
 
     let ranges = compute_stripes(total, stripe);
     let concurrency = client.limits().concurrency.max(1);
-    let outcomes: Vec<Result<StripeOutcome>> =
-        stream::iter(ranges.into_iter().map(|(start, end)| {
-            let url = url.clone();
-            let etag = etag.clone();
-            async move {
-                let len = end - start + 1;
-                let result = download_fetch(client, cancel, len, Some(len), || {
-                    HttpRequest::get(url.clone())
-                        .header("range", format!("bytes={start}-{end}"))
-                        .header("if-range", etag.clone())
-                        .header("accept", "application/octet-stream")
-                })
-                .await?;
-                Ok(classify_stripe(result, start, end, total, &etag))
-            }
-        }))
-        .buffered(concurrency)
-        .collect()
-        .await;
+    let outcomes = stream::iter(ranges.into_iter().map(|(start, end)| {
+        let url = url.clone();
+        let etag = etag.clone();
+        async move {
+            let len = end - start + 1;
+            let result = download_fetch(client, cancel, len, Some(len), || {
+                HttpRequest::get(url.clone())
+                    .header("range", format!("bytes={start}-{end}"))
+                    .header("if-range", etag.clone())
+                    .header("accept", "application/octet-stream")
+            })
+            .await?;
+            Ok::<_, Error>(classify_stripe(result, start, end, total, &etag))
+        }
+    }))
+    .buffered(concurrency);
 
     // `total` is bounded by the segment cap, but the cap is caller-configurable
     // and `usize` is 32-bit on wasm; convert fallibly so an out-of-range length
     // is a bounded error rather than a truncating cast and a later slice panic.
     let total_len = usize::try_from(total)
         .map_err(|_| Error::DownloadFailed("segment length does not fit the address space"))?;
-    let mut buf = vec![0u8; total_len];
-    for outcome in outcomes {
-        match outcome? {
-            StripeOutcome::Restart => return Ok(WholeOutcome::Restart),
-            StripeOutcome::Error(err) => return Err(err),
-            StripeOutcome::Data { start, bytes } => {
-                let start = start as usize;
-                buf[start..start + bytes.len()].copy_from_slice(&bytes);
+    // Consume in range order, releasing each part after its single copy. The
+    // output is not exposed until every stripe and the sealed object validate.
+    let mut buf = Vec::with_capacity(total_len);
+    let mut failure = None;
+    futures::pin_mut!(outcomes);
+    while let Some(outcome) = outcomes.next().await {
+        // Drain this generation's requests before restarting, retaining the
+        // first failure in range order, but release all later response buffers.
+        if failure.is_some() {
+            continue;
+        }
+        match outcome {
+            Ok(StripeOutcome::Restart) => failure = Some(Ok(WholeOutcome::Restart)),
+            Err(err) | Ok(StripeOutcome::Error(err)) => failure = Some(Err(err)),
+            Ok(StripeOutcome::Data { start, bytes }) => {
+                if start != buf.len() as u64 || bytes.len() > total_len - buf.len() {
+                    failure = Some(Err(Error::DownloadFailed(
+                        "stripe did not extend the segment",
+                    )));
+                    continue;
+                }
+                buf.extend_from_slice(&bytes);
             }
         }
+    }
+    if let Some(outcome) = failure {
+        return outcome;
+    }
+    if buf.len() != total_len {
+        return Err(Error::DownloadFailed("stripes did not fill the segment"));
     }
     Ok(WholeOutcome::Done(buf))
 }
@@ -592,7 +745,10 @@ async fn handle_download_response<B: super::transport::HttpBody>(
             }
             let read = match exact {
                 Some(n) => read_body_exact(resp.body, n, cancel).await,
-                None => read_body_bounded(resp.body, read_limit, cancel).await,
+                None => {
+                    read_body_bounded_hint(resp.body, read_limit, headers.content_length, cancel)
+                        .await
+                }
             };
             match read {
                 Ok(body) => Attempt::Ok(FetchResult {

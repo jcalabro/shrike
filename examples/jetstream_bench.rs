@@ -4,11 +4,16 @@
 //! <decompress|raw|filtered|typed|verify> <corpus-directory> <iterations> [collection]
 //! Omit collection for all events. `verify` hashes event contents and errors;
 //! keep it separate from timing runs. Corpus files must end in `.zst`.
+//! `typed`, `view`, and `mapped` decode likes, posts and profiles with the owned,
+//! borrowed-record, and scoped borrowed-event APIs respectively. Other records
+//! remain opaque. `verify-mapped` hashes the scoped API's retained owned outputs.
 
 use std::{error::Error, hint::black_box, path::PathBuf, time::Instant};
 
 use sha2::{Digest, Sha256};
-use shrike::api::app::bsky::FeedLike;
+use shrike::api::app::bsky::{
+    ActorProfile, ActorProfileCborView, FeedLike, FeedLikeCborView, FeedPost, FeedPostCborView,
+};
 use shrike::jetstream::{
     Event, EventPayload, Filter, Operation, decode_block, decode_block_frame_filtered,
     decompress_bounded,
@@ -49,10 +54,41 @@ fn fingerprint(hash: &mut Sha256, event: &Event) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// Three different schema shapes: a small nested record, arrays/unions, and
+// optional profile/blob fields. Unknown collections are left opaque.
+fn typed_check(collection: &str, record: &[u8], borrowed: bool) -> Option<bool> {
+    macro_rules! check {
+        ($owned:ty, $view:ty) => {
+            if borrowed {
+                <$view>::from_cbor(record).map(black_box).is_ok()
+            } else {
+                <$owned>::from_cbor(record).map(black_box).is_ok()
+            }
+        };
+    }
+    Some(match collection {
+        "app.bsky.feed.like" => check!(FeedLike, FeedLikeCborView),
+        "app.bsky.feed.post" => check!(FeedPost, FeedPostCborView),
+        "app.bsky.actor.profile" => check!(ActorProfile, ActorProfileCborView),
+        _ => return None,
+    })
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let mode = args.next().ok_or("missing mode")?;
-    if !["decompress", "raw", "filtered", "typed", "verify"].contains(&mode.as_str()) {
+    if ![
+        "decompress",
+        "raw",
+        "filtered",
+        "typed",
+        "view",
+        "mapped",
+        "verify",
+        "verify-mapped",
+    ]
+    .contains(&mode.as_str())
+    {
         return Err("unknown mode".into());
     }
     let dir = PathBuf::from(args.next().ok_or("missing corpus directory")?);
@@ -101,23 +137,66 @@ fn main() -> Result<(), Box<dyn Error>> {
                     events += rows.len() as u64;
                     black_box(rows);
                 }
+                "verify-mapped" => {
+                    let decoded =
+                        shrike::jetstream::decode_block_frame_mapped(frame, &filter, &|e| {
+                            e.to_owned()
+                        })?;
+                    events += decoded.events.len() as u64;
+                    dropped += decoded.dropped.len() as u64;
+                    field(&mut hash, &(index as u64).to_le_bytes());
+                    for event in &decoded.events {
+                        fingerprint(
+                            &mut hash,
+                            event.value.as_ref().map_err(ToString::to_string)?,
+                        )?;
+                    }
+                    for error in &decoded.dropped {
+                        field(&mut hash, error.to_string().as_bytes());
+                    }
+                }
+                "mapped" => {
+                    let decoded = shrike::jetstream::decode_block_frame_mapped(
+                        black_box(frame),
+                        &filter,
+                        &|event| {
+                            if let shrike::jetstream::EventPayloadView::Commit(c) = &event.payload
+                                && let Some(record) = c.record
+                            {
+                                match typed_check(&c.collection, record, true) {
+                                    Some(true) => (1u64, 0u64),
+                                    Some(false) => (0, 1),
+                                    None => (0, 0),
+                                }
+                            } else {
+                                (0, 0)
+                            }
+                        },
+                    )?;
+                    events += decoded.events.len() as u64;
+                    dropped += decoded.dropped.len() as u64;
+                    for event in &decoded.events {
+                        typed += event.value.0;
+                        typed_errors += event.value.1;
+                    }
+                    black_box(decoded);
+                }
                 _ => {
                     let decoded = decode_block_frame_filtered(black_box(frame), &filter)?;
                     events += decoded.events.len() as u64;
                     dropped += decoded.dropped.len() as u64;
-                    if mode == "typed" {
+                    if mode == "typed" || mode == "view" {
                         for event in &decoded.events {
                             if let EventPayload::Commit(c) = &event.payload
-                                && c.collection.as_str() == "app.bsky.feed.like"
                                 && let Some(record) = &c.record
+                                && let Some(valid) = typed_check(
+                                    c.collection.as_str(),
+                                    record.as_cbor(),
+                                    mode == "view",
+                                )
                             {
-                                match FeedLike::from_cbor(record.as_cbor()) {
-                                    Ok(like) => {
-                                        black_box(like);
-                                        typed += 1;
-                                    }
-                                    Err(_) => typed_errors += 1,
-                                }
+                                typed += u64::from(valid);
+                                typed_errors += u64::from(!valid);
                             }
                         }
                     } else if mode == "verify" {
@@ -142,7 +221,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "blocks": frames.len(), "compressed_bytes": compressed_bytes,
             "elapsed_s": elapsed, "events": events, "dropped": dropped,
             "typed": typed, "typed_errors": typed_errors,
-            "fingerprint": if mode == "verify" { Some(format!("{:x}", hash.finalize())) } else { None },
+            "fingerprint": if mode.starts_with("verify") { Some(format!("{:x}", hash.finalize())) } else { None },
         })
     );
     Ok(())

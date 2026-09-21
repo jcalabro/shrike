@@ -17,7 +17,7 @@
 
 use bytes::Bytes;
 
-use super::block::{Columns, RawEvent, SegmentKind, visit_block};
+use super::block::{Columns, RawEvent, SegmentKind, TextColumn, visit_block};
 use super::compression::{MAX_DECODED_BLOCK_BYTES, decompress_bounded};
 use super::error::{Error, Result};
 use super::event::{Commit, Event, EventPayload, Operation};
@@ -36,12 +36,21 @@ use crate::syntax::{Did, Nsid, RecordKey, Tid};
 /// `dropped` is empty for a clean, well-formed block. A non-empty `dropped`
 /// means some rows carried malformed content the segment writer let through; the
 /// consumer may log or count them but the surrounding events are still valid.
-#[derive(Debug, Default)]
-pub struct Decoded {
+#[derive(Debug)]
+pub struct Decoded<E = Event> {
     /// Successfully converted events that passed the filter, in row order.
-    pub events: Vec<Event>,
+    pub events: Vec<E>,
     /// Recoverable per-row conversion errors whose rows were dropped.
     pub dropped: Vec<Error>,
+}
+
+impl<E> Default for Decoded<E> {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            dropped: Vec::new(),
+        }
+    }
 }
 
 /// Convert one decoded columnar row into a validated [`Event`].
@@ -57,10 +66,10 @@ pub fn raw_event_to_event(raw: RawEvent) -> Result<Event> {
         witnessed_at: raw.witnessed_at,
         indexed_at: raw.indexed_at,
         kind: raw.kind,
-        collection: &raw.collection,
-        did: &raw.did,
-        rkey: &raw.rkey,
-        rev: &raw.rev,
+        collection: TextColumn::Raw(&raw.collection),
+        did: TextColumn::Raw(&raw.did),
+        rkey: TextColumn::Raw(&raw.rkey),
+        rev: TextColumn::Raw(&raw.rev),
     };
     convert_row(columns, raw.payload)
 }
@@ -192,8 +201,8 @@ fn convert_block_into(body: &[u8], filter: &Filter, out: &mut Decoded) -> Result
         // Filter on the raw columns first; a non-UTF-8 column reads as "" so a
         // constrained DID/collection predicate rejects it, while an unfiltered
         // dimension still admits the row (its typed conversion then drops it).
-        let did = core::str::from_utf8(raw.did).unwrap_or("");
-        let collection = core::str::from_utf8(raw.collection).unwrap_or("");
+        let did = raw.did.text().unwrap_or("");
+        let collection = raw.collection.text().unwrap_or("");
         if !filter.matches_segment(raw.kind.public_kind(), did, collection) {
             return;
         }
@@ -207,7 +216,8 @@ fn convert_block_into(body: &[u8], filter: &Filter, out: &mut Decoded) -> Result
 }
 
 /// Reinterpret a raw column as UTF-8, or report it as malformed.
-fn str_col(bytes: &[u8]) -> Result<&str> {
-    core::str::from_utf8(bytes)
+fn str_col(bytes: TextColumn<'_>) -> Result<&str> {
+    bytes
+        .text()
         .map_err(|_| Error::MalformedEvent("segment row column is not valid UTF-8"))
 }

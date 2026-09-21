@@ -48,7 +48,7 @@ use super::cancel::CancelToken;
 use super::config::Cursor;
 use super::download::{DownloadedSegment, download_segment};
 use super::error::{Error, Result};
-use super::event::{Batch, Delivery, Event, Stats};
+use super::event::{Batch, Delivery, Event, Sequenced, Stats};
 use super::filter::Filter;
 use super::live::{
     DeliverySink, DictionarySource, LiveConfig, LiveConsumer, LiveCursor, WsTransport,
@@ -77,10 +77,10 @@ pub const DEFAULT_MAX_REBACKFILL_STALLS: u32 = 5;
 /// deliveries, not a rejection of the item just handed over. Engine progress
 /// counters ([`StatsHandle`]) therefore account for that final item too — they
 /// report what was delivered, not what the consumer chose to do next.
-pub trait EngineSink {
+pub trait EngineSink<E = Event> {
     /// Deliver one ordered batch or advisory. Returns `false` to stop; the item
     /// is still consumed (see the trait-level contract).
-    fn deliver(&mut self, delivery: Delivery) -> impl Future<Output = bool>;
+    fn deliver(&mut self, delivery: Delivery<E>) -> impl Future<Output = bool>;
 
     /// Report one ordered, recoverable error. The stream continues after it.
     /// Returns `false` to stop.
@@ -94,7 +94,7 @@ pub trait EngineSink {
 /// orchestration be driven by in-memory data in tests without scripting the full
 /// `.jss` HTTP protocol. The engine drives planning page by page, interleaved
 /// with downloads, and owns the sweep bookkeeping ([`PlanSweep`]).
-pub trait ArchiveSource {
+pub trait ArchiveSource<E = Event> {
     /// Fetch and validate one `planSnapshot` page for `filter`. `after_seq` is
     /// the page's exclusive floor; `pinned_tip` is `None` for a sweep's first
     /// page (send the caller's `before_seq`) and `Some(S)` afterwards (freeze
@@ -117,7 +117,7 @@ pub trait ArchiveSource {
         before_seq: u64,
         filter: &Filter,
         cancel: &CancelToken,
-    ) -> impl Future<Output = Result<DownloadedSegment>>;
+    ) -> impl Future<Output = Result<DownloadedSegment<E>>>;
 
     /// The maximum number of segment downloads to run concurrently.
     fn concurrency(&self) -> usize;
@@ -174,6 +174,89 @@ impl<T: HttpTransport> ArchiveSource for ClientArchive<T> {
         self.client.limits().concurrency
     }
 
+    fn max_plan_pages(&self) -> u32 {
+        self.client.limits().max_plan_pages
+    }
+}
+
+/// A scoped archive transform. Results are owned, ordered, and use the same
+/// transport, window, retry, generation, and corruption rules as owned replay.
+pub struct MappedArchive<T, F> {
+    client: ArchiveClient<T>,
+    map: Arc<F>,
+    decode_workers: usize,
+}
+impl<T> ClientArchive<T> {
+    /// Transform validated archive envelopes while their record bytes are
+    /// borrowed from the decompressed block. Return owned data to retain it.
+    ///
+    /// This is decoding, not delivery: calls may run concurrently, outside the
+    /// requested window, or before a later error invalidates the whole segment.
+    /// Commit external effects only in the ordered sink, after validation.
+    pub fn map<F, U>(self, map: F) -> MappedArchive<T, F>
+    where
+        F: Fn(super::view::EventView<'_>) -> U + Send + Sync + 'static,
+        U: Send + 'static,
+    {
+        MappedArchive {
+            client: self.client,
+            map: Arc::new(map),
+            decode_workers: 1,
+        }
+    }
+}
+impl<T, F> MappedArchive<T, F> {
+    /// Bound native CPU workers per whole segment; defaults to one. Browser
+    /// execution remains sequential with identical ordered results.
+    /// With concurrent segments, the total can reach archive concurrency times
+    /// this value. Sparse block decoding uses the archive concurrency instead.
+    pub fn with_decode_workers(mut self, workers: usize) -> Result<Self> {
+        if !(1..=32).contains(&workers) {
+            return Err(Error::InvalidConfig("decode workers must be in 1..=32"));
+        }
+        self.decode_workers = workers;
+        Ok(self)
+    }
+}
+impl<T, F, U> ArchiveSource<super::view::MappedEvent<U>> for MappedArchive<T, F>
+where
+    T: HttpTransport,
+    F: Fn(super::view::EventView<'_>) -> U + Send + Sync + 'static,
+    U: Send + 'static,
+{
+    fn plan_page(
+        &self,
+        filter: &Filter,
+        after: u64,
+        before: Option<u64>,
+        tip: Option<u64>,
+        cancel: &CancelToken,
+    ) -> impl Future<Output = Result<PlanPage>> {
+        plan_page(&self.client, filter, after, before, tip, cancel)
+    }
+    fn download(
+        &self,
+        segment: &PlanSegment,
+        after: u64,
+        before: u64,
+        filter: &Filter,
+        cancel: &CancelToken,
+    ) -> impl Future<Output = Result<DownloadedSegment<super::view::MappedEvent<U>>>> {
+        let map = self.map.clone();
+        super::download::download_segment_mapped_workers(
+            &self.client,
+            segment,
+            after,
+            before,
+            filter,
+            cancel,
+            move |event| map(event),
+            self.decode_workers,
+        )
+    }
+    fn concurrency(&self) -> usize {
+        self.client.limits().concurrency
+    }
     fn max_plan_pages(&self) -> u32 {
         self.client.limits().max_plan_pages
     }
@@ -325,12 +408,7 @@ pub struct Engine<A, W, D> {
     stats: Arc<AtomicStats>,
 }
 
-impl<A, W, D> Engine<A, W, D>
-where
-    A: ArchiveSource,
-    W: WsTransport + Clone,
-    D: DictionarySource + Clone,
-{
+impl<A, W, D> Engine<A, W, D> {
     /// Build an engine. Pass `Some(archive)` for archive replay + live cutover,
     /// or `None` for a pure-live stream.
     pub fn new(
@@ -363,6 +441,39 @@ where
         }
     }
 
+    /// Run a scoped-transform archive through the same snapshot state machine.
+    /// Only snapshot configurations are accepted; this API never dials live.
+    pub async fn run_snapshot<E: Sequenced, S: EngineSink<E>>(self, sink: &mut S) -> Result<()>
+    where
+        A: ArchiveSource<E>,
+    {
+        self.config.validate()?;
+        if !self.config.snapshot_only {
+            return Err(Error::InvalidConfig("run_snapshot requires snapshot_only"));
+        }
+        let archive = self
+            .archive
+            .as_ref()
+            .ok_or(Error::InvalidConfig("snapshot requires archive source"))?;
+        replay_sweep(
+            archive,
+            self.config.after_seq,
+            &self.config,
+            &self.cancel,
+            &self.stats,
+            sink,
+        )
+        .await?;
+        Ok(())
+    }
+}
+
+impl<A, W, D> Engine<A, W, D>
+where
+    A: ArchiveSource,
+    W: WsTransport + Clone,
+    D: DictionarySource + Clone,
+{
     /// Run the engine to completion, delivering ordered batches, advisories, and
     /// recoverable errors to `sink`.
     ///
@@ -392,8 +503,6 @@ where
             ));
         }
 
-        let filter = &config.live.filter;
-        let max_batch = config.live.max_batch;
         let can_backfill = archive.is_some();
 
         // The live "seen" watermark: the highest sequence the live tail has
@@ -417,57 +526,8 @@ where
 
             // === Archive phase: plan a page, download it, plan the next ===
             if let Some(arch) = &archive {
-                let mut sweep = PlanSweep::new(after, config.before_seq, arch.max_plan_pages());
-                // The ascending-delivery floor persists across the whole sweep.
-                let mut floor = after;
-                loop {
-                    if cancel.is_cancelled() {
-                        return Ok(());
-                    }
-                    let (page_after, page_before, pinned) = sweep.bounds();
-                    let page = match arch
-                        .plan_page(filter, page_after, page_before, pinned, &cancel)
-                        .await
-                    {
-                        Ok(page) => page,
-                        Err(Error::Canceled) => return Ok(()),
-                        Err(err) => return Err(err),
-                    };
-                    sweep.absorb(&page)?;
-                    let tip = sweep.tip().unwrap_or_default();
-                    // The tip is published as soon as it is known (a monitor may
-                    // see the goal before any download); pages and coverage are
-                    // published only after the page's work is delivered, so a
-                    // shrinking residual gap never claims undelivered work.
-                    stats.sealed_tip_seq.fetch_max(tip, Ordering::Relaxed);
-
-                    match replay_page(
-                        arch,
-                        &page.segments,
-                        page_after,
-                        tip,
-                        filter,
-                        max_batch,
-                        &cancel,
-                        &stats,
-                        sink,
-                        &mut floor,
-                    )
-                    .await
-                    {
-                        Ok(true) => return Ok(()), // consumer gone or cancelled
-                        Ok(false) => {}
-                        Err(err) => return Err(err),
-                    }
-
-                    stats.pages.fetch_add(1, Ordering::Relaxed);
-                    stats
-                        .planned_through_seq
-                        .fetch_max(sweep.planned_through(), Ordering::Relaxed);
-
-                    if sweep.done() {
-                        break;
-                    }
+                if replay_sweep(arch, after, &config, &cancel, &stats, sink).await? {
+                    return Ok(());
                 }
 
                 if config.snapshot_only {
@@ -544,6 +604,77 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn replay_sweep<A, E, S>(
+    arch: &A,
+    after: u64,
+    config: &EngineConfig,
+    cancel: &CancelToken,
+    stats: &Arc<AtomicStats>,
+    sink: &mut S,
+) -> Result<bool>
+where
+    A: ArchiveSource<E>,
+    E: Sequenced,
+    S: EngineSink<E>,
+{
+    let filter = &config.live.filter;
+    let max_batch = config.live.max_batch;
+    let mut sweep = PlanSweep::new(after, config.before_seq, arch.max_plan_pages());
+    // The ascending-delivery floor persists across the whole sweep.
+    let mut floor = after;
+    loop {
+        if cancel.is_cancelled() {
+            return Ok(true);
+        }
+        let (page_after, page_before, pinned) = sweep.bounds();
+        let page = match arch
+            .plan_page(filter, page_after, page_before, pinned, cancel)
+            .await
+        {
+            Ok(page) => page,
+            Err(Error::Canceled) => return Ok(true),
+            Err(err) => return Err(err),
+        };
+        sweep.absorb(&page)?;
+        let tip = sweep.tip().unwrap_or_default();
+        // The tip is published as soon as it is known (a monitor may
+        // see the goal before any download); pages and coverage are
+        // published only after the page's work is delivered, so a
+        // shrinking residual gap never claims undelivered work.
+        stats.sealed_tip_seq.fetch_max(tip, Ordering::Relaxed);
+
+        match replay_page(
+            arch,
+            &page.segments,
+            page_after,
+            tip,
+            filter,
+            max_batch,
+            cancel,
+            stats,
+            sink,
+            &mut floor,
+        )
+        .await
+        {
+            Ok(true) => return Ok(true), // consumer gone or cancelled
+            Ok(false) => {}
+            Err(err) => return Err(err),
+        }
+
+        stats.pages.fetch_add(1, Ordering::Relaxed);
+        stats
+            .planned_through_seq
+            .fetch_max(sweep.planned_through(), Ordering::Relaxed);
+
+        if sweep.done() {
+            break;
+        }
+    }
+    Ok(false)
+}
+
 /// Download and deliver one plan page's segments in order.
 ///
 /// The [`ArchiveSource`] contract requires each segment's events to be
@@ -568,7 +699,7 @@ where
 /// Returns `Ok(true)` if the consumer asked to stop or the run was cancelled,
 /// `Ok(false)` on normal completion, or `Err` on a fatal error.
 #[allow(clippy::too_many_arguments)]
-async fn replay_page<A, S>(
+async fn replay_page<A, S, E>(
     arch: &A,
     segments: &[PlanSegment],
     after: u64,
@@ -581,11 +712,12 @@ async fn replay_page<A, S>(
     floor: &mut u64,
 ) -> Result<bool>
 where
-    A: ArchiveSource,
-    S: EngineSink,
+    A: ArchiveSource<E>,
+    E: Sequenced,
+    S: EngineSink<E>,
 {
     let concurrency = arch.concurrency().max(1);
-    let mut buf: Vec<Event> = Vec::new();
+    let mut buf: Vec<E> = Vec::new();
 
     let mut downloads = super::ordered::OrderedDownloads::new(
         segments.iter().map(|segment| {
@@ -639,19 +771,19 @@ where
             // repeated by a straddling unit or an inclusive segment boundary:
             // collapse without advancing. These are duplicates of an event we
             // have already emitted, not distinct data.
-            if event.seq <= after || event.seq == *floor {
+            if event.sequence() <= after || event.sequence() == *floor {
                 continue;
             }
             // A *lower* seq inside the window, arriving after a higher one, is a
             // distinct event out of order: the source violated the global
             // ordering contract. Merging arbitrary overlap would need unbounded
             // buffering, so fail loud instead of silently dropping the event.
-            if event.seq < *floor {
+            if event.sequence() < *floor {
                 return Err(Error::PlanInvalid(
                     "archive events are not strictly increasing across segments",
                 ));
             }
-            *floor = event.seq;
+            *floor = event.sequence();
             if buf.capacity() == 0 {
                 buf.reserve(batch_reservation);
             }
@@ -715,8 +847,8 @@ where
 
 /// Flush the pending archive batch to the consumer, updating progress counters.
 /// Returns `false` if the consumer has gone away.
-async fn flush_archive_batch<S: EngineSink>(
-    buf: &mut Vec<Event>,
+async fn flush_archive_batch<E: Sequenced, S: EngineSink<E>>(
+    buf: &mut Vec<E>,
     stats: &Arc<AtomicStats>,
     sink: &mut S,
 ) -> bool {

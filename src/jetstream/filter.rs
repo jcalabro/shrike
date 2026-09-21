@@ -108,6 +108,11 @@ pub struct Filter {
     collections: Vec<CollectionFilter>,
 }
 
+pub(crate) struct SegmentSelection<'a> {
+    pub collection: Option<&'a Nsid>,
+    pub did_validated: bool,
+}
+
 impl Filter {
     /// An empty filter that matches every event.
     pub fn new() -> Filter {
@@ -235,38 +240,56 @@ impl Filter {
     /// when that dimension is unfiltered (the row is then dropped, not silently
     /// kept, when its typed conversion fails).
     pub fn matches_segment(&self, kind: Kind, did: &str, collection: &str) -> bool {
+        self.select_segment(kind, did, collection).is_some()
+    }
+
+    /// Reuse proofs established by exact matching instead of validating the
+    /// same identifiers again during scoped row conversion.
+    pub(crate) fn select_segment(
+        &self,
+        kind: Kind,
+        did: &str,
+        collection: &str,
+    ) -> Option<SegmentSelection<'_>> {
+        let mut selected = SegmentSelection {
+            collection: None,
+            did_validated: !self.dids.is_empty(),
+        };
         // Kind predicate (empty means all).
         if !self.kinds.is_empty() && !self.kinds.contains(&kind) {
-            return false;
+            return None;
         }
         // DID predicate (empty means all), applied to every kind. The filter's
         // DID set only ever holds syntactically valid DIDs, so a row DID that
         // fails to parse can never be a member and correctly fails the predicate.
         if !self.dids.is_empty() && !self.dids.contains(did) {
-            return false;
+            return None;
         }
         // Collection predicate (empty means all), applied to commits only.
         if self.collections.is_empty() {
-            return true;
+            return Some(selected);
         }
         if kind != Kind::Commit || collection.is_empty() {
-            return true;
+            return Some(selected);
         }
         // Matching a validated exact NSID also proves the input's validity.
         // Only authority case may differ; mismatches need no temporary NSID.
         let mut has_prefix = false;
         for predicate in &self.collections {
             match predicate {
-                CollectionFilter::Exact(nsid) if matches_exact(collection, nsid) => return true,
+                CollectionFilter::Exact(nsid) if matches_exact(collection, nsid) => {
+                    selected.collection = Some(nsid);
+                    return Some(selected);
+                }
                 CollectionFilter::Prefix(_) => has_prefix = true,
                 _ => {}
             }
         }
         if !has_prefix {
-            return false;
+            return None;
         }
         // Wildcards must still validate the whole input, including the suffix.
-        match Nsid::validate(collection) {
+        let matches = match Nsid::validate(collection) {
             Ok(_) => self.collections.iter().any(|c| match c {
                 CollectionFilter::Prefix(prefix) => collection
                     .get(..prefix.len())
@@ -276,7 +299,8 @@ impl Filter {
             // A commit whose collection is not a valid NSID cannot satisfy any
             // exact or wildcard predicate, so a constrained subscription drops it.
             Err(_) => false,
-        }
+        };
+        matches.then_some(selected)
     }
 
     /// The kinds as wire tokens, for building the `kinds` query parameter.

@@ -92,6 +92,16 @@ pub struct Event {
     pub payload: EventPayload,
 }
 
+/// The original Jetstream cursor carried by an ordered delivery item.
+pub trait Sequenced {
+    fn sequence(&self) -> u64;
+}
+impl Sequenced for Event {
+    fn sequence(&self) -> u64 {
+        self.seq
+    }
+}
+
 impl Event {
     /// The event's [`Kind`].
     pub fn kind(&self) -> Kind {
@@ -118,24 +128,30 @@ pub struct Info {
 /// A batch of ordered events handed to the consumer. Owns its events and reports
 /// the highest sequence through [`Batch::last_cursor`] so progress can be
 /// persisted after processing.
-#[derive(Debug, Clone, Default)]
-pub struct Batch {
-    events: Vec<Event>,
+#[derive(Debug, Clone)]
+pub struct Batch<E = Event> {
+    events: Vec<E>,
 }
 
-impl Batch {
+impl<E> Default for Batch<E> {
+    fn default() -> Self {
+        Self { events: Vec::new() }
+    }
+}
+
+impl<E: Sequenced> Batch<E> {
     /// Build a batch from events already ordered by ascending sequence.
-    pub fn new(events: Vec<Event>) -> Batch {
+    pub fn new(events: Vec<E>) -> Batch<E> {
         Batch { events }
     }
 
     /// The events in the batch, in ascending sequence order.
-    pub fn events(&self) -> &[Event] {
+    pub fn events(&self) -> &[E] {
         &self.events
     }
 
     /// Consume the batch, yielding its events.
-    pub fn into_events(self) -> Vec<Event> {
+    pub fn into_events(self) -> Vec<E> {
         self.events
     }
 
@@ -153,16 +169,16 @@ impl Batch {
     /// processing — or `None` if the batch is empty. Events are ordered, so this
     /// is the last event's sequence.
     pub fn last_cursor(&self) -> Option<u64> {
-        self.events.last().map(|e| e.seq)
+        self.events.last().map(Sequenced::sequence)
     }
 }
 
 /// A stream delivery: a batch of events or a seq-less advisory. An [`Info`] is
 /// never folded into a [`Batch`] and never advances the cursor.
 #[derive(Debug, Clone)]
-pub enum Delivery {
+pub enum Delivery<E = Event> {
     /// A batch of ordered events.
-    Batch(Batch),
+    Batch(Batch<E>),
     /// An advisory `#info` frame.
     Info(Info),
 }
@@ -681,6 +697,6 @@ mod tests {
         let batch = Batch::new(vec![make(1), make(5), make(9)]);
         assert_eq!(batch.last_cursor(), Some(9));
         assert_eq!(batch.len(), 3);
-        assert_eq!(Batch::default().last_cursor(), None);
+        assert_eq!(Batch::<Event>::default().last_cursor(), None);
     }
 }

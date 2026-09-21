@@ -83,9 +83,21 @@ pub struct Args {
     #[arg(long, requires = "stats")]
     pub typed_likes: bool,
 
+    /// Experimental scoped archive transform; decode before owning records.
+    #[arg(long, requires_all = ["snapshot_only", "stats"])]
+    pub scoped: bool,
+
+    /// Native CPU workers per whole segment in scoped mode (1..=32).
+    #[arg(long, requires = "scoped")]
+    pub decode_workers: Option<std::num::NonZeroUsize>,
+
     /// Concurrent archive segments and block/stripe requests per segment.
     #[arg(long)]
     pub download_concurrency: Option<std::num::NonZeroUsize>,
+
+    /// Fetch each whole archive segment in one stream instead of parallel ranges.
+    #[arg(long)]
+    pub single_stream: bool,
 
     /// Maximum events per delivery. Larger batches can amortize CPU work.
     #[arg(long)]
@@ -112,18 +124,15 @@ pub async fn run(args: Args) -> Result<()> {
     let needs_archive = args.after_seq.is_some() || args.snapshot_only || args.before_seq.is_some();
 
     let cancel = CancelToken::new();
+    let http = NativeHttpTransport::new().context("failed to build HTTP transport")?;
     let archive = if needs_archive {
-        Some(build_archive(&args, secure)?)
+        Some(build_archive(&args, secure, http.clone())?)
     } else {
         None
     };
 
-    let dict_transport = NativeHttpTransport::new().context("failed to build HTTP transport")?;
-    let dict = HttpDictionarySource::new(dict_transport, args.host.clone(), secure, cancel.clone());
+    let dict = HttpDictionarySource::new(http, args.host.clone(), secure, cancel.clone());
     let ws = NativeWsTransport::new(read_limit);
-
-    let engine = Engine::new(archive, ws, dict, config, cancel.clone());
-    let stats = engine.stats();
 
     // The first Ctrl-C requests a clean stop: the engine finishes the batch in
     // flight and returns Ok(()), so a persisted cursor stays consistent. A second
@@ -138,6 +147,35 @@ pub async fn run(args: Args) -> Result<()> {
             std::process::exit(130);
         }
     });
+
+    if args.scoped {
+        let typed = args.typed_likes;
+        let archive = archive
+            .map(|a| {
+                let mapped = a.map(move |event| map_scoped(event, typed));
+                mapped.with_decode_workers(args.decode_workers.map(|n| n.get()).unwrap_or(1))
+            })
+            .transpose()?;
+        let engine = Engine::new(archive, ws, dict, config, cancel);
+        let mut sink = CliSink {
+            output: Output::Stats { json: args.json },
+            stats: engine.stats(),
+            typed_likes: typed,
+            decoded: 0,
+            decode_errors: 0,
+            started: Instant::now(),
+            last_report: Instant::now(),
+        };
+        engine
+            .run_snapshot(&mut sink)
+            .await
+            .context("scoped snapshot failed")?;
+        let _ = emit_stats(&sink, args.json);
+        return Ok(());
+    }
+
+    let engine = Engine::new(archive, ws, dict, config, cancel.clone());
+    let stats = engine.stats();
 
     let output = if args.stats {
         Output::Stats { json: args.json }
@@ -169,7 +207,11 @@ pub async fn run(args: Args) -> Result<()> {
 }
 
 /// Build the archive source, reading the bearer key from the environment.
-fn build_archive(args: &Args, secure: bool) -> Result<ClientArchive<NativeHttpTransport>> {
+fn build_archive(
+    args: &Args,
+    secure: bool,
+    transport: NativeHttpTransport,
+) -> Result<ClientArchive<NativeHttpTransport>> {
     let key = ApiKey::new(std::env::var("JETSTREAM_API_KEY").unwrap_or_default());
     if key.is_empty() {
         bail!("archive replay requires the JETSTREAM_API_KEY environment variable");
@@ -183,7 +225,9 @@ fn build_archive(args: &Args, secure: bool) -> Result<ClientArchive<NativeHttpTr
     if let Some(concurrency) = args.download_concurrency {
         archive_config.limits.concurrency = concurrency.get();
     }
-    let transport = NativeHttpTransport::new().context("failed to build HTTP transport")?;
+    if args.single_stream {
+        archive_config.limits.stripe_bytes = u64::MAX;
+    }
     let client =
         ArchiveClient::new(transport, archive_config).context("invalid archive configuration")?;
     Ok(ClientArchive::new(client))
@@ -271,14 +315,60 @@ impl EngineSink for CliSink {
     }
 }
 
+fn map_scoped(event: shrike::jetstream::EventView<'_>, typed: bool) -> u8 {
+    if typed
+        && let shrike::jetstream::EventPayloadView::Commit(c) = &event.payload
+        && c.collection == "app.bsky.feed.like"
+        && let Some(record) = c.record
+    {
+        match shrike::api::app::bsky::FeedLikeCborView::from_cbor(record) {
+            Ok(like) => {
+                std::hint::black_box(like);
+                1
+            }
+            Err(_) => 2,
+        }
+    } else {
+        std::hint::black_box(event);
+        0
+    }
+}
+
+impl EngineSink<shrike::jetstream::MappedEvent<u8>> for CliSink {
+    async fn deliver(&mut self, delivery: Delivery<shrike::jetstream::MappedEvent<u8>>) -> bool {
+        if let Delivery::Batch(batch) = delivery {
+            for event in batch.events() {
+                match event.value {
+                    1 => self.decoded += 1,
+                    2 => self.decode_errors += 1,
+                    _ => {}
+                }
+            }
+            if self.last_report.elapsed() >= Duration::from_secs(1) {
+                self.last_report = Instant::now();
+                if let Output::Stats { json } = self.output {
+                    return !is_broken_pipe(&emit_stats(self, json));
+                }
+            }
+        }
+        true
+    }
+    async fn recoverable(&mut self, error: shrike::jetstream::Error) -> bool {
+        eprintln!("recoverable error: {error}");
+        true
+    }
+}
+
 fn decode_like(
     event: &Event,
-) -> Option<std::result::Result<shrike::api::app::bsky::FeedLike, shrike::cbor::CborError>> {
+) -> Option<
+    std::result::Result<shrike::api::app::bsky::FeedLikeCborView<'_>, shrike::cbor::CborError>,
+> {
     if let EventPayload::Commit(commit) = &event.payload
         && commit.collection.as_str() == "app.bsky.feed.like"
         && let Some(record) = &commit.record
     {
-        Some(shrike::api::app::bsky::FeedLike::from_cbor(
+        Some(shrike::api::app::bsky::FeedLikeCborView::from_cbor(
             record.as_cbor(),
         ))
     } else {
@@ -286,10 +376,13 @@ fn decode_like(
     }
 }
 
-fn count_likes(
+fn count_likes<'a>(
     values: impl IntoIterator<
         Item = Option<
-            std::result::Result<shrike::api::app::bsky::FeedLike, shrike::cbor::CborError>,
+            std::result::Result<
+                shrike::api::app::bsky::FeedLikeCborView<'a>,
+                shrike::cbor::CborError,
+            >,
         >,
     >,
 ) -> (u64, u64) {
@@ -474,7 +567,10 @@ mod tests {
             json: false,
             stats: false,
             typed_likes: false,
+            scoped: false,
+            decode_workers: None,
             download_concurrency: None,
+            single_stream: false,
             batch_size: None,
         }
     }

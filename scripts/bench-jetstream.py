@@ -38,11 +38,13 @@ def worker(config):
     env = os.environ.copy()
     env['TOKIO_WORKER_THREADS'] = str(len(config['cpus']))
     env['GOMAXPROCS'] = str(len(config['cpus']))
-    env['GOMEMLIMIT'] = '512MiB'
+    env['GOGC'] = '400'  # Match the Go CLI default; exclude inherited shell tuning.
     env.setdefault('JETSTREAM_API_KEY', 'local-benchmark')
     hashes = {key: hashlib.sha256(Path(config[key]).read_bytes()).hexdigest()
               for key in ['baseline', 'candidate']}
     print(json.dumps(dict(type='metadata', config=config, hashes=hashes,
+                          environment={k: env[k] for k in
+                                       ['TOKIO_WORKER_THREADS', 'GOMAXPROCS', 'GOGC']},
                           uname=list(os.uname()), load=os.getloadavg())), flush=True)
     rng = random.Random(config['seed'])
     expected = None
@@ -63,7 +65,9 @@ def worker(config):
                        '/usr/bin/time', '-f', '@METRIC %e %U %S %M %x %w %c %F %R %I %O',
                        'ionice', '-c', '3', *client, *config[label+'_args']]
             started = time.perf_counter()
-            proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+            run_env = env.copy()
+            run_env['GOMEMLIMIT'] = config[label+'_go_memory_limit']
+            proc = subprocess.Popen(command, env=run_env, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True)
             errors = []
             def drain():
@@ -144,6 +148,8 @@ def main():
     p.add_argument('--candidate', required=True)
     p.add_argument('--baseline-kind', choices=['rust', 'go'], default='rust')
     p.add_argument('--candidate-kind', choices=['rust', 'go'], default='rust')
+    p.add_argument('--baseline-go-memory-limit', default='512MiB')
+    p.add_argument('--candidate-go-memory-limit', default='512MiB')
     p.add_argument('--typed-error-delta', type=int, default=0,
                    help='predeclared candidate-minus-baseline typed errors for known contract differences')
     p.add_argument('--baseline-arg', dest='baseline_args', action='append', default=[],

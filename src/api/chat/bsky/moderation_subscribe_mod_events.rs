@@ -450,6 +450,263 @@ impl ModerationSubscribeModEventsEventChatAccepted {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventChatAcceptedCborView<'a> {
+    pub rev: &'a str,
+    pub method: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: Option<crate::syntax::Did>,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: Option<&'a str>,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: Option<i64>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventChatAcceptedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventChatAccepted, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventChatAccepted {
+            rev: self.rev.to_owned(),
+            method: self.method.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.as_ref().map(|value| (*value).to_owned()),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_method: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x74\x68\x6f\x64", |decoder| {
+            field_method = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"method" => {
+                    field_method = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            method: field_method.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'method'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ModerationSubscribeModEventsEventConvoFirstMessage — Fired when the first message was sent on a convo.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -776,6 +1033,195 @@ impl ModerationSubscribeModEventsEventConvoFirstMessage {
             recipients: field_recipients,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventConvoFirstMessageCborView<'a> {
+    pub rev: &'a str,
+    pub user: crate::syntax::Did,
+    pub convo_id: &'a str,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub message_id: Option<&'a str>,
+    pub recipients: Vec<crate::syntax::Did>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventConvoFirstMessageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventConvoFirstMessage, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventConvoFirstMessage {
+            rev: self.rev.to_owned(),
+            user: self.user.clone(),
+            convo_id: self.convo_id.to_owned(),
+            created_at: self.created_at.to_owned(),
+            message_id: self.message_id.as_ref().map(|value| (*value).to_owned()),
+            recipients: self.recipients.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_user: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_message_id: Option<&'a str> = None;
+        let mut field_recipients: Vec<crate::syntax::Did> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x75\x73\x65\x72", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_user = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x6d\x65\x73\x73\x61\x67\x65\x49\x64", |decoder| {
+            field_message_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x72\x65\x63\x69\x70\x69\x65\x6e\x74\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    if let crate::cbor::Value::Text(s) = item {
+                        field_recipients.push(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected text in array".into(),
+                        ));
+                    }
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"user" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_user = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"messageId" => {
+                    field_message_id = Some(decoder.text()?);
+                }
+                b"recipients" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_recipients.push(crate::syntax::Did::try_from(s).map_err(
+                                    |e| crate::cbor::CborError::InvalidCbor(e.to_string()),
+                                )?);
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            user: field_user.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'user'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            message_id: field_message_id,
+            recipients: field_recipients,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1241,6 +1687,306 @@ impl ModerationSubscribeModEventsEventGroupChatCreated {
             initial_member_dids: field_initial_member_dids,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatCreatedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub initial_member_dids: Vec<crate::syntax::Did>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatCreatedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatCreated, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventGroupChatCreated {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            initial_member_dids: self.initial_member_dids.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut field_initial_member_dids: Vec<crate::syntax::Did> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x71\x69\x6e\x69\x74\x69\x61\x6c\x4d\x65\x6d\x62\x65\x72\x44\x69\x64\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        if let crate::cbor::Value::Text(s) = item {
+                            field_initial_member_dids.push(
+                                crate::syntax::Did::try_from(s).map_err(|e| {
+                                    crate::cbor::CborError::InvalidCbor(e.to_string())
+                                })?,
+                            );
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text in array".into(),
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"initialMemberDids" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Text(s) = item {
+                                field_initial_member_dids.push(
+                                    crate::syntax::Did::try_from(s).map_err(|e| {
+                                        crate::cbor::CborError::InvalidCbor(e.to_string())
+                                    })?,
+                                );
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected text in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            initial_member_dids: field_initial_member_dids,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1716,6 +2462,302 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequest {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub join_link_code: &'a str,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub subject_follows_owner: bool,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatJoinRequest, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventGroupChatJoinRequest {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            join_link_code: self.join_link_code.to_owned(),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            subject_follows_owner: self.subject_follows_owner,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_join_link_code: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut field_subject_follows_owner: Option<bool> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6c\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b\x43\x6f\x64\x65",
+            |decoder| {
+                field_join_link_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x73\x73\x75\x62\x6a\x65\x63\x74\x46\x6f\x6c\x6c\x6f\x77\x73\x4f\x77\x6e\x65\x72",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Bool(b) = value {
+                    field_subject_follows_owner = Some(b);
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"joinLinkCode" => {
+                    field_join_link_code = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"subjectFollowsOwner" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_subject_follows_owner = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            join_link_code: field_join_link_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'joinLinkCode'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            subject_follows_owner: field_subject_follows_owner.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'subjectFollowsOwner'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ModerationSubscribeModEventsEventGroupChatJoinRequestApproved — Fired when a join request is approved by the group owner.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2165,6 +3207,290 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequestApproved {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatJoinRequestApprovedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub subject_did: crate::syntax::Did,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatJoinRequestApprovedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatJoinRequestApproved, crate::cbor::CborError>
+    {
+        Ok(
+            ModerationSubscribeModEventsEventGroupChatJoinRequestApproved {
+                rev: self.rev.to_owned(),
+                convo_id: self.convo_id.to_owned(),
+                actor_did: self.actor_did.clone(),
+                owner_did: self.owner_did.clone(),
+                created_at: self.created_at.to_owned(),
+                group_name: self.group_name.to_owned(),
+                subject_did: self.subject_did.clone(),
+                convo_created_at: self.convo_created_at.to_owned(),
+                group_member_count: self.group_member_count,
+                extra: std::collections::HashMap::new(),
+                extra_cbor: self
+                    .extra_cbor
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                    .collect(),
+            },
+        )
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_subject_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x73\x75\x62\x6a\x65\x63\x74\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_subject_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"subjectDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            subject_did: field_subject_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subjectDid'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ModerationSubscribeModEventsEventGroupChatJoinRequestRejected — Fired when a join request is rejected by the group owner.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2611,6 +3937,290 @@ impl ModerationSubscribeModEventsEventGroupChatJoinRequestRejected {
                 extra_cbor,
             },
         )
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatJoinRequestRejectedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub subject_did: crate::syntax::Did,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatJoinRequestRejectedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatJoinRequestRejected, crate::cbor::CborError>
+    {
+        Ok(
+            ModerationSubscribeModEventsEventGroupChatJoinRequestRejected {
+                rev: self.rev.to_owned(),
+                convo_id: self.convo_id.to_owned(),
+                actor_did: self.actor_did.clone(),
+                owner_did: self.owner_did.clone(),
+                created_at: self.created_at.to_owned(),
+                group_name: self.group_name.to_owned(),
+                subject_did: self.subject_did.clone(),
+                convo_created_at: self.convo_created_at.to_owned(),
+                group_member_count: self.group_member_count,
+                extra: std::collections::HashMap::new(),
+                extra_cbor: self
+                    .extra_cbor
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                    .collect(),
+            },
+        )
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_subject_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x73\x75\x62\x6a\x65\x63\x74\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_subject_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"subjectDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            subject_did: field_subject_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subjectDid'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
     }
 }
 
@@ -3147,6 +4757,365 @@ impl ModerationSubscribeModEventsEventGroupChatMemberAdded {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatMemberAddedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub subject_did: crate::syntax::Did,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub request_members_count: i64,
+    pub subject_follows_owner: bool,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatMemberAddedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatMemberAdded, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventGroupChatMemberAdded {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            subject_did: self.subject_did.clone(),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            request_members_count: self.request_members_count,
+            subject_follows_owner: self.subject_follows_owner,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_subject_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut field_request_members_count: Option<i64> = None;
+        let mut field_subject_follows_owner: Option<bool> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x73\x75\x62\x6a\x65\x63\x74\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_subject_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x73\x72\x65\x71\x75\x65\x73\x74\x4d\x65\x6d\x62\x65\x72\x73\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_request_members_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_request_members_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x73\x73\x75\x62\x6a\x65\x63\x74\x46\x6f\x6c\x6c\x6f\x77\x73\x4f\x77\x6e\x65\x72",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Bool(b) = value {
+                    field_subject_follows_owner = Some(b);
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"subjectDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"requestMembersCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_request_members_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_request_members_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"subjectFollowsOwner" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_subject_follows_owner = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            subject_did: field_subject_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subjectDid'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            request_members_count: field_request_members_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'requestMembersCount'".into(),
+                )
+            })?,
+            subject_follows_owner: field_subject_follows_owner.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'subjectFollowsOwner'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ModerationSubscribeModEventsEventGroupChatMemberJoined — Fired when a member joins a group chat via an join link that does not require approval.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3614,6 +5583,303 @@ impl ModerationSubscribeModEventsEventGroupChatMemberJoined {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatMemberJoinedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub join_link_code: &'a str,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub subject_follows_owner: bool,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatMemberJoinedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatMemberJoined, crate::cbor::CborError>
+    {
+        Ok(ModerationSubscribeModEventsEventGroupChatMemberJoined {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            join_link_code: self.join_link_code.to_owned(),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            subject_follows_owner: self.subject_follows_owner,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_join_link_code: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut field_subject_follows_owner: Option<bool> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6c\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b\x43\x6f\x64\x65",
+            |decoder| {
+                field_join_link_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x73\x73\x75\x62\x6a\x65\x63\x74\x46\x6f\x6c\x6c\x6f\x77\x73\x4f\x77\x6e\x65\x72",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Bool(b) = value {
+                    field_subject_follows_owner = Some(b);
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"joinLinkCode" => {
+                    field_join_link_code = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"subjectFollowsOwner" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_subject_follows_owner = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            join_link_code: field_join_link_code.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'joinLinkCode'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            subject_follows_owner: field_subject_follows_owner.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'subjectFollowsOwner'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4087,6 +6353,303 @@ impl ModerationSubscribeModEventsEventGroupChatMemberLeft {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatMemberLeftCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub subject_did: crate::syntax::Did,
+    pub leave_method: &'a str,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatMemberLeftCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatMemberLeft, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventGroupChatMemberLeft {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            subject_did: self.subject_did.clone(),
+            leave_method: self.leave_method.to_owned(),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_subject_did: Option<crate::syntax::Did> = None;
+        let mut field_leave_method: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x73\x75\x62\x6a\x65\x63\x74\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_subject_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x6c\x65\x61\x76\x65\x4d\x65\x74\x68\x6f\x64",
+            |decoder| {
+                field_leave_method = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"subjectDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"leaveMethod" => {
+                    field_leave_method = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            subject_did: field_subject_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subjectDid'".into())
+            })?,
+            leave_method: field_leave_method.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'leaveMethod'".into())
+            })?,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4755,6 +7318,363 @@ impl ModerationSubscribeModEventsEventGroupChatUpdated {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventGroupChatUpdatedCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub new_name: Option<&'a str>,
+    pub old_name: Option<&'a str>,
+    pub actor_did: crate::syntax::Did,
+    pub owner_did: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_name: &'a str,
+    pub lock_reason: Option<&'a str>,
+    pub update_type: &'a str,
+    pub join_link_code: Option<&'a str>,
+    pub convo_created_at: crate::syntax::DatetimeRef<'a>,
+    pub group_member_count: i64,
+    pub join_link_followers_only: Option<bool>,
+    pub join_link_requires_approval: Option<bool>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventGroupChatUpdatedCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventGroupChatUpdated, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventGroupChatUpdated {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            new_name: self.new_name.as_ref().map(|value| (*value).to_owned()),
+            old_name: self.old_name.as_ref().map(|value| (*value).to_owned()),
+            actor_did: self.actor_did.clone(),
+            owner_did: self.owner_did.clone(),
+            created_at: self.created_at.to_owned(),
+            group_name: self.group_name.to_owned(),
+            lock_reason: self.lock_reason.as_ref().map(|value| (*value).to_owned()),
+            update_type: self.update_type.to_owned(),
+            join_link_code: self
+                .join_link_code
+                .as_ref()
+                .map(|value| (*value).to_owned()),
+            convo_created_at: self.convo_created_at.to_owned(),
+            group_member_count: self.group_member_count,
+            join_link_followers_only: self.join_link_followers_only,
+            join_link_requires_approval: self.join_link_requires_approval,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_new_name: Option<&'a str> = None;
+        let mut field_old_name: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_owner_did: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_name: Option<&'a str> = None;
+        let mut field_lock_reason: Option<&'a str> = None;
+        let mut field_update_type: Option<&'a str> = None;
+        let mut field_join_link_code: Option<&'a str> = None;
+        let mut field_convo_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_group_member_count: Option<i64> = None;
+        let mut field_join_link_followers_only: Option<bool> = None;
+        let mut field_join_link_requires_approval: Option<bool> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6e\x65\x77\x4e\x61\x6d\x65", |decoder| {
+            field_new_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6f\x6c\x64\x4e\x61\x6d\x65", |decoder| {
+            field_old_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6f\x77\x6e\x65\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_owner_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x67\x72\x6f\x75\x70\x4e\x61\x6d\x65", |decoder| {
+            field_group_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x6c\x6f\x63\x6b\x52\x65\x61\x73\x6f\x6e", |decoder| {
+            field_lock_reason = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x75\x70\x64\x61\x74\x65\x54\x79\x70\x65", |decoder| {
+            field_update_type = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6c\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b\x43\x6f\x64\x65",
+            |decoder| {
+                field_join_link_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x63\x6f\x6e\x76\x6f\x43\x72\x65\x61\x74\x65\x64\x41\x74",
+            |decoder| {
+                field_convo_created_at = Some(
+                    crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x67\x72\x6f\x75\x70\x4d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_group_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(b"\x75\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b\x46\x6f\x6c\x6c\x6f\x77\x65\x72\x73\x4f\x6e\x6c\x79", |decoder| {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_join_link_followers_only = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+            Ok(())
+        })?;
+        entries.try_field(b"\x78\x18\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b\x52\x65\x71\x75\x69\x72\x65\x73\x41\x70\x70\x72\x6f\x76\x61\x6c", |decoder| {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_join_link_requires_approval = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"newName" => {
+                    field_new_name = Some(decoder.text()?);
+                }
+                b"oldName" => {
+                    field_old_name = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"ownerDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_owner_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupName" => {
+                    field_group_name = Some(decoder.text()?);
+                }
+                b"lockReason" => {
+                    field_lock_reason = Some(decoder.text()?);
+                }
+                b"updateType" => {
+                    field_update_type = Some(decoder.text()?);
+                }
+                b"joinLinkCode" => {
+                    field_join_link_code = Some(decoder.text()?);
+                }
+                b"convoCreatedAt" => {
+                    field_convo_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"groupMemberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_group_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_group_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"joinLinkFollowersOnly" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_join_link_followers_only = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"joinLinkRequiresApproval" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_join_link_requires_approval = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            new_name: field_new_name,
+            old_name: field_old_name,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            owner_did: field_owner_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'ownerDid'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            group_name: field_group_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'groupName'".into())
+            })?,
+            lock_reason: field_lock_reason,
+            update_type: field_update_type.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updateType'".into())
+            })?,
+            join_link_code: field_join_link_code,
+            convo_created_at: field_convo_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'convoCreatedAt'".into(),
+                )
+            })?,
+            group_member_count: field_group_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'groupMemberCount'".into(),
+                )
+            })?,
+            join_link_followers_only: field_join_link_followers_only,
+            join_link_requires_approval: field_join_link_requires_approval,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ModerationSubscribeModEventsEventRateLimitExceeded — Fired when a user exceeds a rate limit.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -4988,6 +7908,142 @@ impl ModerationSubscribeModEventsEventRateLimitExceeded {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ModerationSubscribeModEventsEventRateLimitExceededCborView<'a> {
+    pub rev: &'a str,
+    pub actor_did: crate::syntax::Did,
+    pub endpoint: &'a str,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ModerationSubscribeModEventsEventRateLimitExceededCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ModerationSubscribeModEventsEventRateLimitExceeded, crate::cbor::CborError> {
+        Ok(ModerationSubscribeModEventsEventRateLimitExceeded {
+            rev: self.rev.to_owned(),
+            actor_did: self.actor_did.clone(),
+            endpoint: self.endpoint.to_owned(),
+            created_at: self.created_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_actor_did: Option<crate::syntax::Did> = None;
+        let mut field_endpoint: Option<&'a str> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x61\x63\x74\x6f\x72\x44\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_actor_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x65\x6e\x64\x70\x6f\x69\x6e\x74", |decoder| {
+            field_endpoint = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"actorDid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_actor_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"endpoint" => {
+                    field_endpoint = Some(decoder.text()?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            actor_did: field_actor_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'actorDid'".into())
+            })?,
+            endpoint: field_endpoint.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'endpoint'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

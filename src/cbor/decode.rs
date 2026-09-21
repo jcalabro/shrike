@@ -238,6 +238,13 @@ impl<'a> Decoder<'a> {
 
     #[inline]
     fn read_map_key(&mut self, prev_key_bytes: &mut &'a [u8]) -> Result<&'a str, CborError> {
+        let bytes = self.read_map_key_bytes(prev_key_bytes)?;
+        simdutf8::basic::from_utf8(bytes)
+            .map_err(|_| CborError::InvalidCbor("invalid UTF-8 in text string".into()))
+    }
+
+    #[inline]
+    fn read_map_key_bytes(&mut self, prev_key_bytes: &mut &'a [u8]) -> Result<&'a [u8], CborError> {
         let key_start = self.pos;
         let key_byte = self.read_byte()?;
         let key_major = key_byte >> 5;
@@ -251,14 +258,6 @@ impl<'a> Decoder<'a> {
         let key_len_usize = usize::try_from(key_len)
             .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
         let key_bytes = self.read_slice(key_len_usize)?;
-        let key = match simdutf8::basic::from_utf8(key_bytes) {
-            Ok(s) => s,
-            Err(_) => {
-                return Err(CborError::InvalidCbor(
-                    "invalid UTF-8 in text string".into(),
-                ));
-            }
-        };
         let key_encoded = &self.buf[key_start..self.pos];
 
         // Check canonical order by comparing raw CBOR-encoded key
@@ -280,7 +279,28 @@ impl<'a> Decoder<'a> {
         }
         *prev_key_bytes = key_encoded;
 
-        Ok(key)
+        Ok(key_bytes)
+    }
+
+    /// Typed text decoding without constructing a generic Value. Shares the
+    /// same canonical length, UTF-8, bounds, and depth rules as decode().
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn text(&mut self) -> Result<&'a str, CborError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(CborError::InvalidCbor(
+                "maximum nesting depth exceeded".into(),
+            ));
+        }
+        let byte = self.read_byte()?;
+        if byte >> 5 != 3 {
+            return Err(CborError::InvalidCbor("expected text".into()));
+        }
+        let len = usize::try_from(self.read_argument(byte & 0x1f)?)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        let bytes = self.read_slice(len)?;
+        simdutf8::basic::from_utf8(bytes)
+            .map_err(|_| CborError::InvalidCbor("invalid UTF-8 in text string".into()))
     }
 
     /// How many bytes have been consumed so far.
@@ -407,6 +427,57 @@ pub(crate) struct MapEntries<'d, 'a> {
 
 #[cfg(any(feature = "api", test))]
 impl<'a> MapEntries<'_, 'a> {
+    /// Consume a known, canonically encoded schema key when it is next. A miss
+    /// leaves the decoder unchanged for the ordinary unknown-field path.
+    /// `encoded` is a complete text key emitted by the code generator.
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn try_field(
+        &mut self,
+        encoded: &'static [u8],
+        decode: impl FnOnce(&mut Decoder<'a>) -> Result<(), CborError>,
+    ) -> Result<bool, CborError> {
+        if self.remaining == 0 || !self.decoder.buf[self.decoder.pos..].starts_with(encoded) {
+            return Ok(false);
+        }
+        if !self.previous.is_empty() && self.previous >= encoded {
+            return Err(CborError::InvalidCbor(
+                "duplicate or noncanonical map key".into(),
+            ));
+        }
+        self.remaining -= 1;
+        self.decoder.pos += encoded.len();
+        self.previous = encoded;
+        let result = decode(self.decoder);
+        if result.is_err() {
+            self.remaining = 0;
+        }
+        result.map(|()| true)
+    }
+
+    /// Generated code can prove known literal keys are UTF-8 by matching bytes.
+    /// It MUST validate unknown keys before using or preserving them. Wire
+    /// lengths, duplicate rejection, ordering, and nesting remain checked here.
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn next_raw<T>(
+        &mut self,
+        decode: impl FnOnce(&'a [u8], &mut Decoder<'a>) -> Result<T, CborError>,
+    ) -> Option<Result<T, CborError>> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let result = self
+            .decoder
+            .read_map_key_bytes(&mut self.previous)
+            .and_then(|key| decode(key, self.decoder));
+        if result.is_err() {
+            self.remaining = 0;
+        }
+        Some(result)
+    }
+
     /// Decode each field in place. Nested typed maps share the same depth
     /// budget and key checks; the callback must consume exactly one value.
     pub(crate) fn next_with<T>(

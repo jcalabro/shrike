@@ -401,3 +401,214 @@ impl VideoDefsJobStatus {
         })
     }
 }
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct VideoDefsJobStatusCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub blob: Option<crate::api::Blob>,
+    pub error: Option<&'a str>,
+    pub job_id: &'a str,
+    pub state: &'a str,
+    pub message: Option<&'a str>,
+    pub progress: Option<i64>,
+    pub failure_code: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> VideoDefsJobStatusCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<VideoDefsJobStatus, crate::cbor::CborError> {
+        Ok(VideoDefsJobStatus {
+            did: self.did.clone(),
+            blob: self.blob.clone(),
+            error: self.error.as_ref().map(|value| (*value).to_owned()),
+            job_id: self.job_id.to_owned(),
+            state: self.state.to_owned(),
+            message: self.message.as_ref().map(|value| (*value).to_owned()),
+            progress: self.progress,
+            failure_code: self.failure_code.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_blob: Option<crate::api::Blob> = None;
+        let mut field_error: Option<&'a str> = None;
+        let mut field_job_id: Option<&'a str> = None;
+        let mut field_state: Option<&'a str> = None;
+        let mut field_message: Option<&'a str> = None;
+        let mut field_progress: Option<i64> = None;
+        let mut field_failure_code: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x62\x6c\x6f\x62", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_blob = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x65\x72\x72\x6f\x72", |decoder| {
+            field_error = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x6a\x6f\x62\x49\x64", |decoder| {
+            field_job_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x73\x74\x61\x74\x65", |decoder| {
+            field_state = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x70\x72\x6f\x67\x72\x65\x73\x73", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_progress = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_progress = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x66\x61\x69\x6c\x75\x72\x65\x43\x6f\x64\x65",
+            |decoder| {
+                field_failure_code = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"blob" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_blob = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                b"error" => {
+                    field_error = Some(decoder.text()?);
+                }
+                b"jobId" => {
+                    field_job_id = Some(decoder.text()?);
+                }
+                b"state" => {
+                    field_state = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(decoder.text()?);
+                }
+                b"progress" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_progress = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_progress = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"failureCode" => {
+                    field_failure_code = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            blob: field_blob,
+            error: field_error,
+            job_id: field_job_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'jobId'".into())
+            })?,
+            state: field_state.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'state'".into())
+            })?,
+            message: field_message,
+            progress: field_progress,
+            failure_code: field_failure_code,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}

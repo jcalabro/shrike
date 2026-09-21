@@ -161,6 +161,102 @@ impl NotificationDefsChatPreference {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct NotificationDefsChatPreferenceCborView<'a> {
+    pub push: bool,
+    pub include: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> NotificationDefsChatPreferenceCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<NotificationDefsChatPreference, crate::cbor::CborError> {
+        Ok(NotificationDefsChatPreference {
+            push: self.push,
+            include: self.include.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_push: Option<bool> = None;
+        let mut field_include: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x70\x75\x73\x68", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_push = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x69\x6e\x63\x6c\x75\x64\x65", |decoder| {
+            field_include = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"push" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_push = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"include" => {
+                    field_include = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            push: field_push.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'push'".into())
+            })?,
+            include: field_include.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'include'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// NotificationDefsPreferences object from chat.bsky.notification.defs.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,6 +398,103 @@ impl NotificationDefsPreferences {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct NotificationDefsPreferencesCborView<'a> {
+    pub chat: NotificationDefsChatPreferenceCborView<'a>,
+    pub chat_request: NotificationDefsChatPreferenceCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> NotificationDefsPreferencesCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<NotificationDefsPreferences, crate::cbor::CborError> {
+        Ok(NotificationDefsPreferences {
+            chat: self.chat.to_owned()?,
+            chat_request: self.chat_request.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_chat: Option<NotificationDefsChatPreferenceCborView<'a>> = None;
+        let mut field_chat_request: Option<NotificationDefsChatPreferenceCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x63\x68\x61\x74", |decoder| {
+            field_chat = Some(NotificationDefsChatPreferenceCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x63\x68\x61\x74\x52\x65\x71\x75\x65\x73\x74",
+            |decoder| {
+                field_chat_request = Some(NotificationDefsChatPreferenceCborView::decode_cbor(
+                    decoder,
+                )?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"chat" => {
+                    field_chat = Some(NotificationDefsChatPreferenceCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                b"chatRequest" => {
+                    field_chat_request = Some(NotificationDefsChatPreferenceCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            chat: field_chat.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'chat'".into())
+            })?,
+            chat_request: field_chat_request.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'chatRequest'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

@@ -361,6 +361,203 @@ impl TeamDefsMember {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct TeamDefsMemberCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub role: &'a str,
+    pub profile: Option<crate::api::app::bsky::ActorDefsProfileViewDetailedCborView<'a>>,
+    pub disabled: Option<bool>,
+    pub created_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub updated_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub last_updated_by: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> TeamDefsMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<TeamDefsMember, crate::cbor::CborError> {
+        Ok(TeamDefsMember {
+            did: self.did.clone(),
+            role: self.role.to_owned(),
+            profile: self
+                .profile
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            disabled: self.disabled,
+            created_at: self.created_at.as_ref().map(|value| (*value).to_owned()),
+            updated_at: self.updated_at.as_ref().map(|value| (*value).to_owned()),
+            last_updated_by: self
+                .last_updated_by
+                .as_ref()
+                .map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_role: Option<&'a str> = None;
+        let mut field_profile: Option<
+            crate::api::app::bsky::ActorDefsProfileViewDetailedCborView<'a>,
+        > = None;
+        let mut field_disabled: Option<bool> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_last_updated_by: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x72\x6f\x6c\x65", |decoder| {
+            field_role = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x70\x72\x6f\x66\x69\x6c\x65", |decoder| {
+            field_profile = Some(
+                crate::api::app::bsky::ActorDefsProfileViewDetailedCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x64\x69\x73\x61\x62\x6c\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_disabled = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6d\x6c\x61\x73\x74\x55\x70\x64\x61\x74\x65\x64\x42\x79",
+            |decoder| {
+                field_last_updated_by = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"role" => {
+                    field_role = Some(decoder.text()?);
+                }
+                b"profile" => {
+                    field_profile = Some(
+                        crate::api::app::bsky::ActorDefsProfileViewDetailedCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"disabled" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_disabled = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"lastUpdatedBy" => {
+                    field_last_updated_by = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            profile: field_profile,
+            disabled: field_disabled,
+            created_at: field_created_at,
+            updated_at: field_updated_at,
+            last_updated_by: field_last_updated_by,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// Admin role. Highest level of access, can perform all actions.
 pub const TEAM_DEFS_ROLE_ADMIN: &str = "tools.ozone.team.defs#roleAdmin";
 

@@ -294,6 +294,193 @@ impl SyncSubscribeReposAccount {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposAccountCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub seq: i64,
+    pub time: crate::syntax::DatetimeRef<'a>,
+    pub active: bool,
+    pub status: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposAccountCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposAccount, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposAccount {
+            did: self.did.clone(),
+            seq: self.seq,
+            time: self.time.to_owned(),
+            active: self.active,
+            status: self.status.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_seq: Option<i64> = None;
+        let mut field_time: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_active: Option<bool> = None;
+        let mut field_status: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x73\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x74\x69\x6d\x65", |decoder| {
+            field_time = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x74\x69\x76\x65", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_active = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x74\x61\x74\x75\x73", |decoder| {
+            field_status = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"seq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"time" => {
+                    field_time = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"active" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_active = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"status" => {
+                    field_status = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            seq: field_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'seq'".into())
+            })?,
+            time: field_time.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'time'".into())
+            })?,
+            active: field_active.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'active'".into())
+            })?,
+            status: field_status,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// SyncSubscribeReposCommit — Represents an update of repository state. Note that empty commits are allowed, which include no repo data changes, but an update to rev and signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -913,6 +1100,416 @@ impl SyncSubscribeReposCommit {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposCommitCborView<'a> {
+    pub ops: Vec<SyncSubscribeReposRepoOp>,
+    pub rev: crate::syntax::Tid,
+    pub seq: i64,
+    pub repo: crate::syntax::Did,
+    pub time: crate::syntax::DatetimeRef<'a>,
+    pub blobs: Vec<crate::api::CidLink>,
+    pub since: Option<crate::syntax::Tid>,
+    pub blocks: crate::api::Bytes,
+    pub commit: crate::api::CidLink,
+    pub rebase: bool,
+    pub too_big: bool,
+    pub prev_data: Option<crate::api::CidLink>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposCommitCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposCommit, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposCommit {
+            ops: self.ops.clone(),
+            rev: self.rev,
+            seq: self.seq,
+            repo: self.repo.clone(),
+            time: self.time.to_owned(),
+            blobs: self.blobs.clone(),
+            since: self.since,
+            blocks: self.blocks.clone(),
+            commit: self.commit.clone(),
+            rebase: self.rebase,
+            too_big: self.too_big,
+            prev_data: self.prev_data.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_ops: Vec<SyncSubscribeReposRepoOp> = Vec::new();
+        let mut field_rev: Option<crate::syntax::Tid> = None;
+        let mut field_seq: Option<i64> = None;
+        let mut field_repo: Option<crate::syntax::Did> = None;
+        let mut field_time: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_blobs: Vec<crate::api::CidLink> = Vec::new();
+        let mut field_since: Option<crate::syntax::Tid> = None;
+        let mut field_blocks: Option<crate::api::Bytes> = None;
+        let mut field_commit: Option<crate::api::CidLink> = None;
+        let mut field_rebase: Option<bool> = None;
+        let mut field_too_big: Option<bool> = None;
+        let mut field_prev_data: Option<crate::api::CidLink> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x6f\x70\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_ops.push(SyncSubscribeReposRepoOp::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_rev = Some(
+                    crate::syntax::Tid::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x73\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x72\x65\x70\x6f", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_repo = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x74\x69\x6d\x65", |decoder| {
+            field_time = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x62\x6c\x6f\x62\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    if let crate::cbor::Value::Cid(c) = item {
+                        field_blobs.push(crate::api::CidLink {
+                            link: c.to_string(),
+                        });
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected CID in array".into(),
+                        ));
+                    }
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x73\x69\x6e\x63\x65", |decoder| {
+            if decoder.raw_input().get(decoder.position()) == Some(&0xf6) {
+                let _ = decoder.decode()?;
+            } else {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Text(s) = value {
+                    field_since = Some(
+                        crate::syntax::Tid::try_from(s)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x62\x6c\x6f\x63\x6b\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bytes(b) = value {
+                field_blocks = Some(crate::api::Bytes(b.to_vec()));
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor(
+                    "expected byte string for bytes field".into(),
+                ));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x63\x6f\x6d\x6d\x69\x74", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Cid(c) = value {
+                field_commit = Some(crate::api::CidLink {
+                    link: c.to_string(),
+                });
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x72\x65\x62\x61\x73\x65", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_rebase = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x74\x6f\x6f\x42\x69\x67", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_too_big = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x70\x72\x65\x76\x44\x61\x74\x61", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Cid(c) = value {
+                field_prev_data = Some(crate::api::CidLink {
+                    link: c.to_string(),
+                });
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"ops" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_ops.push(SyncSubscribeReposRepoOp::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(
+                            crate::syntax::Tid::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"seq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"repo" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_repo = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"time" => {
+                    field_time = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"blobs" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            if let crate::cbor::Value::Cid(c) = item {
+                                field_blobs.push(crate::api::CidLink {
+                                    link: c.to_string(),
+                                });
+                            } else {
+                                return Err(crate::cbor::CborError::InvalidCbor(
+                                    "expected CID in array".into(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"since" => {
+                    if decoder.raw_input().get(decoder.position()) == Some(&0xf6) {
+                        let _ = decoder.decode()?;
+                    } else {
+                        let value = decoder.decode()?;
+                        if let crate::cbor::Value::Text(s) = value {
+                            field_since =
+                                Some(crate::syntax::Tid::try_from(s).map_err(|e| {
+                                    crate::cbor::CborError::InvalidCbor(e.to_string())
+                                })?);
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected text".into(),
+                            ));
+                        }
+                    }
+                }
+                b"blocks" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bytes(b) = value {
+                        field_blocks = Some(crate::api::Bytes(b.to_vec()));
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected byte string for bytes field".into(),
+                        ));
+                    }
+                }
+                b"commit" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Cid(c) = value {
+                        field_commit = Some(crate::api::CidLink {
+                            link: c.to_string(),
+                        });
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                    }
+                }
+                b"rebase" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_rebase = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"tooBig" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_too_big = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"prevData" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Cid(c) = value {
+                        field_prev_data = Some(crate::api::CidLink {
+                            link: c.to_string(),
+                        });
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            ops: field_ops,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            seq: field_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'seq'".into())
+            })?,
+            repo: field_repo.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'repo'".into())
+            })?,
+            time: field_time.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'time'".into())
+            })?,
+            blobs: field_blobs,
+            since: field_since,
+            blocks: field_blocks.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'blocks'".into())
+            })?,
+            commit: field_commit.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'commit'".into())
+            })?,
+            rebase: field_rebase.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rebase'".into())
+            })?,
+            too_big: field_too_big.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'tooBig'".into())
+            })?,
+            prev_data: field_prev_data,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// SyncSubscribeReposIdentity — Represents a change to an account's identity. Could be an updated handle, signing key, or pds hosting endpoint. Serves as a prod to all downstream services to refresh their identity cache.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1181,6 +1778,186 @@ impl SyncSubscribeReposIdentity {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposIdentityCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub seq: i64,
+    pub time: crate::syntax::DatetimeRef<'a>,
+    pub handle: Option<crate::syntax::Handle>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposIdentityCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposIdentity, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposIdentity {
+            did: self.did.clone(),
+            seq: self.seq,
+            time: self.time.to_owned(),
+            handle: self.handle.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_seq: Option<i64> = None;
+        let mut field_time: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_handle: Option<crate::syntax::Handle> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x73\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x74\x69\x6d\x65", |decoder| {
+            field_time = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x68\x61\x6e\x64\x6c\x65", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_handle = Some(
+                    crate::syntax::Handle::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"seq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"time" => {
+                    field_time = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"handle" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_handle = Some(
+                            crate::syntax::Handle::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            seq: field_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'seq'".into())
+            })?,
+            time: field_time.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'time'".into())
+            })?,
+            handle: field_handle,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// SyncSubscribeReposInfo object from com.atproto.sync.subscribeRepos.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1344,6 +2121,90 @@ impl SyncSubscribeReposInfo {
             message: field_message,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposInfoCborView<'a> {
+    pub name: &'a str,
+    pub message: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposInfoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposInfo, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposInfo {
+            name: self.name.to_owned(),
+            message: self.message.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_name: Option<&'a str> = None;
+        let mut field_message: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            message: field_message,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1610,6 +2471,150 @@ impl SyncSubscribeReposRepoOp {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposRepoOpCborView<'a> {
+    pub cid: Option<crate::api::CidLink>,
+    pub path: &'a str,
+    pub prev: Option<crate::api::CidLink>,
+    pub action: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposRepoOpCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposRepoOp, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposRepoOp {
+            cid: self.cid.clone(),
+            path: self.path.to_owned(),
+            prev: self.prev.clone(),
+            action: self.action.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_cid: Option<crate::api::CidLink> = None;
+        let mut field_path: Option<&'a str> = None;
+        let mut field_prev: Option<crate::api::CidLink> = None;
+        let mut field_action: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x63\x69\x64", |decoder| {
+            if decoder.raw_input().get(decoder.position()) == Some(&0xf6) {
+                let _ = decoder.decode()?;
+            } else {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Cid(c) = value {
+                    field_cid = Some(crate::api::CidLink {
+                        link: c.to_string(),
+                    });
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x70\x61\x74\x68", |decoder| {
+            field_path = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x70\x72\x65\x76", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Cid(c) = value {
+                field_prev = Some(crate::api::CidLink {
+                    link: c.to_string(),
+                });
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_action = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"cid" => {
+                    if decoder.raw_input().get(decoder.position()) == Some(&0xf6) {
+                        let _ = decoder.decode()?;
+                    } else {
+                        let value = decoder.decode()?;
+                        if let crate::cbor::Value::Cid(c) = value {
+                            field_cid = Some(crate::api::CidLink {
+                                link: c.to_string(),
+                            });
+                        } else {
+                            return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                        }
+                    }
+                }
+                b"path" => {
+                    field_path = Some(decoder.text()?);
+                }
+                b"prev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Cid(c) = value {
+                        field_prev = Some(crate::api::CidLink {
+                            link: c.to_string(),
+                        });
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected CID".into()));
+                    }
+                }
+                b"action" => {
+                    field_action = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            cid: field_cid,
+            path: field_path.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'path'".into())
+            })?,
+            prev: field_prev,
+            action: field_action.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'action'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1905,6 +2910,199 @@ impl SyncSubscribeReposSync {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SyncSubscribeReposSyncCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub rev: &'a str,
+    pub seq: i64,
+    pub time: crate::syntax::DatetimeRef<'a>,
+    pub blocks: crate::api::Bytes,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SyncSubscribeReposSyncCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<SyncSubscribeReposSync, crate::cbor::CborError> {
+        Ok(SyncSubscribeReposSync {
+            did: self.did.clone(),
+            rev: self.rev.to_owned(),
+            seq: self.seq,
+            time: self.time.to_owned(),
+            blocks: self.blocks.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_seq: Option<i64> = None;
+        let mut field_time: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_blocks: Option<crate::api::Bytes> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x73\x65\x71", |decoder| {
+            let value = decoder.decode()?;
+            match value {
+                crate::cbor::Value::Unsigned(n) => {
+                    field_seq = Some(i64::try_from(n).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                    })?);
+                }
+                crate::cbor::Value::Signed(n) => {
+                    field_seq = Some(n);
+                }
+                _ => {
+                    return Err(crate::cbor::CborError::InvalidCbor(
+                        "expected integer".into(),
+                    ));
+                }
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x74\x69\x6d\x65", |decoder| {
+            field_time = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x62\x6c\x6f\x63\x6b\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bytes(b) = value {
+                field_blocks = Some(crate::api::Bytes(b.to_vec()));
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor(
+                    "expected byte string for bytes field".into(),
+                ));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"seq" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_seq = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_seq = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"time" => {
+                    field_time = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"blocks" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bytes(b) = value {
+                        field_blocks = Some(crate::api::Bytes(b.to_vec()));
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected byte string for bytes field".into(),
+                        ));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            seq: field_seq.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'seq'".into())
+            })?,
+            time: field_time.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'time'".into())
+            })?,
+            blocks: field_blocks.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'blocks'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

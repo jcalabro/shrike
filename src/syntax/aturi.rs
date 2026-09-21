@@ -85,10 +85,8 @@ impl Borrow<str> for AtUri {
     }
 }
 
-impl TryFrom<&str> for AtUri {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl AtUri {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidAtUri(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -101,13 +99,8 @@ impl TryFrom<&str> for AtUri {
             return Err(err("must start with \"at://\""));
         }
 
-        // Reject query params and fragments.
-        for b in raw[5..].bytes() {
-            if b == b'?' || b == b'#' {
-                return Err(err("query and fragment not allowed"));
-            }
-        }
-
+        // The authority, NSID and record-key validators below each reject
+        // '?' and '#'; no separate pass over the complete URI is needed.
         let rest = &raw[5..];
         if rest.is_empty() {
             return Err(err("empty authority"));
@@ -130,7 +123,7 @@ impl TryFrom<&str> for AtUri {
 
         // No path — authority only is valid.
         if !has_path {
-            return Ok(AtUri(raw.to_owned()));
+            return Ok(());
         }
 
         let after_auth = &rest[authority.len() + 1..]; // skip the '/'
@@ -152,7 +145,7 @@ impl TryFrom<&str> for AtUri {
         Nsid::validate(collection).map_err(|e| err(&format!("invalid collection: {e}")))?;
 
         if !has_rkey {
-            return Ok(AtUri(raw.to_owned()));
+            return Ok(());
         }
 
         let rkey = &after_auth[collection.len() + 1..]; // skip the '/'
@@ -160,17 +153,41 @@ impl TryFrom<&str> for AtUri {
             return Err(err("trailing slash without record key"));
         }
 
-        // Reject any additional path segments.
-        if rkey.contains('/') {
-            return Err(err("too many path segments"));
-        }
-
         // The record key MUST satisfy the record-key grammar (which also
         // rejects the reserved "." and ".." values and the over-broad
         // URI-sub-delims charset). Delegate to the canonical parser.
         RecordKey::validate(rkey).map_err(|e| err(&format!("invalid record key: {e}")))?;
 
-        Ok(AtUri(raw.to_owned()))
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for AtUri {
+    type Error = SyntaxError;
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::validate(raw)?;
+        Ok(Self(raw.to_owned()))
+    }
+}
+
+/// A validated AtUri borrowing its original text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtUriRef<'a>(&'a str);
+
+impl<'a> AtUriRef<'a> {
+    pub fn as_str(&self) -> &'a str {
+        self.0
+    }
+    pub fn to_owned(self) -> AtUri {
+        AtUri(self.0.to_owned())
+    }
+}
+
+impl<'a> TryFrom<&'a str> for AtUriRef<'a> {
+    type Error = SyntaxError;
+    fn try_from(raw: &'a str) -> Result<Self, Self::Error> {
+        AtUri::validate(raw)?;
+        Ok(Self(raw))
     }
 }
 
@@ -218,6 +235,31 @@ mod tests {
             })
             .map(String::from)
             .collect()
+    }
+
+    #[test]
+    fn component_validation_rejects_queries_fragments_and_extra_segments() {
+        for valid in [
+            "at://alice.test",
+            "at://did:plc:abc/app.bsky.feed.post",
+            "at://alice.test/app.bsky.feed.post/3l3qo2vuowo2b",
+        ] {
+            assert!(AtUri::try_from(valid).is_ok());
+            for index in 5..=valid.len() {
+                for marker in ['?', '#'] {
+                    let mut changed = valid.to_owned();
+                    changed.insert(index, marker);
+                    assert!(AtUri::try_from(changed.as_str()).is_err(), "{changed}");
+                }
+            }
+        }
+        for bad in [
+            "at://alice.test/app.bsky.feed.post/a/b",
+            "at://alice.test/app.bsky.feed.post/a/",
+            "at://alice.test/app.bsky.feed.post//b",
+        ] {
+            assert!(AtUri::try_from(bad).is_err());
+        }
     }
 
     #[test]

@@ -68,6 +68,36 @@ fuzz_target!(|data: &[u8]| {
     typed_roundtrip!(shrike::api::app::bsky::FeedPost);
     typed_roundtrip!(shrike::api::app::bsky::ActorProfile);
 
+    macro_rules! borrowed_equivalence {
+        ($owned:ty, $view:ty) => {
+            let owned = <$owned>::from_cbor(data);
+            let view = <$view>::from_cbor(data);
+            assert_eq!(
+                owned.is_ok(),
+                view.is_ok(),
+                "owned/view acceptance mismatch"
+            );
+            if let (Ok(owned), Ok(view)) = (owned, view) {
+                assert_eq!(
+                    owned.to_cbor().unwrap(),
+                    view.to_owned().unwrap().to_cbor().unwrap()
+                );
+            }
+        };
+    }
+    borrowed_equivalence!(
+        shrike::api::app::bsky::FeedLike,
+        shrike::api::app::bsky::FeedLikeCborView
+    );
+    borrowed_equivalence!(
+        shrike::api::app::bsky::FeedPost,
+        shrike::api::app::bsky::FeedPostCborView
+    );
+    borrowed_equivalence!(
+        shrike::api::app::bsky::ActorProfile,
+        shrike::api::app::bsky::ActorProfileCborView
+    );
+
     let bump = Bump::new();
     let mut dec = Decoder::new(data);
     let bump_val = dec

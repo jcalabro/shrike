@@ -203,3 +203,107 @@ impl ActorDeclaration {
         })
     }
 }
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ActorDeclarationCborView<'a> {
+    pub r#type: &'a str,
+    pub allow_incoming: &'a str,
+    pub allow_group_invites: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ActorDeclarationCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ActorDeclaration, crate::cbor::CborError> {
+        Ok(ActorDeclaration {
+            r#type: self.r#type.to_owned(),
+            allow_incoming: self.allow_incoming.to_owned(),
+            allow_group_invites: self
+                .allow_group_invites
+                .as_ref()
+                .map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_type: Option<&'a str> = None;
+        let mut field_allow_incoming: Option<&'a str> = None;
+        let mut field_allow_group_invites: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x24\x74\x79\x70\x65", |decoder| {
+            field_type = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6d\x61\x6c\x6c\x6f\x77\x49\x6e\x63\x6f\x6d\x69\x6e\x67",
+            |decoder| {
+                field_allow_incoming = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x71\x61\x6c\x6c\x6f\x77\x47\x72\x6f\x75\x70\x49\x6e\x76\x69\x74\x65\x73",
+            |decoder| {
+                field_allow_group_invites = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"$type" => {
+                    field_type = Some(decoder.text()?);
+                }
+                b"allowIncoming" => {
+                    field_allow_incoming = Some(decoder.text()?);
+                }
+                b"allowGroupInvites" => {
+                    field_allow_group_invites = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            r#type: field_type.unwrap_or("chat.bsky.actor.declaration"),
+            allow_incoming: field_allow_incoming.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'allowIncoming'".into())
+            })?,
+            allow_group_invites: field_allow_group_invites,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}

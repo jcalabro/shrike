@@ -156,6 +156,103 @@ impl GraphGetListsWithMembershipListWithMembership {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct GraphGetListsWithMembershipListWithMembershipCborView<'a> {
+    pub list: crate::api::app::bsky::GraphDefsListViewCborView<'a>,
+    pub list_item: Option<crate::api::app::bsky::GraphDefsListItemViewCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> GraphGetListsWithMembershipListWithMembershipCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<GraphGetListsWithMembershipListWithMembership, crate::cbor::CborError> {
+        Ok(GraphGetListsWithMembershipListWithMembership {
+            list: self.list.to_owned()?,
+            list_item: self
+                .list_item
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_list: Option<crate::api::app::bsky::GraphDefsListViewCborView<'a>> = None;
+        let mut field_list_item: Option<crate::api::app::bsky::GraphDefsListItemViewCborView<'a>> =
+            None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6c\x69\x73\x74", |decoder| {
+            field_list =
+                Some(crate::api::app::bsky::GraphDefsListViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6c\x69\x73\x74\x49\x74\x65\x6d", |decoder| {
+            field_list_item =
+                Some(crate::api::app::bsky::GraphDefsListItemViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"list" => {
+                    field_list = Some(
+                        crate::api::app::bsky::GraphDefsListViewCborView::decode_cbor(decoder)?,
+                    );
+                }
+                b"listItem" => {
+                    field_list_item = Some(
+                        crate::api::app::bsky::GraphDefsListItemViewCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            list: field_list.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'list'".into())
+            })?,
+            list_item: field_list_item,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphGetListsWithMembershipParams {

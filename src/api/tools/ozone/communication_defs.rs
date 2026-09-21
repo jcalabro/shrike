@@ -422,3 +422,238 @@ impl CommunicationDefsTemplateView {
         })
     }
 }
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct CommunicationDefsTemplateViewCborView<'a> {
+    pub id: &'a str,
+    pub lang: Option<crate::syntax::Language>,
+    pub name: &'a str,
+    pub subject: Option<&'a str>,
+    pub disabled: bool,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub updated_at: crate::syntax::DatetimeRef<'a>,
+    pub last_updated_by: crate::syntax::Did,
+    pub content_markdown: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> CommunicationDefsTemplateViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<CommunicationDefsTemplateView, crate::cbor::CborError> {
+        Ok(CommunicationDefsTemplateView {
+            id: self.id.to_owned(),
+            lang: self.lang.clone(),
+            name: self.name.to_owned(),
+            subject: self.subject.as_ref().map(|value| (*value).to_owned()),
+            disabled: self.disabled,
+            created_at: self.created_at.to_owned(),
+            updated_at: self.updated_at.to_owned(),
+            last_updated_by: self.last_updated_by.clone(),
+            content_markdown: self.content_markdown.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<&'a str> = None;
+        let mut field_lang: Option<crate::syntax::Language> = None;
+        let mut field_name: Option<&'a str> = None;
+        let mut field_subject: Option<&'a str> = None;
+        let mut field_disabled: Option<bool> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_updated_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_last_updated_by: Option<crate::syntax::Did> = None;
+        let mut field_content_markdown: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            field_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6c\x61\x6e\x67", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_lang = Some(
+                    crate::syntax::Language::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x75\x62\x6a\x65\x63\x74", |decoder| {
+            field_subject = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x64\x69\x73\x61\x62\x6c\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_disabled = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x75\x70\x64\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_updated_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6d\x6c\x61\x73\x74\x55\x70\x64\x61\x74\x65\x64\x42\x79",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Text(s) = value {
+                    field_last_updated_by = Some(
+                        crate::syntax::Did::try_from(s)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6f\x63\x6f\x6e\x74\x65\x6e\x74\x4d\x61\x72\x6b\x64\x6f\x77\x6e",
+            |decoder| {
+                field_content_markdown = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    field_id = Some(decoder.text()?);
+                }
+                b"lang" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_lang = Some(
+                            crate::syntax::Language::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"subject" => {
+                    field_subject = Some(decoder.text()?);
+                }
+                b"disabled" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_disabled = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"updatedAt" => {
+                    field_updated_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"lastUpdatedBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_last_updated_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"contentMarkdown" => {
+                    field_content_markdown = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            lang: field_lang,
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            subject: field_subject,
+            disabled: field_disabled.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'disabled'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            updated_at: field_updated_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'updatedAt'".into())
+            })?,
+            last_updated_by: field_last_updated_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lastUpdatedBy'".into())
+            })?,
+            content_markdown: field_content_markdown.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor(
+                    "missing required field 'contentMarkdown'".into(),
+                )
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}

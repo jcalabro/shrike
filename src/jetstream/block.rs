@@ -156,14 +156,37 @@ pub fn decode_block(body: &[u8]) -> Result<Vec<RawEvent>> {
             witnessed_at: row.witnessed_at,
             indexed_at: row.indexed_at,
             kind: row.kind,
-            collection: row.collection.to_vec(),
-            did: row.did.to_vec(),
-            rkey: row.rkey.to_vec(),
-            rev: row.rev.to_vec(),
+            collection: row.collection.bytes().to_vec(),
+            did: row.did.bytes().to_vec(),
+            rkey: row.rkey.bytes().to_vec(),
+            rev: row.rev.bytes().to_vec(),
             payload: payload.to_vec(),
         });
     })?;
     Ok(events)
+}
+
+/// Text columns may share one SIMD-validated region. Boundaries are checked
+/// with str::get; malformed UTF-8 or a split codepoint falls back to the same
+/// row-level validation/error handling used for individually owned columns.
+#[derive(Clone, Copy)]
+pub(crate) enum TextColumn<'a> {
+    Checked(&'a str),
+    Raw(&'a [u8]),
+}
+impl<'a> TextColumn<'a> {
+    pub fn bytes(self) -> &'a [u8] {
+        match self {
+            Self::Checked(s) => s.as_bytes(),
+            Self::Raw(b) => b,
+        }
+    }
+    pub fn text(self) -> core::result::Result<&'a str, core::str::Utf8Error> {
+        match self {
+            Self::Checked(s) => Ok(s),
+            Self::Raw(b) => core::str::from_utf8(b),
+        }
+    }
 }
 
 /// Borrowed metadata for one structurally valid row. Syntax validation belongs
@@ -174,18 +197,18 @@ pub(crate) struct Columns<'a> {
     pub witnessed_at: i64,
     pub indexed_at: i64,
     pub kind: SegmentKind,
-    pub collection: &'a [u8],
-    pub did: &'a [u8],
-    pub rkey: &'a [u8],
-    pub rev: &'a [u8],
+    pub collection: TextColumn<'a>,
+    pub did: TextColumn<'a>,
+    pub rkey: TextColumn<'a>,
+    pub rev: TextColumn<'a>,
 }
 
 /// Validate the layout and visit every row, including kinds rejected by the
 /// caller's filter. A later structural error invalidates the entire result:
 /// callers must discard all visited rows if this returns Err.
-pub(crate) fn visit_block(
-    body: &[u8],
-    mut visit: impl FnMut(usize, Columns<'_>, &[u8]),
+pub(crate) fn visit_block<'a>(
+    body: &'a [u8],
+    mut visit: impl FnMut(usize, Columns<'a>, &'a [u8]),
 ) -> Result<()> {
     let n = read_u32(body, 0)? as usize;
     if n == 0 {
@@ -265,23 +288,45 @@ pub(crate) fn visit_block(
     let rev_start = rkey_start + sum_rkey as usize;
     let payload_start = rev_start + sum_rev as usize;
 
+    let checked_text = simdutf8::basic::from_utf8(&body[coll_start..payload_start]).ok();
+    let column = |start: usize, end: usize| match checked_text
+        .and_then(|text| text.get(start - coll_start..end - coll_start))
+    {
+        Some(text) => TextColumn::Checked(text),
+        None => TextColumn::Raw(&body[start..end]),
+    };
     let (mut c, mut d, mut k, mut v, mut p) =
         (coll_start, did_start, rkey_start, rev_start, payload_start);
-    for i in 0..n {
+    // The fixed-region check above proves these slices contain exactly n
+    // complete values. Iterating fixed-width arrays avoids repeating checked
+    // offset arithmetic and fallible integer reads for every valid row.
+    let seqs = body[seq_off..wit_off].as_chunks::<8>().0;
+    let witnessed = body[wit_off..idx_off].as_chunks::<8>().0;
+    let indexed = body[idx_off..kind_off].as_chunks::<8>().0;
+    let did_lens = body[did_len_off..rkey_len_off].as_chunks::<2>().0;
+    let payload_lens = body[plen_off..fixed].as_chunks::<4>().0;
+    for (i, ((((seq, wit), idx), dl), pl)) in seqs
+        .iter()
+        .zip(witnessed)
+        .zip(indexed)
+        .zip(did_lens)
+        .zip(payload_lens)
+        .enumerate()
+    {
         let cl = body[coll_len_off + i] as usize;
-        let dl = read_u16(body, did_len_off + 2 * i)? as usize;
+        let dl = u16::from_le_bytes(*dl) as usize;
         let kl = body[rkey_len_off + i] as usize;
         let vl = body[rev_len_off + i] as usize;
-        let pl = read_u32(body, plen_off + 4 * i)? as usize;
+        let pl = u32::from_le_bytes(*pl) as usize;
         let columns = Columns {
-            seq: read_u64(body, seq_off + 8 * i)?,
-            witnessed_at: read_i64(body, wit_off + 8 * i)?,
-            indexed_at: read_i64(body, idx_off + 8 * i)?,
+            seq: u64::from_le_bytes(*seq),
+            witnessed_at: i64::from_le_bytes(*wit),
+            indexed_at: i64::from_le_bytes(*idx),
             kind: SegmentKind::from_u8(body[kind_off + i])?,
-            collection: &body[c..c + cl],
-            did: &body[d..d + dl],
-            rkey: &body[k..k + kl],
-            rev: &body[v..v + vl],
+            collection: column(c, c + cl),
+            did: column(d, d + dl),
+            rkey: column(k, k + kl),
+            rev: column(v, v + vl),
         };
         visit(n, columns, &body[p..p + pl]);
         c += cl;
@@ -303,16 +348,4 @@ fn read_u32(b: &[u8], off: usize) -> Result<u32> {
     let end = off.checked_add(4).ok_or(Error::Truncated("u32 column"))?;
     let slice = b.get(off..end).ok_or(Error::Truncated("u32 column"))?;
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
-}
-
-fn read_u64(b: &[u8], off: usize) -> Result<u64> {
-    let end = off.checked_add(8).ok_or(Error::Truncated("u64 column"))?;
-    let slice = b.get(off..end).ok_or(Error::Truncated("u64 column"))?;
-    let mut a = [0u8; 8];
-    a.copy_from_slice(slice);
-    Ok(u64::from_le_bytes(a))
-}
-
-fn read_i64(b: &[u8], off: usize) -> Result<i64> {
-    Ok(read_u64(b, off)? as i64)
 }
