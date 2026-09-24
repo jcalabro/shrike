@@ -2,6 +2,7 @@
 //! browser's `wasm32-unknown-unknown` environment.
 
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+#[cfg(any(test, feature = "identity", feature = "oauth", feature = "jetstream"))]
 pub(crate) fn unix_time_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -38,6 +38,8 @@ test-docs:
 # Run format check + clippy on library and test code
 lint:
     cargo fmt --all -- --check
+    # `cargo publish` verifies the library's default feature set without tests.
+    cargo clippy -p shrike --lib -- -D warnings
     cargo clippy --workspace --features full --tests -- -D warnings
 
 # Format check
@@ -125,5 +127,5 @@ jetstream-smoke AFTER BEFORE:
 # Usage:
 #   just publish           # publish
 #   just publish --dry-run # preview what will be published
-publish *ARGS:
+publish *ARGS: check
     cargo publish -p shrike {{ARGS}}
