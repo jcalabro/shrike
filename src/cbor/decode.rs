@@ -129,53 +129,7 @@ impl<'a> Decoder<'a> {
                 // header lengths).
                 let mut prev_key_bytes: &[u8] = &[];
                 for _ in 0..len_usize {
-                    // Decode text key inline — avoids the overhead of the full
-                    // decode() dispatch (depth check, major type match, Value
-                    // construction + destructuring) for every map key. We already
-                    // know the key must be a text string.
-                    let key_start = self.pos;
-                    let key_byte = self.read_byte()?;
-                    let key_major = key_byte >> 5;
-                    if key_major != 3 {
-                        return Err(CborError::InvalidCbor(
-                            "map keys must be text strings".into(),
-                        ));
-                    }
-                    let key_additional = key_byte & 0x1f;
-                    let key_len = self.read_argument(key_additional)?;
-                    let key_len_usize = usize::try_from(key_len).map_err(|_| {
-                        CborError::InvalidCbor("length exceeds platform limits".into())
-                    })?;
-                    let key_bytes = self.read_slice(key_len_usize)?;
-                    let key = match simdutf8::basic::from_utf8(key_bytes) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            return Err(CborError::InvalidCbor(
-                                "invalid UTF-8 in text string".into(),
-                            ));
-                        }
-                    };
-                    let key_encoded = &self.buf[key_start..self.pos];
-
-                    // Check canonical order by comparing raw CBOR-encoded key
-                    // bytes. DRISL canonical ordering is defined as: shorter
-                    // encoded form first, then lexicographic — which is exactly
-                    // what byte-wise comparison of the encoded keys gives us.
-                    if !prev_key_bytes.is_empty() {
-                        match prev_key_bytes.cmp(key_encoded) {
-                            std::cmp::Ordering::Greater => {
-                                return Err(CborError::InvalidCbor(
-                                    "map keys not in canonical sort order".into(),
-                                ));
-                            }
-                            std::cmp::Ordering::Equal => {
-                                return Err(CborError::InvalidCbor("duplicate map key".into()));
-                            }
-                            std::cmp::Ordering::Less => {}
-                        }
-                    }
-                    prev_key_bytes = key_encoded;
-
+                    let key = self.read_map_key(&mut prev_key_bytes)?;
                     let value = self.decode()?;
                     entries.push((key, value));
                 }
@@ -190,18 +144,7 @@ impl<'a> Decoder<'a> {
                         "unsupported CBOR tag: {tag_num} (only tag 42 is allowed)"
                     )));
                 }
-                // Inner value must be a bytestring
-                let inner = self.decode()?;
-                let bytes = match inner {
-                    Value::Bytes(b) => b,
-                    _ => {
-                        return Err(CborError::InvalidCbor(
-                            "tag 42 must wrap a bytestring".into(),
-                        ));
-                    }
-                };
-                let cid = Cid::from_tag42_bytes(bytes)?;
-                Ok(Value::Cid(cid))
+                Ok(Value::Cid(self.read_tag42_body()?))
             }
             7 => {
                 // Simple values and floats
@@ -253,6 +196,115 @@ impl<'a> Decoder<'a> {
             }
             _ => Err(CborError::InvalidCbor("invalid major type".into())),
         }
+    }
+
+    /// A CID tag wraps a byte string directly, never another container or tag.
+    /// Parsing that fixed shape avoids recursion that bypasses the depth budget.
+    pub(crate) fn read_tag42_body(&mut self) -> Result<Cid, CborError> {
+        let inner = self.read_byte()?;
+        if inner >> 5 != 2 {
+            return Err(CborError::InvalidCbor(
+                "tag 42 must wrap a bytestring".into(),
+            ));
+        }
+        let len = self.read_argument(inner & 0x1f)?;
+        let len = usize::try_from(len)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        Cid::from_tag42_bytes(self.read_slice(len)?)
+    }
+
+    /// Read typed fields without allocating a top-level generic map. The
+    /// iterator shares the strict key/depth/length checks used by `decode`.
+    #[cfg(any(feature = "api", test))]
+    pub(crate) fn map_entries(&mut self) -> Result<MapEntries<'_, 'a>, CborError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(CborError::InvalidCbor(
+                "maximum nesting depth exceeded".into(),
+            ));
+        }
+        let byte = self.read_byte()?;
+        if byte >> 5 != 5 {
+            return Err(CborError::InvalidCbor("expected map".into()));
+        }
+        let len = self.read_argument(byte & 0x1f)?;
+        if len > MAX_COLLECTION_LEN as u64 {
+            return Err(CborError::InvalidCbor("map length exceeds maximum".into()));
+        }
+        let parent_depth = self.depth;
+        self.depth += 1;
+        Ok(MapEntries {
+            parent_depth,
+            decoder: self,
+            remaining: len as usize,
+            previous: &[],
+        })
+    }
+
+    #[inline]
+    fn read_map_key(&mut self, prev_key_bytes: &mut &'a [u8]) -> Result<&'a str, CborError> {
+        let bytes = self.read_map_key_bytes(prev_key_bytes)?;
+        simdutf8::basic::from_utf8(bytes)
+            .map_err(|_| CborError::InvalidCbor("invalid UTF-8 in text string".into()))
+    }
+
+    #[inline]
+    fn read_map_key_bytes(&mut self, prev_key_bytes: &mut &'a [u8]) -> Result<&'a [u8], CborError> {
+        let key_start = self.pos;
+        let key_byte = self.read_byte()?;
+        let key_major = key_byte >> 5;
+        if key_major != 3 {
+            return Err(CborError::InvalidCbor(
+                "map keys must be text strings".into(),
+            ));
+        }
+        let key_additional = key_byte & 0x1f;
+        let key_len = self.read_argument(key_additional)?;
+        let key_len_usize = usize::try_from(key_len)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        let key_bytes = self.read_slice(key_len_usize)?;
+        let key_encoded = &self.buf[key_start..self.pos];
+
+        // Check canonical order by comparing raw CBOR-encoded key
+        // bytes. DRISL canonical ordering is defined as: shorter
+        // encoded form first, then lexicographic — which is exactly
+        // what byte-wise comparison of the encoded keys gives us.
+        if !prev_key_bytes.is_empty() {
+            match (*prev_key_bytes).cmp(key_encoded) {
+                std::cmp::Ordering::Greater => {
+                    return Err(CborError::InvalidCbor(
+                        "map keys not in canonical sort order".into(),
+                    ));
+                }
+                std::cmp::Ordering::Equal => {
+                    return Err(CborError::InvalidCbor("duplicate map key".into()));
+                }
+                std::cmp::Ordering::Less => {}
+            }
+        }
+        *prev_key_bytes = key_encoded;
+
+        Ok(key_bytes)
+    }
+
+    /// Typed text decoding without constructing a generic Value. Shares the
+    /// same canonical length, UTF-8, bounds, and depth rules as decode().
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn text(&mut self) -> Result<&'a str, CborError> {
+        if self.depth >= MAX_DEPTH {
+            return Err(CborError::InvalidCbor(
+                "maximum nesting depth exceeded".into(),
+            ));
+        }
+        let byte = self.read_byte()?;
+        if byte >> 5 != 3 {
+            return Err(CborError::InvalidCbor("expected text".into()));
+        }
+        let len = usize::try_from(self.read_argument(byte & 0x1f)?)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        let bytes = self.read_slice(len)?;
+        simdutf8::basic::from_utf8(bytes)
+            .map_err(|_| CborError::InvalidCbor("invalid UTF-8 in text string".into()))
     }
 
     /// How many bytes have been consumed so far.
@@ -367,6 +419,106 @@ impl<'a> Decoder<'a> {
     }
 }
 
+/// Lending the decoder through this iterator keeps depth accounting active
+/// while each value is decoded, and restores it on success or early error.
+#[cfg(any(feature = "api", test))]
+pub(crate) struct MapEntries<'d, 'a> {
+    decoder: &'d mut Decoder<'a>,
+    parent_depth: usize,
+    remaining: usize,
+    previous: &'a [u8],
+}
+
+#[cfg(any(feature = "api", test))]
+impl<'a> MapEntries<'_, 'a> {
+    /// Consume a known, canonically encoded schema key when it is next. A miss
+    /// leaves the decoder unchanged for the ordinary unknown-field path.
+    /// `encoded` is a complete text key emitted by the code generator.
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn try_field(
+        &mut self,
+        encoded: &'static [u8],
+        decode: impl FnOnce(&mut Decoder<'a>) -> Result<(), CborError>,
+    ) -> Result<bool, CborError> {
+        if self.remaining == 0 || !self.decoder.buf[self.decoder.pos..].starts_with(encoded) {
+            return Ok(false);
+        }
+        if !self.previous.is_empty() && self.previous >= encoded {
+            return Err(CborError::InvalidCbor(
+                "duplicate or noncanonical map key".into(),
+            ));
+        }
+        self.remaining -= 1;
+        self.decoder.pos += encoded.len();
+        self.previous = encoded;
+        let result = decode(self.decoder);
+        if result.is_err() {
+            self.remaining = 0;
+        }
+        result.map(|()| true)
+    }
+
+    /// Generated code can prove known literal keys are UTF-8 by matching bytes.
+    /// It MUST validate unknown keys before using or preserving them. Wire
+    /// lengths, duplicate rejection, ordering, and nesting remain checked here.
+    #[cfg(feature = "api")]
+    #[inline]
+    pub(crate) fn next_raw<T>(
+        &mut self,
+        decode: impl FnOnce(&'a [u8], &mut Decoder<'a>) -> Result<T, CborError>,
+    ) -> Option<Result<T, CborError>> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let result = self
+            .decoder
+            .read_map_key_bytes(&mut self.previous)
+            .and_then(|key| decode(key, self.decoder));
+        if result.is_err() {
+            self.remaining = 0;
+        }
+        Some(result)
+    }
+
+    /// Decode each field in place. Nested typed maps share the same depth
+    /// budget and key checks; the callback must consume exactly one value.
+    pub(crate) fn next_with<T>(
+        &mut self,
+        decode: impl FnOnce(&'a str, &mut Decoder<'a>) -> Result<T, CborError>,
+    ) -> Option<Result<T, CborError>> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        let result = self
+            .decoder
+            .read_map_key(&mut self.previous)
+            .and_then(|key| decode(key, self.decoder));
+        if result.is_err() {
+            self.remaining = 0;
+        }
+        Some(result)
+    }
+}
+
+#[cfg(any(feature = "api", test))]
+impl<'a> Iterator for MapEntries<'_, 'a> {
+    type Item = Result<(&'a str, Value<'a>), CborError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_with(|key, decoder| Ok((key, decoder.decode()?)))
+    }
+}
+
+#[cfg(any(feature = "api", test))]
+impl Drop for MapEntries<'_, '_> {
+    fn drop(&mut self) {
+        self.decoder.depth = self.parent_depth;
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -380,6 +532,125 @@ mod tests {
 
     fn decode_one(data: &[u8]) -> Value<'_> {
         crate::cbor::decode(data).unwrap()
+    }
+
+    fn check_map_paths(data: &[u8]) {
+        let mut materialized = Decoder::new(data);
+        let expected = materialized.decode().and_then(|v| match v {
+            Value::Map(entries) => Ok(entries),
+            _ => Err(CborError::InvalidCbor("expected map".into())),
+        });
+        let mut streamed = Decoder::new(data);
+        let actual = streamed
+            .map_entries()
+            .and_then(|it| it.collect::<Result<Vec<_>, _>>());
+        match (expected, actual) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(a, b);
+                assert_eq!(materialized.remaining(), streamed.remaining());
+            }
+            (Err(_), Err(_)) => {}
+            (a, b) => panic!("map paths disagree for {data:?}: {a:?} vs {b:?}"),
+        }
+        assert_eq!(streamed.depth, 0);
+    }
+
+    #[test]
+    fn streaming_map_boundaries_and_truncation() {
+        for data in [
+            vec![0xa0],
+            vec![0xa1, 0x61, b'a', 1],
+            vec![0xa2, 0x61, b'a', 1, 0x61, b'a', 2],
+            vec![0xa2, 0x61, b'b', 1, 0x61, b'a', 2],
+            vec![0xa1, 0x61, 0xff, 1],
+            vec![0xa1, 1, 1],
+            vec![0xba, 0, 0x10, 0, 0],
+            vec![0xb8, 1, 0x61, b'a', 1],
+        ] {
+            for end in 0..=data.len() {
+                check_map_paths(&data[..end]);
+            }
+        }
+        for depth in [0, 1, 62, 63, 64, 65] {
+            let mut data = vec![0xa1, 0x61, b'a'];
+            data.extend(std::iter::repeat_n(0x81, depth));
+            data.push(0);
+            check_map_paths(&data);
+        }
+        let fixture = include_bytes!("../../benches/fixtures/record_like.cbor");
+        for end in 0..=fixture.len() {
+            check_map_paths(&fixture[..end]);
+        }
+    }
+
+    #[cfg(feature = "api")]
+    fn check_typed_paths(data: &[u8]) {
+        use crate::api::app::bsky::FeedLike;
+        let expected = crate::cbor::decode(data)
+            .and_then(FeedLike::from_cbor_value)
+            .and_then(|v| v.to_cbor());
+        let actual = FeedLike::from_cbor(data).and_then(|v| v.to_cbor());
+        match (expected, actual) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b),
+            (Err(_), Err(_)) => {}
+            (a, b) => panic!("typed paths disagree for {data:?}: {a:?} vs {b:?}"),
+        }
+    }
+
+    #[cfg(feature = "api")]
+    #[test]
+    fn typed_stream_matches_materialized_on_mutated_records() {
+        let fixture = include_bytes!("../../benches/fixtures/record_like.cbor");
+        let mut data = fixture.to_vec();
+        for index in 0..data.len() {
+            check_typed_paths(&data[..index]);
+            for byte in 0..=255 {
+                data[index] = byte;
+                check_typed_paths(&data);
+            }
+            data[index] = fixture[index];
+        }
+        check_typed_paths(fixture);
+        // Unknown nested fields must observe the same global depth budget,
+        // including inside a known struct decoded directly from the stream.
+        for depth in [0, 60, 61, 62, 63, 64, 65] {
+            let mut like = crate::api::app::bsky::FeedLike::from_cbor(fixture).unwrap();
+            let mut nested = vec![0x81; depth];
+            nested.push(0);
+            like.subject.extra_cbor.push(("unknown".into(), nested));
+            check_typed_paths(&like.to_cbor().unwrap());
+        }
+    }
+
+    #[test]
+    fn streaming_map_sequence_and_early_drop() {
+        let mut decoder = Decoder::new(&[0xa1, 0x61, b'a', 1, 2]);
+        assert_eq!(
+            decoder
+                .map_entries()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+            vec![("a", Value::Unsigned(1))]
+        );
+        assert_eq!(decoder.decode().unwrap(), Value::Unsigned(2));
+        let mut decoder = Decoder::new(&[0xa1, 0x61, b'a', 1]);
+        drop(decoder.map_entries().unwrap());
+        assert_eq!(decoder.depth, 0);
+        // Early drop does not promise to skip unread fields.
+        assert_eq!(decoder.remaining(), 3);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn streaming_map_matches_materialized(data in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..1024)) {
+            check_map_paths(&data);
+            for count in [0xa1, 0xa2, 0xa5] {
+                let mut map = vec![count];
+                map.extend_from_slice(&data);
+                check_map_paths(&map);
+            }
+        }
     }
 
     #[test]
@@ -562,6 +833,22 @@ mod tests {
     fn reject_tag42_non_bytestring() {
         // tag 42 (0xd8 0x2a) wrapping an integer instead of a bytestring.
         assert!(crate::cbor::decode(&[0xd8, 0x2a, 0x01]).is_err());
+    }
+
+    #[test]
+    fn reject_nested_cid_tags_without_recursing() {
+        // Found by the record JSON differential fuzzer. Tags must wrap bytes
+        // directly; nesting them must not bypass the container depth limit.
+        let mut bytes = [0xd8, 0x2a].repeat(65_536);
+        bytes.push(0x40);
+        assert!(crate::cbor::decode(&bytes).is_err());
+        let arena = bumpalo::Bump::new();
+        assert!(Decoder::new(&bytes).decode_bump(&arena).is_err());
+        for inner in [0x00, 0x60, 0x80, 0xa0, 0xf6, 0xd8] {
+            let bytes = [0xd8, 0x2a, inner];
+            assert!(crate::cbor::decode(&bytes).is_err());
+            assert!(Decoder::new(&bytes).decode_bump(&arena).is_err());
+        }
     }
 
     #[test]

@@ -84,10 +84,8 @@ impl Borrow<str> for Datetime {
     }
 }
 
-impl TryFrom<&str> for Datetime {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl Datetime {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidDatetime(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -99,7 +97,36 @@ impl TryFrom<&str> for Datetime {
 
         validate_datetime_syntax(raw).map_err(|_| err("invalid datetime syntax"))?;
 
-        Ok(Datetime(raw.to_owned()))
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for Datetime {
+    type Error = SyntaxError;
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::validate(raw)?;
+        Ok(Self(raw.to_owned()))
+    }
+}
+
+/// A validated Datetime borrowing its original text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatetimeRef<'a>(&'a str);
+
+impl<'a> DatetimeRef<'a> {
+    pub fn as_str(&self) -> &'a str {
+        self.0
+    }
+    pub fn to_owned(self) -> Datetime {
+        Datetime(self.0.to_owned())
+    }
+}
+
+impl<'a> TryFrom<&'a str> for DatetimeRef<'a> {
+    type Error = SyntaxError;
+    fn try_from(raw: &'a str) -> Result<Self, Self::Error> {
+        Datetime::validate(raw)?;
+        Ok(Self(raw))
     }
 }
 

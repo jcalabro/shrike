@@ -1,0 +1,1046 @@
+//! Jetstream v2 replay/live client.
+//!
+//! This module implements a native and WASM client for [Jetstream] v2, which
+//! merges sealed archive segments and the live WebSocket into one ordered
+//! event stream. It is deliberately separate from the legacy
+//! [`crate::streaming`] Jetstream client: the two share no protocol state, and
+//! the legacy `streaming::Client::jetstream()` API is left untouched.
+//!
+//! # Overview
+//!
+//! The client is assembled from a few public pieces:
+//!
+//! - [`Engine`] joins an optional sealed-archive replay with the live
+//!   WebSocket tail and emits one ordered, duplicate-free stream. Pass
+//!   `Some(archive)` for replay-then-cutover, or `None` for a pure-live tail.
+//! - [`EngineSink`] is the two-method consumer you implement: `deliver`
+//!   receives each ordered [`Delivery`] (a [`Batch`] of [`Event`]s or an
+//!   [`Info`] advisory), and `recoverable` receives in-order recoverable
+//!   errors. Returning `false` from either stops the engine cleanly.
+//! - [`Filter`] selects events by [`Kind`], collection (an exact NSID or a
+//!   terminal `.*` namespace wildcard), and DID.
+//! - [`EngineConfig`] wraps a [`LiveConfig`] and adds the archive window
+//!   (`after_seq`, `before_seq`) and `snapshot_only`.
+//! - The transports are per-target: [`NativeHttpTransport`]/[`NativeWsTransport`]
+//!   on native, [`WasmHttpTransport`]/[`WasmWsTransport`] in the browser. The
+//!   archive is reached through [`ClientArchive`] over an [`ArchiveClient`], and
+//!   the zstd dictionary through [`HttpDictionarySource`].
+//! - [`CancelToken`] requests a prompt, cursor-safe stop; [`StatsHandle`]
+//!   snapshots replay and cutover progress.
+//!
+//! # Example: a live tail
+//!
+//! ```no_run
+//! # #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+//! # async fn tail() -> Result<(), Box<dyn std::error::Error>> {
+//! use shrike::jetstream::{
+//!     CancelToken, ClientArchive, Delivery, Engine, EngineConfig, EngineSink, Error, Filter,
+//!     HttpDictionarySource, Kind, LiveConfig, NativeHttpTransport, NativeWsTransport,
+//! };
+//!
+//! // A sink receives ordered deliveries. Returning `false` stops the engine.
+//! struct Printer;
+//! impl EngineSink for Printer {
+//!     async fn deliver(&mut self, delivery: Delivery) -> bool {
+//!         if let Delivery::Batch(batch) = delivery {
+//!             for event in batch.events() {
+//!                 println!("#{} {} {}", event.seq, event.kind().as_wire(), event.did.as_str());
+//!             }
+//!         }
+//!         true
+//!     }
+//!     // Keep tailing after a recoverable error (e.g. one malformed frame).
+//!     async fn recoverable(&mut self, _error: Error) -> bool {
+//!         true
+//!     }
+//! }
+//!
+//! let host = "jetstream.us-east.bsky.network";
+//! let mut live = LiveConfig::new(host, true);
+//! live.filter = Filter::new().kinds([Kind::Commit]);
+//! let read_limit = live.read_limit;
+//!
+//! let config = EngineConfig::new(live);
+//! let cancel = CancelToken::new();
+//!
+//! // Live-only: no archive replay, so the archive source is `None`. The turbofish
+//! // fixes the otherwise-unconstrained archive type parameter.
+//! let archive: Option<ClientArchive<NativeHttpTransport>> = None;
+//! let dict = HttpDictionarySource::new(NativeHttpTransport::new()?, host, true, cancel.clone());
+//! let ws = NativeWsTransport::new(read_limit);
+//!
+//! let engine = Engine::new(archive, ws, dict, config, cancel);
+//! engine.run(&mut Printer).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For archive replay, build a [`ClientArchive`] from an [`ArchiveClient`]
+//! ([`ArchiveConfig`] carries the host and [`ApiKey`]) and pass `Some(archive)`;
+//! set `config.after_seq`/`config.before_seq`/`config.snapshot_only` to bound
+//! the window. The `tools/shrike` CLI (`shrike jetstream`) wires all three modes
+//! end to end.
+//!
+//! # Cursors and resuming
+//!
+//! A cursor is a `u64` sequence number, exposed as [`StatsHandle`]'s
+//! `last_processed_seq` and on every [`Event`] as `seq`. Persisting and
+//! resuming from a cursor is the *caller's* responsibility — the engine holds no
+//! durable state — and a few rules keep a resume correct:
+//!
+//! - **Host identity.** A sequence number is only meaningful against the host
+//!   that issued it; v2 cursors do not transfer across hosts, and they are a
+//!   different domain from the legacy v1 client's cursors. Persist the
+//!   normalized host (see [`normalize_host`]) alongside the cursor and refuse to
+//!   resume a stored cursor against a different host.
+//! - **Marker folding.** Fold the highest delivered `seq` into durable storage
+//!   only after the [`Delivery`] has been handled, so a crash re-reads rather
+//!   than skips. Because [`Delivery`] is *moved* into `deliver`, the consumer
+//!   owns the events by the time the call returns; record the marker there (or
+//!   read [`StatsHandle`] `last_processed_seq`), then write it out.
+//! - **Resuming needs the archive.** To resume from a stored cursor set
+//!   `config.after_seq` to it and provide `Some(archive)`: any non-zero
+//!   `after_seq` (like `before_seq`/`snapshot_only`) requires an archive source,
+//!   because the engine replays the `(after_seq, tip]` gap from sealed segments
+//!   and then cuts over to the live tail exactly once: with the highest sequence
+//!   already covered being `B = max(tip, last_processed_seq)`, the live tail
+//!   resumes at the next sequence `B + 1` (the first event it will accept). A
+//!   pure-live tail (`None` archive) must have
+//!   `after_seq == 0` and starts from the server's live position.
+//! - **Snapshot semantics.** `snapshot_only` replays the bounded archive window
+//!   and returns without ever dialing the live tail; `before_seq` is an
+//!   inclusive upper bound and is only valid together with `snapshot_only`.
+//! - **Resource knobs.** [`LiveConfig`] carries `read_limit` (the per-frame
+//!   decode cap), `max_batch`, `compression`, and the reconnect backoff; the
+//!   archive's [`Limits`] bound download sizes and concurrency; and
+//!   [`EngineConfig`]'s rebackfill-stall budget (see
+//!   [`DEFAULT_MAX_REBACKFILL_STALLS`]) bounds no-progress cutover recovery.
+//! - **Recoverable vs. fatal.** `recoverable` errors are delivered in order and
+//!   the stream continues while it returns `true`; a fatal error is never
+//!   delivered to the sink — it is [`Engine::run`]'s `Err` return, after which
+//!   the persisted cursor is still consistent with what was delivered.
+//!
+//! # Relationship to the legacy Jetstream client
+//!
+//! This module is a *distinct* implementation from [`crate::streaming`]'s
+//! Jetstream v1 client. The two share no protocol state, no cursor domain, and
+//! no types: v1 speaks line-delimited JSON over a single WebSocket, while v2
+//! merges sealed `.jss` archive segments with a live WebSocket into one ordered
+//! stream. The legacy `streaming::Client::jetstream()` API is left untouched;
+//! new code targeting Jetstream v2 should use the types in this module only.
+//!
+//! [Jetstream]: https://github.com/bluesky-social/jetstream
+
+pub mod archive;
+pub mod block;
+pub mod cancel;
+pub mod compression;
+pub mod config;
+pub mod decode;
+mod decode_task;
+pub mod download;
+pub mod engine;
+pub mod error;
+pub mod event;
+pub mod filter;
+pub mod json_cbor;
+pub mod key;
+pub mod live;
+mod ordered;
+pub mod planner;
+pub mod record;
+pub mod retry;
+pub mod segment;
+pub mod time;
+pub mod transport;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub mod transport_native;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub mod transport_wasm;
+
+pub use archive::{ArchiveClient, ArchiveConfig, Limits};
+pub use block::{RawEvent, SegmentKind, decode_block, decode_block_frame};
+pub use cancel::CancelToken;
+pub use compression::decompress_bounded;
+pub use config::{Cursor, TIMESTAMP_CURSOR_THRESHOLD, normalize_host};
+pub use decode::{
+    Decoded, decode_block_frame_filtered, decode_segment_filtered, raw_event_to_event,
+};
+pub use download::{DownloadedSegment, download_segment};
+pub use engine::{
+    ArchiveSource, ArchiveStream, ClientArchive, DEFAULT_MAX_REBACKFILL_STALLS, Engine,
+    EngineConfig, EngineSink, StatsHandle,
+};
+pub use error::{Error, MAX_PROTOCOL_MESSAGE_LEN, Result};
+pub use event::{
+    Batch, Commit, Delivery, Event, EventPayload, Info, LiveFrame, Operation, Stats,
+    parse_live_frame, parse_live_value,
+};
+pub use filter::{Filter, Kind};
+pub use json_cbor::record_json_to_dag_cbor;
+pub use key::ApiKey;
+pub use live::{
+    DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_MAX, DEFAULT_FLUSH_DELAY, DEFAULT_LIVE_READ_LIMIT,
+    DEFAULT_MAX_BATCH, DICTIONARY_METHOD, DeliverySink, DialError, DictionarySource,
+    HttpDictionarySource, LiveBackoff, LiveConfig, LiveConsumer, LiveCursor, MAX_DICTIONARY_BYTES,
+    SUBSCRIBE_METHOD, WsConnection, WsError, WsMessage, WsTransport, XRPC_SUBPROTOCOL,
+    subscribe_url,
+};
+pub use planner::{
+    BlockSpan, PlanPage, PlanSegment, PlanSweep, SegmentMode, SnapshotPlan, plan_page,
+    plan_snapshot,
+};
+pub use record::{Record, record_cbor_to_json};
+pub use retry::{Attempt, RetryConfig};
+pub use segment::{
+    BlockIndexEntry, SealedHeader, SegmentReader, decode_block_index, read_sealed_header,
+    validate_block_offsets,
+};
+pub use time::{micros_to_rfc3339, rfc3339_to_micros};
+pub use transport::{
+    HttpBody, HttpRequest, HttpResponse, HttpTransport, Method, ResponseHeaders, TransportError,
+    TransportErrorKind,
+};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub use transport_native::{
+    NativeBody, NativeHttpTransport, NativeWsConnection, NativeWsTransport,
+};
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub use transport_wasm::{WasmHttpBody, WasmHttpTransport, WasmWsConnection, WasmWsTransport};
+
+// The upstream `com.atproto.sync.subscribeRepos` events wrapped by the DID-level
+// payload variants, re-exported so callers need not reach into `crate::api`.
+pub use crate::api::com::atproto::{
+    SyncSubscribeReposAccount, SyncSubscribeReposIdentity, SyncSubscribeReposSync,
+};
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    // The golden corpus is generated by `testdata/jetstream/gen` from a pinned
+    // Jetstream checkout (commit recorded in the manifest). The expected event
+    // lists below mirror `manifest.json`; they are the independent oracle.
+    const GOLDEN_BLOCK: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/jetstream/golden/golden_block.bin"
+    ));
+    const GOLDEN_SEAL: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/jetstream/golden/golden_seal.bin"
+    ));
+    const LIVE_DICT: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/jetstream/golden/live_dict.bin"
+    ));
+    const LIVE_COMMIT_DICTZST: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/jetstream/golden/live_commit.dictzst"
+    ));
+    const LIVE_COMMIT_JSON: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/jetstream/golden/live_commit.json"
+    ));
+
+    #[test]
+    fn golden_block_decodes_event_for_event() {
+        let events = decode_block_frame(GOLDEN_BLOCK).expect("golden block decodes");
+        assert_eq!(events.len(), 3);
+
+        let e = &events[0];
+        assert_eq!(e.seq, 1);
+        assert_eq!(e.witnessed_at, 1_700_000_000_000_000);
+        assert_eq!(e.indexed_at, 0);
+        assert_eq!(e.kind, SegmentKind::Create);
+        assert_eq!(e.did, b"did:plc:abcdefghijklmnopqrstuvwx");
+        assert_eq!(e.collection, b"app.bsky.feed.post");
+        assert_eq!(e.rkey, b"3l3qo2vuowo2b");
+        assert_eq!(e.rev, b"3l3qo2vutsw2b");
+        assert_eq!(e.payload, [0xA1, 0x65, 0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x05]);
+        // indexed_at == 0 so display time is witnessed_at.
+        assert_eq!(e.display_time_us(), 1_700_000_000_000_000);
+
+        let e = &events[1];
+        assert_eq!(e.seq, 2);
+        assert_eq!(e.witnessed_at, 1_700_000_001_000_000);
+        assert_eq!(e.indexed_at, 1_700_000_000_500_000);
+        assert_eq!(e.kind, SegmentKind::Identity);
+        assert_eq!(e.did, b"did:web:example.com");
+        assert!(e.collection.is_empty());
+        assert!(e.rkey.is_empty());
+        assert!(e.rev.is_empty());
+        assert!(e.payload.is_empty());
+        // indexed_at nonzero so display time is indexed_at.
+        assert_eq!(e.display_time_us(), 1_700_000_000_500_000);
+
+        let e = &events[2];
+        assert_eq!(e.seq, 3);
+        assert_eq!(e.kind, SegmentKind::Delete);
+        assert_eq!(e.did, b"did:plc:zzzzzzzzzzzzzzzzzzzzzzzz");
+        assert_eq!(e.collection, b"app.bsky.feed.like");
+        assert_eq!(e.rkey, b"3l3qo2vuowo2c");
+        assert_eq!(e.rev, b"3l3qo2vutsw2c");
+        assert!(e.payload.is_empty());
+    }
+
+    #[test]
+    fn golden_seal_header_parses_and_checksum_verifies() {
+        let header = read_sealed_header(GOLDEN_SEAL).expect("golden seal verifies");
+        assert_eq!(header.version, SEGMENT_VERSION);
+        assert!(header.block_count >= 1);
+        assert_eq!(header.event_count, 2);
+        assert_eq!(header.min_seq, 1);
+        assert_eq!(header.max_seq, 2);
+        // The block index is the footer's first section.
+        assert_eq!(header.block_index_offset, header.footer_offset);
+        header
+            .validate_layout(GOLDEN_SEAL.len())
+            .expect("layout is consistent");
+    }
+
+    use segment::SEGMENT_VERSION;
+
+    #[test]
+    fn tampered_checksum_is_rejected() {
+        let mut seal = GOLDEN_SEAL.to_vec();
+        // Flip a byte inside the footer (last byte of the file).
+        let last = seal.len() - 1;
+        seal[last] ^= 0xFF;
+        match read_sealed_header(&seal) {
+            Err(Error::ChecksumMismatch { .. }) => {}
+            other => panic!("expected checksum mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn zero_checksum_is_active_segment() {
+        let mut seal = GOLDEN_SEAL.to_vec();
+        seal[4..12].fill(0);
+        assert!(matches!(
+            SealedHeader::parse(&seal),
+            Err(Error::ActiveSegment)
+        ));
+    }
+
+    #[test]
+    fn bad_magic_is_rejected() {
+        let mut seal = GOLDEN_SEAL.to_vec();
+        seal[0] = b'X';
+        assert!(matches!(
+            SealedHeader::parse(&seal),
+            Err(Error::CorruptSegment(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_version_is_rejected() {
+        let mut seal = GOLDEN_SEAL.to_vec();
+        seal[12..14].copy_from_slice(&2u16.to_le_bytes());
+        match SealedHeader::parse(&seal) {
+            Err(Error::UnsupportedSegmentVersion { found, expected }) => {
+                assert_eq!(found, 2);
+                assert_eq!(expected, SEGMENT_VERSION);
+            }
+            other => panic!("expected version error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dictionary_frame_decodes_to_json() {
+        // 32 MiB is the live read limit; the fixture is tiny.
+        let out = decompress_bounded(LIVE_COMMIT_DICTZST, 32 << 20, Some(LIVE_DICT))
+            .expect("dictionary frame decodes");
+        assert_eq!(out, LIVE_COMMIT_JSON);
+        // Sanity: it really is a proposal-0015 commit envelope.
+        let text = core::str::from_utf8(&out).expect("utf8");
+        assert!(text.contains(r#""$type":"message""#));
+        assert!(text.contains("subscribeEvents#commit"));
+    }
+
+    #[test]
+    fn empty_block_is_four_zero_bytes() {
+        assert_eq!(decode_block(&[0, 0, 0, 0]).expect("empty"), Vec::new());
+        // Trailing bytes after a zero count is corruption.
+        assert!(matches!(
+            decode_block(&[0, 0, 0, 0, 0xFF]),
+            Err(Error::CorruptSegment(_))
+        ));
+    }
+
+    #[test]
+    fn truncated_block_is_rejected() {
+        // Claims one event but has no columns.
+        assert!(matches!(
+            decode_block(&[1, 0, 0, 0]),
+            Err(Error::Truncated(_))
+        ));
+        // Fewer than four bytes cannot even carry a count.
+        assert!(matches!(decode_block(&[0, 0]), Err(Error::Truncated(_))));
+    }
+
+    #[test]
+    fn oversized_event_count_is_rejected() {
+        let n = (MAX_BLOCK_EVENTS as u32) + 1;
+        let body = n.to_le_bytes();
+        assert!(matches!(
+            decode_block(&body),
+            Err(Error::LimitExceeded { .. })
+        ));
+    }
+
+    use block::MAX_BLOCK_EVENTS;
+
+    #[test]
+    fn decompress_respects_output_limit() {
+        // The golden block decompresses to more than one byte; a 1-byte cap
+        // must trip a bound rather than allocate. With the cap this small the
+        // frame's declared window already exceeds it, so the rejection fires at
+        // the pre-decode window check (klauspost's ErrWindowSizeExceeded);
+        // caps between the window and the decompressed size trip the output
+        // limit instead (covered in the compression module's tests).
+        match decompress_bounded(GOLDEN_BLOCK, 1, None) {
+            Err(Error::LimitExceeded { .. }) => {}
+            Err(Error::Compression(m)) if m.contains("window") => {}
+            other => panic!("expected a bound rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_kind_is_rejected() {
+        // Hand-build a one-event block whose kind byte is 0 (invalid).
+        // Layout: count=1, seq, witnessed, indexed, kind, coll_len, did_len,
+        // rkey_len, rev_len, payload_len, then blobs (all empty here).
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u32.to_le_bytes()); // count
+        body.extend_from_slice(&1u64.to_le_bytes()); // seq
+        body.extend_from_slice(&0i64.to_le_bytes()); // witnessed
+        body.extend_from_slice(&0i64.to_le_bytes()); // indexed
+        body.push(0); // kind = 0 (invalid)
+        body.push(0); // collection_len
+        body.extend_from_slice(&0u16.to_le_bytes()); // did_len
+        body.push(0); // rkey_len
+        body.push(0); // rev_len
+        body.extend_from_slice(&0u32.to_le_bytes()); // payload_len
+        assert!(matches!(decode_block(&body), Err(Error::CorruptSegment(_))));
+    }
+
+    // ---- M2: whole-segment decode, conversion, filtering ------------------
+
+    const DID_A: &str = "did:plc:abcdefghijklmnopqrstuvwx";
+    const DID_B: &str = "did:plc:zzzzzzzzzzzzzzzzzzzzzzzz";
+    const REV: &str = "3l3qo2vutsw2b";
+    const RKEY: &str = "3l3qo2vuowo2b";
+    const TIME: &str = "2024-01-01T00:00:00.000000Z";
+
+    /// Iterate the Go-generated golden seal at the [`RawEvent`] level and check
+    /// each column against `manifest.json` — the independent cross-language
+    /// oracle for the block index, frame extraction, and columnar decode against
+    /// real writer output (the M0 test only checked the header).
+    #[test]
+    fn golden_seal_iterates_raw_rows_matching_manifest() {
+        let reader = SegmentReader::open(GOLDEN_SEAL).expect("open golden seal");
+        let mut rows = Vec::new();
+        for i in 0..reader.block_count() {
+            let frame = reader.block_frame(i).expect("block frame");
+            rows.extend(decode_block_frame(frame).expect("decode frame"));
+        }
+        assert_eq!(rows.len(), 2);
+
+        let r = &rows[0];
+        assert_eq!(r.seq, 1);
+        assert_eq!(r.witnessed_at, 100);
+        assert_eq!(r.indexed_at, 0);
+        assert_eq!(r.kind, SegmentKind::Create);
+        assert_eq!(r.did, b"did:plc:a");
+        assert_eq!(r.collection, b"app.bsky.feed.post");
+        assert_eq!(r.rkey, b"k1");
+        assert_eq!(r.rev, b"v1");
+        assert_eq!(r.payload, [0x70, 0x31]);
+        assert_eq!(r.display_time_us(), 100);
+
+        let r = &rows[1];
+        assert_eq!(r.seq, 2);
+        assert_eq!(r.witnessed_at, 200);
+        assert_eq!(r.indexed_at, 250);
+        assert_eq!(r.kind, SegmentKind::Create);
+        assert_eq!(r.did, b"did:plc:b");
+        assert_eq!(r.collection, b"app.bsky.feed.like");
+        assert_eq!(r.rkey, b"k2");
+        assert_eq!(r.rev, b"v2");
+        assert_eq!(r.payload, [0x70, 0x32]);
+        // indexed_at nonzero, so display time is indexed_at.
+        assert_eq!(r.display_time_us(), 250);
+    }
+
+    /// The golden seal's DIDs (`did:plc:a`) and revs (`v1`) are deliberately
+    /// invalid atproto syntax, so every row fails typed conversion. The
+    /// whole-segment decoder must recover: collect each failure in `dropped`
+    /// rather than abort, and — since both rows fail — yield zero events. This is
+    /// sibling recovery exercised on real cross-language bytes.
+    #[test]
+    fn golden_seal_rows_drop_as_invalid_siblings() {
+        let decoded = decode_segment_filtered(GOLDEN_SEAL, &Filter::new()).expect("decode seal");
+        assert!(decoded.events.is_empty());
+        assert_eq!(decoded.dropped.len(), 2);
+        for err in &decoded.dropped {
+            assert!(matches!(err, Error::MalformedEvent(_)));
+        }
+    }
+
+    #[test]
+    fn raw_event_zero_seq_is_rejected() {
+        let raw = RawEvent {
+            seq: 0,
+            witnessed_at: 1,
+            indexed_at: 0,
+            kind: SegmentKind::Create,
+            collection: b"app.bsky.feed.post".to_vec(),
+            did: DID_A.as_bytes().to_vec(),
+            rkey: RKEY.as_bytes().to_vec(),
+            rev: REV.as_bytes().to_vec(),
+            payload: Vec::new(),
+        };
+        assert!(matches!(
+            raw_event_to_event(raw),
+            Err(Error::MalformedEvent(_))
+        ));
+    }
+
+    #[test]
+    fn raw_event_non_utf8_did_is_rejected() {
+        let raw = RawEvent {
+            seq: 1,
+            witnessed_at: 1,
+            indexed_at: 0,
+            kind: SegmentKind::Create,
+            collection: b"app.bsky.feed.post".to_vec(),
+            did: vec![0xff, 0xfe],
+            rkey: RKEY.as_bytes().to_vec(),
+            rev: REV.as_bytes().to_vec(),
+            payload: Vec::new(),
+        };
+        assert!(matches!(
+            raw_event_to_event(raw),
+            Err(Error::MalformedEvent(_))
+        ));
+    }
+
+    // A minimal sealed-segment writer. Native-only: it compresses with `zstd`,
+    // which shrike links only off-wasm. Tests that need it are gated to match.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    mod build {
+        const RESERVED_HEADER_BYTES: usize = 256;
+        const BLOCK_INDEX_ENTRY_SIZE: usize = 52;
+
+        /// One row to encode into a block body, in the columnar layout the
+        /// decoder reads back.
+        pub struct Row {
+            pub seq: u64,
+            pub witnessed_at: i64,
+            pub indexed_at: i64,
+            pub kind: u8,
+            pub collection: Vec<u8>,
+            pub did: Vec<u8>,
+            pub rkey: Vec<u8>,
+            pub rev: Vec<u8>,
+            pub payload: Vec<u8>,
+        }
+
+        /// Encode the decompressed columnar body for one block. An empty block is
+        /// exactly the four-byte zero count.
+        pub fn block_body(rows: &[Row]) -> Vec<u8> {
+            let n = rows.len();
+            let mut b = Vec::new();
+            b.extend_from_slice(&(n as u32).to_le_bytes());
+            if n == 0 {
+                return b;
+            }
+            for r in rows {
+                b.extend_from_slice(&r.seq.to_le_bytes());
+            }
+            for r in rows {
+                b.extend_from_slice(&r.witnessed_at.to_le_bytes());
+            }
+            for r in rows {
+                b.extend_from_slice(&r.indexed_at.to_le_bytes());
+            }
+            for r in rows {
+                b.push(r.kind);
+            }
+            for r in rows {
+                b.push(r.collection.len() as u8);
+            }
+            for r in rows {
+                b.extend_from_slice(&(r.did.len() as u16).to_le_bytes());
+            }
+            for r in rows {
+                b.push(r.rkey.len() as u8);
+            }
+            for r in rows {
+                b.push(r.rev.len() as u8);
+            }
+            for r in rows {
+                b.extend_from_slice(&(r.payload.len() as u32).to_le_bytes());
+            }
+            for r in rows {
+                b.extend_from_slice(&r.collection);
+            }
+            for r in rows {
+                b.extend_from_slice(&r.did);
+            }
+            for r in rows {
+                b.extend_from_slice(&r.rkey);
+            }
+            for r in rows {
+                b.extend_from_slice(&r.rev);
+            }
+            for r in rows {
+                b.extend_from_slice(&r.payload);
+            }
+            b
+        }
+
+        /// Assemble a complete sealed segment from a list of blocks, computing the
+        /// block index and the xxh3 checksum exactly as the reader verifies them.
+        pub fn segment(blocks: &[Vec<Row>]) -> Vec<u8> {
+            segment_with(blocks, |_, prefix| prefix)
+        }
+
+        /// Like [`segment`], but lets a test rewrite each block's 8-byte on-disk
+        /// length prefix (given its block index and the true prefix bytes) to
+        /// exercise the reader's prefix/index cross-check.
+        pub fn segment_with(
+            blocks: &[Vec<Row>],
+            mut prefix_for: impl FnMut(usize, [u8; 8]) -> [u8; 8],
+        ) -> Vec<u8> {
+            use core::hash::Hasher;
+            use twox_hash::XxHash3_64;
+
+            let mut file = vec![0u8; RESERVED_HEADER_BYTES];
+            let mut index: Vec<[u8; BLOCK_INDEX_ENTRY_SIZE]> = Vec::new();
+            let mut ev_count = 0u32;
+            let (mut min_seq, mut max_seq) = (u64::MAX, 0u64);
+            let (mut min_w, mut max_w) = (i64::MAX, i64::MIN);
+
+            for (i, rows) in blocks.iter().enumerate() {
+                let body = block_body(rows);
+                let frame = zstd::bulk::compress(&body, 3).expect("compress block");
+                let offset = file.len() as u64;
+                let true_prefix = (frame.len() as u64).to_le_bytes();
+                file.extend_from_slice(&prefix_for(i, true_prefix));
+                file.extend_from_slice(&frame);
+
+                let (mut bmin_s, mut bmax_s) = (u64::MAX, 0u64);
+                let (mut bmin_w, mut bmax_w) = (i64::MAX, i64::MIN);
+                for r in rows {
+                    ev_count += 1;
+                    bmin_s = bmin_s.min(r.seq);
+                    bmax_s = bmax_s.max(r.seq);
+                    bmin_w = bmin_w.min(r.witnessed_at);
+                    bmax_w = bmax_w.max(r.witnessed_at);
+                }
+                if rows.is_empty() {
+                    bmin_s = 0;
+                    bmax_s = 0;
+                    bmin_w = 0;
+                    bmax_w = 0;
+                } else {
+                    min_seq = min_seq.min(bmin_s);
+                    max_seq = max_seq.max(bmax_s);
+                    min_w = min_w.min(bmin_w);
+                    max_w = max_w.max(bmax_w);
+                }
+
+                let mut e = [0u8; BLOCK_INDEX_ENTRY_SIZE];
+                e[0..8].copy_from_slice(&offset.to_le_bytes());
+                e[8..12].copy_from_slice(&(frame.len() as u32).to_le_bytes());
+                e[12..16].copy_from_slice(&(body.len() as u32).to_le_bytes());
+                e[16..20].copy_from_slice(&(rows.len() as u32).to_le_bytes());
+                e[20..28].copy_from_slice(&bmin_s.to_le_bytes());
+                e[28..36].copy_from_slice(&bmax_s.to_le_bytes());
+                e[36..44].copy_from_slice(&bmin_w.to_le_bytes());
+                e[44..52].copy_from_slice(&bmax_w.to_le_bytes());
+                index.push(e);
+            }
+
+            let footer_offset = file.len() as u64;
+            for e in &index {
+                file.extend_from_slice(e);
+            }
+            let file_len = file.len() as u64;
+
+            if ev_count == 0 {
+                min_seq = 0;
+                max_seq = 0;
+                min_w = 0;
+                max_w = 0;
+            }
+
+            // Header byte map — see segment.rs for the field offsets.
+            file[0..4].copy_from_slice(b"jss0");
+            file[12..14].copy_from_slice(&1u16.to_le_bytes());
+            file[14..18].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
+            file[18..22].copy_from_slice(&ev_count.to_le_bytes());
+            file[22..26].copy_from_slice(&0u32.to_le_bytes()); // unique_did_count
+            file[26..34].copy_from_slice(&min_seq.to_le_bytes());
+            file[34..42].copy_from_slice(&max_seq.to_le_bytes());
+            file[42..50].copy_from_slice(&min_w.to_le_bytes());
+            file[50..58].copy_from_slice(&max_w.to_le_bytes());
+            file[58..66].copy_from_slice(&footer_offset.to_le_bytes());
+            file[66..74].copy_from_slice(&file_len.to_le_bytes()); // did_bloom_offset
+            file[74..82].copy_from_slice(&file_len.to_le_bytes()); // block_did_bloom_offset
+            file[82..90].copy_from_slice(&file_len.to_le_bytes()); // collection_index_offset
+            file[90..98].copy_from_slice(&footer_offset.to_le_bytes()); // block_index_offset
+
+            // Checksum over header[12..256] ++ file[footer_offset..].
+            let mut hasher = XxHash3_64::new();
+            hasher.write(&file[12..RESERVED_HEADER_BYTES]);
+            hasher.write(&file[footer_offset as usize..]);
+            file[4..12].copy_from_slice(&hasher.finish().to_le_bytes());
+            file
+        }
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    use crate::syntax::{Datetime, Did, Handle};
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn feed_post_cbor(text: &str) -> Vec<u8> {
+        record_json_to_dag_cbor(&serde_json::json!({
+            "$type": "app.bsky.feed.post",
+            "text": text,
+            "createdAt": TIME,
+        }))
+        .expect("canonicalize record")
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn identity_payload(did: &str, handle: &str) -> Vec<u8> {
+        SyncSubscribeReposIdentity {
+            did: Did::try_from(did).unwrap(),
+            handle: Some(Handle::try_from(handle).unwrap()),
+            seq: 999,
+            time: Datetime::try_from(TIME).unwrap(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: Vec::new(),
+        }
+        .to_cbor()
+        .expect("encode identity")
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn account_payload(did: &str) -> Vec<u8> {
+        SyncSubscribeReposAccount {
+            active: true,
+            did: Did::try_from(did).unwrap(),
+            seq: 5,
+            status: None,
+            time: Datetime::try_from(TIME).unwrap(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: Vec::new(),
+        }
+        .to_cbor()
+        .expect("encode account")
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn sync_payload(did: &str) -> Vec<u8> {
+        SyncSubscribeReposSync {
+            blocks: crate::api::Bytes(vec![1, 2, 3]),
+            did: Did::try_from(did).unwrap(),
+            rev: "syncrev".to_owned(),
+            seq: 5,
+            time: Datetime::try_from(TIME).unwrap(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: Vec::new(),
+        }
+        .to_cbor()
+        .expect("encode sync")
+    }
+
+    /// A create commit row carrying a real record payload.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn commit_row(seq: u64, collection: &str, did: &str) -> build::Row {
+        build::Row {
+            seq,
+            witnessed_at: seq as i64 * 100,
+            indexed_at: 0,
+            kind: 1,
+            collection: collection.as_bytes().to_vec(),
+            did: did.as_bytes().to_vec(),
+            rkey: RKEY.as_bytes().to_vec(),
+            rev: REV.as_bytes().to_vec(),
+            payload: feed_post_cbor("x"),
+        }
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    fn identity_row(seq: u64, did: &str) -> build::Row {
+        build::Row {
+            seq,
+            witnessed_at: seq as i64 * 100,
+            indexed_at: 0,
+            kind: 4,
+            collection: Vec::new(),
+            did: did.as_bytes().to_vec(),
+            rkey: Vec::new(),
+            rev: Vec::new(),
+            payload: identity_payload(did, "alice.test"),
+        }
+    }
+
+    /// A single segment covering every kind (create, update, delete, identity,
+    /// account, sync, create-resync) round-trips through the whole-segment
+    /// decoder with no drops, in sequence order, each converted to its exact
+    /// public shape.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn built_segment_round_trips_every_kind() {
+        let row = |seq: u64, kind: u8, coll: &str, payload: Vec<u8>| build::Row {
+            seq,
+            witnessed_at: seq as i64 * 100,
+            indexed_at: 0,
+            kind,
+            collection: coll.as_bytes().to_vec(),
+            did: DID_A.as_bytes().to_vec(),
+            rkey: if coll.is_empty() {
+                Vec::new()
+            } else {
+                RKEY.as_bytes().to_vec()
+            },
+            rev: if coll.is_empty() {
+                Vec::new()
+            } else {
+                REV.as_bytes().to_vec()
+            },
+            payload,
+        };
+        let rows = vec![
+            row(1, 1, "app.bsky.feed.post", feed_post_cbor("create")),
+            row(2, 2, "app.bsky.feed.post", feed_post_cbor("update")),
+            row(3, 3, "app.bsky.feed.like", Vec::new()),
+            row(4, 4, "", identity_payload(DID_A, "alice.test")),
+            row(5, 5, "", account_payload(DID_A)),
+            row(6, 6, "", sync_payload(DID_A)),
+            row(7, 7, "app.bsky.feed.post", feed_post_cbor("resync")),
+        ];
+        let seg = build::segment(&[rows]);
+        let decoded = decode_segment_filtered(&seg, &Filter::new()).expect("decode segment");
+        assert!(
+            decoded.dropped.is_empty(),
+            "no rows should drop: {:?}",
+            decoded.dropped
+        );
+        assert_eq!(decoded.events.len(), 7);
+        assert_eq!(
+            decoded.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5, 6, 7]
+        );
+
+        match &decoded.events[0].payload {
+            EventPayload::Commit(c) => {
+                assert_eq!(c.operation, Operation::Create);
+                assert_eq!(c.collection.as_str(), "app.bsky.feed.post");
+                assert_eq!(c.rkey.as_str(), RKEY);
+                assert_eq!(c.rev.to_string(), REV);
+                let rec = c.record.as_ref().expect("create record");
+                assert_eq!(
+                    rec.to_json().unwrap(),
+                    serde_json::json!({
+                        "$type": "app.bsky.feed.post", "text": "create", "createdAt": TIME
+                    })
+                );
+            }
+            other => panic!("expected commit, got {other:?}"),
+        }
+        match &decoded.events[1].payload {
+            EventPayload::Commit(c) => {
+                assert_eq!(c.operation, Operation::Update);
+                assert!(c.record.is_some());
+            }
+            other => panic!("expected commit, got {other:?}"),
+        }
+        match &decoded.events[2].payload {
+            EventPayload::Commit(c) => {
+                assert_eq!(c.operation, Operation::Delete);
+                assert!(c.record.is_none());
+                assert_eq!(c.collection.as_str(), "app.bsky.feed.like");
+            }
+            other => panic!("expected commit, got {other:?}"),
+        }
+        match &decoded.events[3].payload {
+            EventPayload::Identity(id) => {
+                assert_eq!(id.seq, 999);
+                assert_eq!(id.handle.as_ref().map(|h| h.as_str()), Some("alice.test"));
+            }
+            other => panic!("expected identity, got {other:?}"),
+        }
+        match &decoded.events[4].payload {
+            EventPayload::Account(a) => assert!(a.active),
+            other => panic!("expected account, got {other:?}"),
+        }
+        match &decoded.events[5].payload {
+            EventPayload::Sync(s) => assert_eq!(s.rev, "syncrev"),
+            other => panic!("expected sync, got {other:?}"),
+        }
+        // create-resync (kind 7) folds into a create commit.
+        match &decoded.events[6].payload {
+            EventPayload::Commit(c) => assert_eq!(c.operation, Operation::Create),
+            other => panic!("expected commit, got {other:?}"),
+        }
+        assert_eq!(decoded.events[6].kind(), Kind::Commit);
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn built_segment_filter_by_collection_wildcard() {
+        let seg = build::segment(&[vec![
+            commit_row(1, "app.bsky.feed.post", DID_A),
+            commit_row(2, "app.bsky.feed.like", DID_A),
+            commit_row(3, "app.bsky.graph.follow", DID_A),
+        ]]);
+        let filter = Filter::new().collection("app.bsky.feed.*").unwrap();
+        let decoded = decode_segment_filtered(&seg, &filter).expect("decode");
+        assert!(decoded.dropped.is_empty());
+        assert_eq!(decoded.events.len(), 2);
+        for e in &decoded.events {
+            match &e.payload {
+                EventPayload::Commit(c) => {
+                    assert!(c.collection.as_str().starts_with("app.bsky.feed."));
+                }
+                other => panic!("expected commit, got {other:?}"),
+            }
+        }
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn built_segment_filter_by_did() {
+        let seg = build::segment(&[vec![
+            commit_row(1, "app.bsky.feed.post", DID_A),
+            commit_row(2, "app.bsky.feed.post", DID_B),
+        ]]);
+        let filter = Filter::new().did(DID_A).unwrap();
+        let decoded = decode_segment_filtered(&seg, &filter).expect("decode");
+        assert_eq!(decoded.events.len(), 1);
+        assert_eq!(decoded.events[0].did.as_str(), DID_A);
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn built_segment_filter_by_kind_excludes_others() {
+        let seg = build::segment(&[vec![
+            commit_row(1, "app.bsky.feed.post", DID_A),
+            identity_row(2, DID_A),
+        ]]);
+        let filter = Filter::new().kinds([Kind::Identity]);
+        let decoded = decode_segment_filtered(&seg, &filter).expect("decode");
+        assert_eq!(decoded.events.len(), 1);
+        assert_eq!(decoded.events[0].kind(), Kind::Identity);
+    }
+
+    /// A structurally valid block with one row that fails typed conversion (an
+    /// invalid rev) keeps its valid siblings and collects the one failure.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn sibling_recovery_preserves_valid_rows() {
+        let bad = build::Row {
+            seq: 2,
+            witnessed_at: 200,
+            indexed_at: 0,
+            kind: 1,
+            collection: b"app.bsky.feed.post".to_vec(),
+            did: DID_A.as_bytes().to_vec(),
+            rkey: RKEY.as_bytes().to_vec(),
+            rev: b"bad".to_vec(), // not a valid 13-char TID
+            payload: feed_post_cbor("x"),
+        };
+        let seg = build::segment(&[vec![
+            commit_row(1, "app.bsky.feed.post", DID_A),
+            bad,
+            identity_row(3, DID_A),
+        ]]);
+        let decoded = decode_segment_filtered(&seg, &Filter::new()).expect("decode");
+        assert_eq!(decoded.events.len(), 2);
+        assert_eq!(decoded.dropped.len(), 1);
+        assert!(matches!(decoded.dropped[0], Error::MalformedEvent(_)));
+        assert_eq!(decoded.events[0].seq, 1);
+        assert_eq!(decoded.events[1].seq, 3);
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn multi_block_segment_preserves_order() {
+        let seg = build::segment(&[
+            vec![
+                commit_row(1, "app.bsky.feed.post", DID_A),
+                commit_row(2, "app.bsky.feed.post", DID_A),
+            ],
+            vec![commit_row(3, "app.bsky.feed.post", DID_A)],
+        ]);
+        let reader = SegmentReader::open(&seg).expect("open");
+        assert_eq!(reader.block_count(), 2);
+        let decoded = decode_segment_filtered(&seg, &Filter::new()).expect("decode");
+        assert_eq!(
+            decoded.events.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    /// The block region is outside the checksum, so [`SegmentReader::open`] still
+    /// succeeds when a block's on-disk length prefix is tampered — but the
+    /// per-frame cross-check against the checksum-protected index rejects it.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn block_length_prefix_mismatch_is_rejected() {
+        let seg = build::segment_with(
+            &[vec![commit_row(1, "app.bsky.feed.post", DID_A)]],
+            |_, mut prefix| {
+                prefix[0] ^= 0xFF;
+                prefix
+            },
+        );
+        let reader = SegmentReader::open(&seg).expect("open (checksum still valid)");
+        assert!(matches!(
+            reader.block_frame(0),
+            Err(Error::CorruptSegment(_))
+        ));
+        assert!(matches!(
+            decode_segment_filtered(&seg, &Filter::new()),
+            Err(Error::CorruptSegment(_))
+        ));
+    }
+
+    /// The raw `getBlock`-frame path (no segment wrapper) filters and converts.
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[test]
+    fn decode_block_frame_filtered_applies_filter() {
+        let rows = vec![
+            commit_row(1, "app.bsky.feed.post", DID_A),
+            commit_row(2, "app.bsky.feed.like", DID_A),
+        ];
+        let body = build::block_body(&rows);
+        let frame = zstd::bulk::compress(&body, 3).expect("compress");
+        let filter = Filter::new().collection("app.bsky.feed.post").unwrap();
+        let decoded = decode_block_frame_filtered(&frame, &filter).expect("decode frame");
+        assert_eq!(decoded.events.len(), 1);
+        match &decoded.events[0].payload {
+            EventPayload::Commit(c) => assert_eq!(c.collection.as_str(), "app.bsky.feed.post"),
+            other => panic!("expected commit, got {other:?}"),
+        }
+    }
+}
+
+mod view;
+pub use view::{
+    CommitView, EventPayloadView, EventView, MappedDecoded, MappedEvent, decode_block_frame_mapped,
+    decode_segment_mapped,
+};
+
+pub use event::Sequenced;
+
+pub use download::download_segment_mapped;
+
+pub use engine::MappedArchive;

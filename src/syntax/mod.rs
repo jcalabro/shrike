@@ -15,11 +15,12 @@ mod handle;
 mod language;
 mod nsid;
 mod recordkey;
+mod small_string;
 mod tid;
 
 pub use at_identifier::AtIdentifier;
-pub use aturi::AtUri;
-pub use datetime::Datetime;
+pub use aturi::{AtUri, AtUriRef};
+pub use datetime::{Datetime, DatetimeRef};
 pub use did::Did;
 pub use handle::Handle;
 pub use language::Language;

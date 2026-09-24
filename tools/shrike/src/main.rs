@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod account;
+mod jetstream;
 mod key;
 mod plc;
 mod record;
@@ -52,6 +53,9 @@ enum Command {
 
     /// Stream live events from the network
     Subscribe(subscribe::Args),
+
+    /// Stream events through the Jetstream v2 client (archive replay + live tail)
+    Jetstream(jetstream::Args),
 }
 
 #[tokio::main]
@@ -67,5 +71,6 @@ async fn main() -> Result<()> {
         Command::Record(cmd) => record::run(cmd).await,
         Command::Account(cmd) => account::run(cmd).await,
         Command::Subscribe(args) => subscribe::run(args).await,
+        Command::Jetstream(args) => jetstream::run(args).await,
     }
 }

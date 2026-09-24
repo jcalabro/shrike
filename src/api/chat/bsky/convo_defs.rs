@@ -72,7 +72,59 @@ impl ConvoDefsConvoRef {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsConvoRef {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -117,6 +169,108 @@ impl ConvoDefsConvoRef {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsConvoRefCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsConvoRefCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsConvoRef, crate::cbor::CborError> {
+        Ok(ConvoDefsConvoRef {
+            did: self.did.clone(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -795,7 +949,144 @@ impl ConvoDefsConvoView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_id: Option<String> = None;
+        let mut field_rev: Option<String> = None;
+        let mut field_kind: Option<ConvoDefsConvoViewKindUnion> = None;
+        let mut field_muted: Option<bool> = None;
+        let mut field_status: Option<ConvoDefsConvoStatus> = None;
+        let mut field_members: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> = Vec::new();
+        let mut field_last_message: Option<ConvoDefsConvoViewLastMessageUnion> = None;
+        let mut field_unread_count: Option<i64> = None;
+        let mut field_last_reaction: Option<ConvoDefsConvoViewLastReactionUnion> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "kind" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_kind = Some(ConvoDefsConvoViewKindUnion::decode_cbor(&mut dec)?);
+                }
+                "muted" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_muted = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                "status" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_status = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "members" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_members.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "lastMessage" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_last_message =
+                        Some(ConvoDefsConvoViewLastMessageUnion::decode_cbor(&mut dec)?);
+                }
+                "unreadCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_unread_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_unread_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "lastReaction" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_last_reaction =
+                        Some(ConvoDefsConvoViewLastReactionUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsConvoView {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            kind: field_kind,
+            muted: field_muted.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'muted'".into())
+            })?,
+            status: field_status,
+            members: field_members,
+            last_message: field_last_message,
+            unread_count: field_unread_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'unreadCount'".into())
+            })?,
+            last_reaction: field_last_reaction,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -850,11 +1141,9 @@ impl ConvoDefsConvoView {
                 "members" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_members.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -916,6 +1205,266 @@ impl ConvoDefsConvoView {
             last_reaction: field_last_reaction,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsConvoViewCborView<'a> {
+    pub id: &'a str,
+    pub rev: &'a str,
+    pub kind: Option<ConvoDefsConvoViewKindUnion>,
+    pub muted: bool,
+    pub status: Option<&'a str>,
+    pub members: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub last_message: Option<ConvoDefsConvoViewLastMessageUnion>,
+    pub unread_count: i64,
+    pub last_reaction: Option<ConvoDefsConvoViewLastReactionUnion>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsConvoViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsConvoView, crate::cbor::CborError> {
+        Ok(ConvoDefsConvoView {
+            id: self.id.to_owned(),
+            rev: self.rev.to_owned(),
+            kind: self.kind.clone(),
+            muted: self.muted,
+            status: self.status.as_ref().map(|value| (*value).to_owned()),
+            members: self.members.clone(),
+            last_message: self.last_message.clone(),
+            unread_count: self.unread_count,
+            last_reaction: self.last_reaction.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<&'a str> = None;
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_kind: Option<ConvoDefsConvoViewKindUnion> = None;
+        let mut field_muted: Option<bool> = None;
+        let mut field_status: Option<&'a str> = None;
+        let mut field_members: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> = Vec::new();
+        let mut field_last_message: Option<ConvoDefsConvoViewLastMessageUnion> = None;
+        let mut field_unread_count: Option<i64> = None;
+        let mut field_last_reaction: Option<ConvoDefsConvoViewLastReactionUnion> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            field_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6b\x69\x6e\x64", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_kind = Some(ConvoDefsConvoViewKindUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x6d\x75\x74\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Bool(b) = value {
+                field_muted = Some(b);
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x74\x61\x74\x75\x73", |decoder| {
+            field_status = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x6d\x62\x65\x72\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_members.push(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(item)?,
+                    );
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x6c\x61\x73\x74\x4d\x65\x73\x73\x61\x67\x65",
+            |decoder| {
+                let value = decoder.decode()?;
+                let raw = crate::cbor::encode_value(&value)?;
+                let mut dec = crate::cbor::Decoder::new(&raw);
+                field_last_message =
+                    Some(ConvoDefsConvoViewLastMessageUnion::decode_cbor(&mut dec)?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6b\x75\x6e\x72\x65\x61\x64\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_unread_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_unread_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x6c\x61\x73\x74\x52\x65\x61\x63\x74\x69\x6f\x6e",
+            |decoder| {
+                let value = decoder.decode()?;
+                let raw = crate::cbor::encode_value(&value)?;
+                let mut dec = crate::cbor::Decoder::new(&raw);
+                field_last_reaction =
+                    Some(ConvoDefsConvoViewLastReactionUnion::decode_cbor(&mut dec)?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    field_id = Some(decoder.text()?);
+                }
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"kind" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_kind = Some(ConvoDefsConvoViewKindUnion::decode_cbor(&mut dec)?);
+                }
+                b"muted" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_muted = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                b"status" => {
+                    field_status = Some(decoder.text()?);
+                }
+                b"members" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_members.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"lastMessage" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_last_message =
+                        Some(ConvoDefsConvoViewLastMessageUnion::decode_cbor(&mut dec)?);
+                }
+                b"unreadCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_unread_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_unread_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"lastReaction" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_last_reaction =
+                        Some(ConvoDefsConvoViewLastReactionUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            kind: field_kind,
+            muted: field_muted.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'muted'".into())
+            })?,
+            status: field_status,
+            members: field_members,
+            last_message: field_last_message,
+            unread_count: field_unread_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'unreadCount'".into())
+            })?,
+            last_reaction: field_last_reaction,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1002,7 +1551,78 @@ impl ConvoDefsDeletedMessageView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_id: Option<String> = None;
+        let mut field_rev: Option<String> = None;
+        let mut field_sender: Option<ConvoDefsMessageViewSender> = None;
+        let mut field_sent_at: Option<crate::syntax::Datetime> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "sender" => {
+                    field_sender = Some(ConvoDefsMessageViewSender::decode_cbor(decoder)?);
+                }
+                "sentAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_sent_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsDeletedMessageView {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1031,9 +1651,7 @@ impl ConvoDefsDeletedMessageView {
                     }
                 }
                 "sender" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_sender = Some(ConvoDefsMessageViewSender::decode_cbor(&mut dec)?);
+                    field_sender = Some(ConvoDefsMessageViewSender::from_cbor_value(value)?);
                 }
                 "sentAt" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -1067,6 +1685,124 @@ impl ConvoDefsDeletedMessageView {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsDeletedMessageViewCborView<'a> {
+    pub id: &'a str,
+    pub rev: &'a str,
+    pub sender: ConvoDefsMessageViewSenderCborView<'a>,
+    pub sent_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsDeletedMessageViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsDeletedMessageView, crate::cbor::CborError> {
+        Ok(ConvoDefsDeletedMessageView {
+            id: self.id.to_owned(),
+            rev: self.rev.to_owned(),
+            sender: self.sender.to_owned()?,
+            sent_at: self.sent_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<&'a str> = None;
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_sender: Option<ConvoDefsMessageViewSenderCborView<'a>> = None;
+        let mut field_sent_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            field_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x64\x65\x72", |decoder| {
+            field_sender = Some(ConvoDefsMessageViewSenderCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x74\x41\x74", |decoder| {
+            field_sent_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    field_id = Some(decoder.text()?);
+                }
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"sender" => {
+                    field_sender = Some(ConvoDefsMessageViewSenderCborView::decode_cbor(decoder)?);
+                }
+                b"sentAt" => {
+                    field_sent_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1121,7 +1857,32 @@ impl ConvoDefsDirectConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsDirectConvo {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1141,6 +1902,66 @@ impl ConvoDefsDirectConvo {
         Ok(ConvoDefsDirectConvo {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsDirectConvoCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsDirectConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsDirectConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsDirectConvo {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1306,7 +2127,187 @@ impl ConvoDefsGroupConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_name: Option<String> = None;
+        let mut field_join_link: Option<crate::api::chat::bsky::GroupDefsJoinLinkView> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_lock_status: Option<ConvoDefsConvoLockStatus> = None;
+        let mut field_member_count: Option<i64> = None;
+        let mut field_member_limit: Option<i64> = None;
+        let mut field_join_request_count: Option<i64> = None;
+        let mut field_unread_join_request_count: Option<i64> = None;
+        let mut field_lock_status_moderation_override: Option<bool> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "name" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "joinLink" => {
+                    field_join_link = Some(
+                        crate::api::chat::bsky::GroupDefsJoinLinkView::decode_cbor(decoder)?,
+                    );
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "lockStatus" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_lock_status = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "memberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "memberLimit" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_limit = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "joinRequestCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_join_request_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_join_request_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "unreadJoinRequestCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_unread_join_request_count =
+                                Some(i64::try_from(n).map_err(|_| {
+                                    crate::cbor::CborError::InvalidCbor(
+                                        "integer out of i64 range".into(),
+                                    )
+                                })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_unread_join_request_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                "lockStatusModerationOverride" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_lock_status_moderation_override = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsGroupConvo {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            join_link: field_join_link,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            lock_status: field_lock_status.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockStatus'".into())
+            })?,
+            member_count: field_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberCount'".into())
+            })?,
+            member_limit: field_member_limit.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberLimit'".into())
+            })?,
+            join_request_count: field_join_request_count,
+            unread_join_request_count: field_unread_join_request_count,
+            lock_status_moderation_override: field_lock_status_moderation_override.ok_or_else(
+                || {
+                    crate::cbor::CborError::InvalidCbor(
+                        "missing required field 'lockStatusModerationOverride'".into(),
+                    )
+                },
+            )?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1333,10 +2334,8 @@ impl ConvoDefsGroupConvo {
                     }
                 }
                 "joinLink" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_join_link = Some(
-                        crate::api::chat::bsky::GroupDefsJoinLinkView::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::GroupDefsJoinLinkView::from_cbor_value(value)?,
                     );
                 }
                 "createdAt" => {
@@ -1462,6 +2461,335 @@ impl ConvoDefsGroupConvo {
     }
 }
 
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsGroupConvoCborView<'a> {
+    pub name: &'a str,
+    pub join_link: Option<crate::api::chat::bsky::GroupDefsJoinLinkViewCborView<'a>>,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub lock_status: &'a str,
+    pub member_count: i64,
+    pub member_limit: i64,
+    pub join_request_count: Option<i64>,
+    pub unread_join_request_count: Option<i64>,
+    pub lock_status_moderation_override: bool,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsGroupConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsGroupConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsGroupConvo {
+            name: self.name.to_owned(),
+            join_link: self
+                .join_link
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            created_at: self.created_at.to_owned(),
+            lock_status: self.lock_status.to_owned(),
+            member_count: self.member_count,
+            member_limit: self.member_limit,
+            join_request_count: self.join_request_count,
+            unread_join_request_count: self.unread_join_request_count,
+            lock_status_moderation_override: self.lock_status_moderation_override,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_name: Option<&'a str> = None;
+        let mut field_join_link: Option<crate::api::chat::bsky::GroupDefsJoinLinkViewCborView<'a>> =
+            None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_lock_status: Option<&'a str> = None;
+        let mut field_member_count: Option<i64> = None;
+        let mut field_member_limit: Option<i64> = None;
+        let mut field_join_request_count: Option<i64> = None;
+        let mut field_unread_join_request_count: Option<i64> = None;
+        let mut field_lock_status_moderation_override: Option<bool> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x6e\x61\x6d\x65", |decoder| {
+            field_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x6a\x6f\x69\x6e\x4c\x69\x6e\x6b", |decoder| {
+            field_join_link =
+                Some(crate::api::chat::bsky::GroupDefsJoinLinkViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x6c\x6f\x63\x6b\x53\x74\x61\x74\x75\x73", |decoder| {
+            field_lock_status = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x6d\x65\x6d\x62\x65\x72\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_member_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_member_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6b\x6d\x65\x6d\x62\x65\x72\x4c\x69\x6d\x69\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_member_limit = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x70\x6a\x6f\x69\x6e\x52\x65\x71\x75\x65\x73\x74\x43\x6f\x75\x6e\x74",
+            |decoder| {
+                let value = decoder.decode()?;
+                match value {
+                    crate::cbor::Value::Unsigned(n) => {
+                        field_join_request_count = Some(i64::try_from(n).map_err(|_| {
+                            crate::cbor::CborError::InvalidCbor("integer out of i64 range".into())
+                        })?);
+                    }
+                    crate::cbor::Value::Signed(n) => {
+                        field_join_request_count = Some(n);
+                    }
+                    _ => {
+                        return Err(crate::cbor::CborError::InvalidCbor(
+                            "expected integer".into(),
+                        ));
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        entries.try_field(b"\x76\x75\x6e\x72\x65\x61\x64\x4a\x6f\x69\x6e\x52\x65\x71\x75\x65\x73\x74\x43\x6f\x75\x6e\x74", |decoder| {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => { field_unread_join_request_count = Some(i64::try_from(n).map_err(|_| crate::cbor::CborError::InvalidCbor("integer out of i64 range".into()))?); }
+                        crate::cbor::Value::Signed(n) => { field_unread_join_request_count = Some(n); }
+                        _ => return Err(crate::cbor::CborError::InvalidCbor("expected integer".into())),
+                    }
+            Ok(())
+        })?;
+        entries.try_field(b"\x78\x1c\x6c\x6f\x63\x6b\x53\x74\x61\x74\x75\x73\x4d\x6f\x64\x65\x72\x61\x74\x69\x6f\x6e\x4f\x76\x65\x72\x72\x69\x64\x65", |decoder| {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_lock_status_moderation_override = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"name" => {
+                    field_name = Some(decoder.text()?);
+                }
+                b"joinLink" => {
+                    field_join_link = Some(
+                        crate::api::chat::bsky::GroupDefsJoinLinkViewCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"lockStatus" => {
+                    field_lock_status = Some(decoder.text()?);
+                }
+                b"memberCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"memberLimit" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_member_limit = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_member_limit = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"joinRequestCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_join_request_count = Some(i64::try_from(n).map_err(|_| {
+                                crate::cbor::CborError::InvalidCbor(
+                                    "integer out of i64 range".into(),
+                                )
+                            })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_join_request_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"unreadJoinRequestCount" => {
+                    let value = decoder.decode()?;
+                    match value {
+                        crate::cbor::Value::Unsigned(n) => {
+                            field_unread_join_request_count =
+                                Some(i64::try_from(n).map_err(|_| {
+                                    crate::cbor::CborError::InvalidCbor(
+                                        "integer out of i64 range".into(),
+                                    )
+                                })?);
+                        }
+                        crate::cbor::Value::Signed(n) => {
+                            field_unread_join_request_count = Some(n);
+                        }
+                        _ => {
+                            return Err(crate::cbor::CborError::InvalidCbor(
+                                "expected integer".into(),
+                            ));
+                        }
+                    }
+                }
+                b"lockStatusModerationOverride" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Bool(b) = value {
+                        field_lock_status_moderation_override = Some(b);
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected bool".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            name: field_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'name'".into())
+            })?,
+            join_link: field_join_link,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            lock_status: field_lock_status.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockStatus'".into())
+            })?,
+            member_count: field_member_count.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberCount'".into())
+            })?,
+            member_limit: field_member_limit.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'memberLimit'".into())
+            })?,
+            join_request_count: field_join_request_count,
+            unread_join_request_count: field_unread_join_request_count,
+            lock_status_moderation_override: field_lock_status_moderation_override.ok_or_else(
+                || {
+                    crate::cbor::CborError::InvalidCbor(
+                        "missing required field 'lockStatusModerationOverride'".into(),
+                    )
+                },
+            )?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
+        })
+    }
+}
+
 /// ConvoDefsLogAcceptConvo — Event indicating the viewer accepted a convo, and it can be moved out of the request inbox. Can be direct or group.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1528,7 +2856,56 @@ impl ConvoDefsLogAcceptConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogAcceptConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1570,6 +2947,92 @@ impl ConvoDefsLogAcceptConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogAcceptConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogAcceptConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogAcceptConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogAcceptConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -1667,7 +3130,80 @@ impl ConvoDefsLogAddMember {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogAddMember {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -1697,18 +3233,14 @@ impl ConvoDefsLogAddMember {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -1736,6 +3268,142 @@ impl ConvoDefsLogAddMember {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogAddMemberCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogAddMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogAddMember, crate::cbor::CborError> {
+        Ok(ConvoDefsLogAddMember {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2015,7 +3683,91 @@ impl ConvoDefsLogAddReaction {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogAddReactionMessageUnion> = None;
+        let mut field_reaction: Option<ConvoDefsReactionView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message =
+                        Some(ConvoDefsLogAddReactionMessageUnion::decode_cbor(&mut dec)?);
+                }
+                "reaction" => {
+                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogAddReaction {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -2052,18 +3804,14 @@ impl ConvoDefsLogAddReaction {
                         Some(ConvoDefsLogAddReactionMessageUnion::decode_cbor(&mut dec)?);
                 }
                 "reaction" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(&mut dec)?);
+                    field_reaction = Some(ConvoDefsReactionView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -2094,6 +3842,162 @@ impl ConvoDefsLogAddReaction {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogAddReactionCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogAddReactionMessageUnion,
+    pub reaction: ConvoDefsReactionViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogAddReactionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogAddReaction, crate::cbor::CborError> {
+        Ok(ConvoDefsLogAddReaction {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            reaction: self.reaction.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogAddReactionMessageUnion> = None;
+        let mut field_reaction: Option<ConvoDefsReactionViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogAddReactionMessageUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x72\x65\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message =
+                        Some(ConvoDefsLogAddReactionMessageUnion::decode_cbor(&mut dec)?);
+                }
+                b"reaction" => {
+                    field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2173,7 +4077,65 @@ impl ConvoDefsLogApproveJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_member: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogApproveJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -2194,10 +4156,8 @@ impl ConvoDefsLogApproveJoinRequest {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_member = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "convoId" => {
@@ -2226,6 +4186,113 @@ impl ConvoDefsLogApproveJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogApproveJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub member: crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogApproveJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogApproveJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogApproveJoinRequest {
+            rev: self.rev.to_owned(),
+            member: self.member.to_owned()?,
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_member: Option<
+            crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+        > = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(
+                crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2296,7 +4363,56 @@ impl ConvoDefsLogBeginConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogBeginConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -2338,6 +4454,92 @@ impl ConvoDefsLogBeginConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogBeginConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogBeginConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogBeginConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogBeginConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2417,7 +4619,63 @@ impl ConvoDefsLogCreateJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogCreateJoinLink {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -2445,9 +4703,7 @@ impl ConvoDefsLogCreateJoinLink {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -2468,6 +4724,105 @@ impl ConvoDefsLogCreateJoinLink {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogCreateJoinLinkCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogCreateJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogCreateJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsLogCreateJoinLink {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -2739,7 +5094,85 @@ impl ConvoDefsLogCreateMessage {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogCreateMessageMessageUnion> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogCreateMessageMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogCreateMessage {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -2778,11 +5211,9 @@ impl ConvoDefsLogCreateMessage {
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -2810,6 +5241,152 @@ impl ConvoDefsLogCreateMessage {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogCreateMessageCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogCreateMessageMessageUnion,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogCreateMessageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogCreateMessage, crate::cbor::CborError> {
+        Ok(ConvoDefsLogCreateMessage {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogCreateMessageMessageUnion> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogCreateMessageMessageUnion::decode_cbor(
+                &mut dec,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogCreateMessageMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3058,7 +5635,68 @@ impl ConvoDefsLogDeleteMessage {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogDeleteMessageMessageUnion> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogDeleteMessageMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogDeleteMessage {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3111,6 +5749,115 @@ impl ConvoDefsLogDeleteMessage {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogDeleteMessageCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogDeleteMessageMessageUnion,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogDeleteMessageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogDeleteMessage, crate::cbor::CborError> {
+        Ok(ConvoDefsLogDeleteMessage {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogDeleteMessageMessageUnion> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogDeleteMessageMessageUnion::decode_cbor(
+                &mut dec,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogDeleteMessageMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3190,7 +5937,63 @@ impl ConvoDefsLogDisableJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogDisableJoinLink {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3218,9 +6021,7 @@ impl ConvoDefsLogDisableJoinLink {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -3241,6 +6042,105 @@ impl ConvoDefsLogDisableJoinLink {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogDisableJoinLinkCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogDisableJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogDisableJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsLogDisableJoinLink {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3320,7 +6220,63 @@ impl ConvoDefsLogEditGroup {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogEditGroup {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3348,9 +6304,7 @@ impl ConvoDefsLogEditGroup {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -3371,6 +6325,105 @@ impl ConvoDefsLogEditGroup {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogEditGroupCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogEditGroupCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogEditGroup, crate::cbor::CborError> {
+        Ok(ConvoDefsLogEditGroup {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3450,7 +6503,63 @@ impl ConvoDefsLogEditJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogEditJoinLink {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3478,9 +6587,7 @@ impl ConvoDefsLogEditJoinLink {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -3501,6 +6608,105 @@ impl ConvoDefsLogEditJoinLink {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogEditJoinLinkCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogEditJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogEditJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsLogEditJoinLink {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3580,7 +6786,63 @@ impl ConvoDefsLogEnableJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogEnableJoinLink {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3608,9 +6870,7 @@ impl ConvoDefsLogEnableJoinLink {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -3631,6 +6891,105 @@ impl ConvoDefsLogEnableJoinLink {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogEnableJoinLinkCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogEnableJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogEnableJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsLogEnableJoinLink {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3710,7 +7069,65 @@ impl ConvoDefsLogIncomingJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_member: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogIncomingJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3731,10 +7148,8 @@ impl ConvoDefsLogIncomingJoinRequest {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_member = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "convoId" => {
@@ -3763,6 +7178,113 @@ impl ConvoDefsLogIncomingJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogIncomingJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub member: crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogIncomingJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogIncomingJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogIncomingJoinRequest {
+            rev: self.rev.to_owned(),
+            member: self.member.to_owned()?,
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_member: Option<
+            crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+        > = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(
+                crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3833,7 +7355,56 @@ impl ConvoDefsLogLeaveConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogLeaveConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -3875,6 +7446,92 @@ impl ConvoDefsLogLeaveConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogLeaveConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogLeaveConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogLeaveConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogLeaveConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -3972,7 +7629,80 @@ impl ConvoDefsLogLockConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogLockConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4002,18 +7732,14 @@ impl ConvoDefsLogLockConvo {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -4041,6 +7767,142 @@ impl ConvoDefsLogLockConvo {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogLockConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogLockConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogLockConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogLockConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4138,7 +8000,80 @@ impl ConvoDefsLogLockConvoPermanently {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogLockConvoPermanently {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4168,18 +8103,14 @@ impl ConvoDefsLogLockConvoPermanently {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -4207,6 +8138,142 @@ impl ConvoDefsLogLockConvoPermanently {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogLockConvoPermanentlyCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogLockConvoPermanentlyCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogLockConvoPermanently, crate::cbor::CborError> {
+        Ok(ConvoDefsLogLockConvoPermanently {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4304,7 +8371,80 @@ impl ConvoDefsLogMemberJoin {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogMemberJoin {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4334,18 +8474,14 @@ impl ConvoDefsLogMemberJoin {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -4373,6 +8509,142 @@ impl ConvoDefsLogMemberJoin {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogMemberJoinCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogMemberJoinCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogMemberJoin, crate::cbor::CborError> {
+        Ok(ConvoDefsLogMemberJoin {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4470,7 +8742,80 @@ impl ConvoDefsLogMemberLeave {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogMemberLeave {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4500,18 +8845,14 @@ impl ConvoDefsLogMemberLeave {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -4539,6 +8880,142 @@ impl ConvoDefsLogMemberLeave {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogMemberLeaveCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogMemberLeaveCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogMemberLeave, crate::cbor::CborError> {
+        Ok(ConvoDefsLogMemberLeave {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4609,7 +9086,56 @@ impl ConvoDefsLogMuteConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogMuteConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4651,6 +9177,92 @@ impl ConvoDefsLogMuteConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogMuteConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogMuteConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogMuteConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogMuteConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -4721,7 +9333,56 @@ impl ConvoDefsLogOutgoingJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogOutgoingJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -4763,6 +9424,92 @@ impl ConvoDefsLogOutgoingJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogOutgoingJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogOutgoingJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogOutgoingJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogOutgoingJoinRequest {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -5030,7 +9777,66 @@ impl ConvoDefsLogReadConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogReadConvoMessageUnion> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogReadConvoMessageUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogReadConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -5081,6 +9887,111 @@ impl ConvoDefsLogReadConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogReadConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogReadConvoMessageUnion,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogReadConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogReadConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogReadConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogReadConvoMessageUnion> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogReadConvoMessageUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogReadConvoMessageUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -5151,7 +10062,56 @@ impl ConvoDefsLogReadJoinRequests {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogReadJoinRequests {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -5193,6 +10153,92 @@ impl ConvoDefsLogReadJoinRequests {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogReadJoinRequestsCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogReadJoinRequestsCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogReadJoinRequests, crate::cbor::CborError> {
+        Ok(ConvoDefsLogReadJoinRequests {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -5476,7 +10522,67 @@ impl ConvoDefsLogReadMessage {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogReadMessageMessageUnion> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message =
+                        Some(ConvoDefsLogReadMessageMessageUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogReadMessage {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -5528,6 +10634,112 @@ impl ConvoDefsLogReadMessage {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogReadMessageCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogReadMessageMessageUnion,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogReadMessageCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogReadMessage, crate::cbor::CborError> {
+        Ok(ConvoDefsLogReadMessage {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogReadMessageMessageUnion> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogReadMessageMessageUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message =
+                        Some(ConvoDefsLogReadMessageMessageUnion::decode_cbor(&mut dec)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -5607,7 +10819,65 @@ impl ConvoDefsLogRejectJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_member: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogRejectJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -5628,10 +10898,8 @@ impl ConvoDefsLogRejectJoinRequest {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_member = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "convoId" => {
@@ -5660,6 +10928,113 @@ impl ConvoDefsLogRejectJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogRejectJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub member: crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogRejectJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogRejectJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogRejectJoinRequest {
+            rev: self.rev.to_owned(),
+            member: self.member.to_owned()?,
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_member: Option<
+            crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+        > = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(
+                crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -5757,7 +11132,80 @@ impl ConvoDefsLogRemoveMember {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogRemoveMember {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -5787,18 +11235,14 @@ impl ConvoDefsLogRemoveMember {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -5826,6 +11270,142 @@ impl ConvoDefsLogRemoveMember {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogRemoveMemberCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogRemoveMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogRemoveMember, crate::cbor::CborError> {
+        Ok(ConvoDefsLogRemoveMember {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6101,7 +11681,92 @@ impl ConvoDefsLogRemoveReaction {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsLogRemoveReactionMessageUnion> = None;
+        let mut field_reaction: Option<ConvoDefsReactionView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogRemoveReactionMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                "reaction" => {
+                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogRemoveReaction {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6139,18 +11804,14 @@ impl ConvoDefsLogRemoveReaction {
                     )?);
                 }
                 "reaction" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(&mut dec)?);
+                    field_reaction = Some(ConvoDefsReactionView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -6181,6 +11842,165 @@ impl ConvoDefsLogRemoveReaction {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogRemoveReactionCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsLogRemoveReactionMessageUnion,
+    pub reaction: ConvoDefsReactionViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogRemoveReactionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogRemoveReaction, crate::cbor::CborError> {
+        Ok(ConvoDefsLogRemoveReaction {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.clone(),
+            reaction: self.reaction.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsLogRemoveReactionMessageUnion> = None;
+        let mut field_reaction: Option<ConvoDefsReactionViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_message = Some(ConvoDefsLogRemoveReactionMessageUnion::decode_cbor(
+                &mut dec,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x72\x65\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_message = Some(ConvoDefsLogRemoveReactionMessageUnion::decode_cbor(
+                        &mut dec,
+                    )?);
+                }
+                b"reaction" => {
+                    field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6278,7 +12098,80 @@ impl ConvoDefsLogUnlockConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageView> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "message" => {
+                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(decoder)?);
+                }
+                "relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogUnlockConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6308,18 +12201,14 @@ impl ConvoDefsLogUnlockConvo {
                     }
                 }
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsSystemMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsSystemMessageView::from_cbor_value(value)?);
                 }
                 "relatedProfiles" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_related_profiles.push(
-                                crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(
-                                    &mut dec,
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -6347,6 +12236,142 @@ impl ConvoDefsLogUnlockConvo {
             related_profiles: field_related_profiles,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogUnlockConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub message: ConvoDefsSystemMessageViewCborView<'a>,
+    pub related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogUnlockConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogUnlockConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogUnlockConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            message: self.message.to_owned()?,
+            related_profiles: self.related_profiles.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message: Option<ConvoDefsSystemMessageViewCborView<'a>> = None;
+        let mut field_related_profiles: Vec<crate::api::chat::bsky::ActorDefsProfileViewBasic> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6f\x72\x65\x6c\x61\x74\x65\x64\x50\x72\x6f\x66\x69\x6c\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_related_profiles.push(
+                            crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"message" => {
+                    field_message = Some(ConvoDefsSystemMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"relatedProfiles" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_related_profiles.push(
+                                crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            related_profiles: field_related_profiles,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6417,7 +12442,56 @@ impl ConvoDefsLogUnmuteConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogUnmuteConvo {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6459,6 +12533,92 @@ impl ConvoDefsLogUnmuteConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogUnmuteConvoCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogUnmuteConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsLogUnmuteConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsLogUnmuteConvo {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6538,7 +12698,65 @@ impl ConvoDefsLogWithdrawIncomingJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_member: Option<crate::api::chat::bsky::ActorDefsProfileViewBasic> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(decoder)?,
+                    );
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogWithdrawIncomingJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6559,10 +12777,8 @@ impl ConvoDefsLogWithdrawIncomingJoinRequest {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_member = Some(
-                        crate::api::chat::bsky::ActorDefsProfileViewBasic::decode_cbor(&mut dec)?,
+                        crate::api::chat::bsky::ActorDefsProfileViewBasic::from_cbor_value(value)?,
                     );
                 }
                 "convoId" => {
@@ -6591,6 +12807,115 @@ impl ConvoDefsLogWithdrawIncomingJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogWithdrawIncomingJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub member: crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogWithdrawIncomingJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsLogWithdrawIncomingJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogWithdrawIncomingJoinRequest {
+            rev: self.rev.to_owned(),
+            member: self.member.to_owned()?,
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_member: Option<
+            crate::api::chat::bsky::ActorDefsProfileViewBasicCborView<'a>,
+        > = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(
+                crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(decoder)?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(
+                        crate::api::chat::bsky::ActorDefsProfileViewBasicCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6661,7 +12986,56 @@ impl ConvoDefsLogWithdrawOutgoingJoinRequest {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_rev: Option<String> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsLogWithdrawOutgoingJoinRequest {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6703,6 +13077,94 @@ impl ConvoDefsLogWithdrawOutgoingJoinRequest {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsLogWithdrawOutgoingJoinRequestCborView<'a> {
+    pub rev: &'a str,
+    pub convo_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsLogWithdrawOutgoingJoinRequestCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsLogWithdrawOutgoingJoinRequest, crate::cbor::CborError> {
+        Ok(ConvoDefsLogWithdrawOutgoingJoinRequest {
+            rev: self.rev.to_owned(),
+            convo_id: self.convo_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6773,7 +13235,46 @@ impl ConvoDefsMessageAndReactionView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_message: Option<ConvoDefsMessageView> = None;
+        let mut field_reaction: Option<ConvoDefsReactionView> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "message" => {
+                    field_message = Some(ConvoDefsMessageView::decode_cbor(decoder)?);
+                }
+                "reaction" => {
+                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageAndReactionView {
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6786,14 +13287,10 @@ impl ConvoDefsMessageAndReactionView {
         for (key, value) in entries {
             match key {
                 "message" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_message = Some(ConvoDefsMessageView::decode_cbor(&mut dec)?);
+                    field_message = Some(ConvoDefsMessageView::from_cbor_value(value)?);
                 }
                 "reaction" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_reaction = Some(ConvoDefsReactionView::decode_cbor(&mut dec)?);
+                    field_reaction = Some(ConvoDefsReactionView::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -6811,6 +13308,92 @@ impl ConvoDefsMessageAndReactionView {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageAndReactionViewCborView<'a> {
+    pub message: ConvoDefsMessageViewCborView<'a>,
+    pub reaction: ConvoDefsReactionViewCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageAndReactionViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsMessageAndReactionView, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageAndReactionView {
+            message: self.message.to_owned()?,
+            reaction: self.reaction.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_message: Option<ConvoDefsMessageViewCborView<'a>> = None;
+        let mut field_reaction: Option<ConvoDefsReactionViewCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x6d\x65\x73\x73\x61\x67\x65", |decoder| {
+            field_message = Some(ConvoDefsMessageViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x72\x65\x61\x63\x74\x69\x6f\x6e", |decoder| {
+            field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"message" => {
+                    field_message = Some(ConvoDefsMessageViewCborView::decode_cbor(decoder)?);
+                }
+                b"reaction" => {
+                    field_reaction = Some(ConvoDefsReactionViewCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            message: field_message.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'message'".into())
+            })?,
+            reaction: field_reaction.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'reaction'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -6865,7 +13448,32 @@ impl ConvoDefsMessageBeforeUserJoinedGroupView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageBeforeUserJoinedGroupView {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -6885,6 +13493,68 @@ impl ConvoDefsMessageBeforeUserJoinedGroupView {
         Ok(ConvoDefsMessageBeforeUserJoinedGroupView {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageBeforeUserJoinedGroupViewCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageBeforeUserJoinedGroupViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsMessageBeforeUserJoinedGroupView, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageBeforeUserJoinedGroupView {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -7167,7 +13837,70 @@ impl ConvoDefsMessageInput {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_text: Option<String> = None;
+        let mut field_embed: Option<ConvoDefsMessageInputEmbedUnion> = None;
+        let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut field_reply_to: Option<ConvoDefsReplyRef> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "text" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_text = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "embed" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_embed = Some(ConvoDefsMessageInputEmbedUnion::decode_cbor(&mut dec)?);
+                }
+                "facets" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_facets
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "replyTo" => {
+                    field_reply_to = Some(ConvoDefsReplyRef::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageInput {
+            text: field_text.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
+            })?,
+            embed: field_embed,
+            facets: field_facets,
+            reply_to: field_reply_to,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -7196,19 +13929,15 @@ impl ConvoDefsMessageInput {
                 "facets" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_facets
-                                .push(crate::api::app::bsky::RichtextFacet::decode_cbor(&mut dec)?);
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "replyTo" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_reply_to = Some(ConvoDefsReplyRef::decode_cbor(&mut dec)?);
+                    field_reply_to = Some(ConvoDefsReplyRef::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -7226,6 +13955,137 @@ impl ConvoDefsMessageInput {
             reply_to: field_reply_to,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageInputCborView<'a> {
+    pub text: &'a str,
+    pub embed: Option<ConvoDefsMessageInputEmbedUnion>,
+    pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
+    pub reply_to: Option<ConvoDefsReplyRefCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageInputCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsMessageInput, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageInput {
+            text: self.text.to_owned(),
+            embed: self.embed.clone(),
+            facets: self.facets.clone(),
+            reply_to: self
+                .reply_to
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_text: Option<&'a str> = None;
+        let mut field_embed: Option<ConvoDefsMessageInputEmbedUnion> = None;
+        let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut field_reply_to: Option<ConvoDefsReplyRefCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x74\x65\x78\x74", |decoder| {
+            field_text = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x65\x6d\x62\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_embed = Some(ConvoDefsMessageInputEmbedUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x66\x61\x63\x65\x74\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_facets.push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x72\x65\x70\x6c\x79\x54\x6f", |decoder| {
+            field_reply_to = Some(ConvoDefsReplyRefCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"text" => {
+                    field_text = Some(decoder.text()?);
+                }
+                b"embed" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_embed = Some(ConvoDefsMessageInputEmbedUnion::decode_cbor(&mut dec)?);
+                }
+                b"facets" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_facets
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"replyTo" => {
+                    field_reply_to = Some(ConvoDefsReplyRefCborView::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            text: field_text.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
+            })?,
+            embed: field_embed,
+            facets: field_facets,
+            reply_to: field_reply_to,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -7304,7 +14164,71 @@ impl ConvoDefsMessageRef {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<String> = None;
+        let mut field_message_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "convoId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_convo_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "messageId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_message_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageRef {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message_id: field_message_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'messageId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -7360,6 +14284,121 @@ impl ConvoDefsMessageRef {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageRefCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub convo_id: &'a str,
+    pub message_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageRefCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsMessageRef, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageRef {
+            did: self.did.clone(),
+            convo_id: self.convo_id.to_owned(),
+            message_id: self.message_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut field_convo_id: Option<&'a str> = None;
+        let mut field_message_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x63\x6f\x6e\x76\x6f\x49\x64", |decoder| {
+            field_convo_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x6d\x65\x73\x73\x61\x67\x65\x49\x64", |decoder| {
+            field_message_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"convoId" => {
+                    field_convo_id = Some(decoder.text()?);
+                }
+                b"messageId" => {
+                    field_message_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            convo_id: field_convo_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'convoId'".into())
+            })?,
+            message_id: field_message_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'messageId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -7892,7 +14931,131 @@ impl ConvoDefsMessageView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_id: Option<String> = None;
+        let mut field_rev: Option<String> = None;
+        let mut field_text: Option<String> = None;
+        let mut field_embed: Option<ConvoDefsMessageViewEmbedUnion> = None;
+        let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut field_sender: Option<ConvoDefsMessageViewSender> = None;
+        let mut field_sent_at: Option<crate::syntax::Datetime> = None;
+        let mut field_reply_to: Option<ConvoDefsMessageViewReplyToUnion> = None;
+        let mut field_reactions: Vec<ConvoDefsReactionView> = Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "text" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_text = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "embed" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_embed = Some(ConvoDefsMessageViewEmbedUnion::decode_cbor(&mut dec)?);
+                }
+                "facets" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_facets
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "sender" => {
+                    field_sender = Some(ConvoDefsMessageViewSender::decode_cbor(decoder)?);
+                }
+                "sentAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_sent_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "replyTo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_reply_to = Some(ConvoDefsMessageViewReplyToUnion::decode_cbor(&mut dec)?);
+                }
+                "reactions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_reactions.push(ConvoDefsReactionView::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageView {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            text: field_text.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
+            })?,
+            embed: field_embed,
+            facets: field_facets,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            reply_to: field_reply_to,
+            reactions: field_reactions,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -7940,19 +15103,15 @@ impl ConvoDefsMessageView {
                 "facets" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_facets
-                                .push(crate::api::app::bsky::RichtextFacet::decode_cbor(&mut dec)?);
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "sender" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_sender = Some(ConvoDefsMessageViewSender::decode_cbor(&mut dec)?);
+                    field_sender = Some(ConvoDefsMessageViewSender::from_cbor_value(value)?);
                 }
                 "sentAt" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -7972,9 +15131,7 @@ impl ConvoDefsMessageView {
                 "reactions" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
-                            field_reactions.push(ConvoDefsReactionView::decode_cbor(&mut dec)?);
+                            field_reactions.push(ConvoDefsReactionView::from_cbor_value(item)?);
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
@@ -8009,6 +15166,222 @@ impl ConvoDefsMessageView {
             reactions: field_reactions,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageViewCborView<'a> {
+    pub id: &'a str,
+    pub rev: &'a str,
+    pub text: &'a str,
+    pub embed: Option<ConvoDefsMessageViewEmbedUnion>,
+    pub facets: Vec<crate::api::app::bsky::RichtextFacet>,
+    pub sender: ConvoDefsMessageViewSenderCborView<'a>,
+    pub sent_at: crate::syntax::DatetimeRef<'a>,
+    pub reply_to: Option<ConvoDefsMessageViewReplyToUnion>,
+    pub reactions: Vec<ConvoDefsReactionView>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsMessageView, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageView {
+            id: self.id.to_owned(),
+            rev: self.rev.to_owned(),
+            text: self.text.to_owned(),
+            embed: self.embed.clone(),
+            facets: self.facets.clone(),
+            sender: self.sender.to_owned()?,
+            sent_at: self.sent_at.to_owned(),
+            reply_to: self.reply_to.clone(),
+            reactions: self.reactions.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<&'a str> = None;
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_text: Option<&'a str> = None;
+        let mut field_embed: Option<ConvoDefsMessageViewEmbedUnion> = None;
+        let mut field_facets: Vec<crate::api::app::bsky::RichtextFacet> = Vec::new();
+        let mut field_sender: Option<ConvoDefsMessageViewSenderCborView<'a>> = None;
+        let mut field_sent_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_reply_to: Option<ConvoDefsMessageViewReplyToUnion> = None;
+        let mut field_reactions: Vec<ConvoDefsReactionView> = Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            field_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x74\x65\x78\x74", |decoder| {
+            field_text = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x65\x6d\x62\x65\x64", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_embed = Some(ConvoDefsMessageViewEmbedUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x66\x61\x63\x65\x74\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_facets.push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x64\x65\x72", |decoder| {
+            field_sender = Some(ConvoDefsMessageViewSenderCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x74\x41\x74", |decoder| {
+            field_sent_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x72\x65\x70\x6c\x79\x54\x6f", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_reply_to = Some(ConvoDefsMessageViewReplyToUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x72\x65\x61\x63\x74\x69\x6f\x6e\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_reactions.push(ConvoDefsReactionView::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    field_id = Some(decoder.text()?);
+                }
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"text" => {
+                    field_text = Some(decoder.text()?);
+                }
+                b"embed" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_embed = Some(ConvoDefsMessageViewEmbedUnion::decode_cbor(&mut dec)?);
+                }
+                b"facets" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_facets
+                                .push(crate::api::app::bsky::RichtextFacet::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"sender" => {
+                    field_sender = Some(ConvoDefsMessageViewSenderCborView::decode_cbor(decoder)?);
+                }
+                b"sentAt" => {
+                    field_sent_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"replyTo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_reply_to = Some(ConvoDefsMessageViewReplyToUnion::decode_cbor(&mut dec)?);
+                }
+                b"reactions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_reactions.push(ConvoDefsReactionView::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            text: field_text.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'text'".into())
+            })?,
+            embed: field_embed,
+            facets: field_facets,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            reply_to: field_reply_to,
+            reactions: field_reactions,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8071,7 +15444,47 @@ impl ConvoDefsMessageViewSender {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsMessageViewSender {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8105,6 +15518,95 @@ impl ConvoDefsMessageViewSender {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsMessageViewSenderCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsMessageViewSenderCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsMessageViewSender, crate::cbor::CborError> {
+        Ok(ConvoDefsMessageViewSender {
+            did: self.did.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8183,7 +15685,66 @@ impl ConvoDefsReactionView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_value: Option<String> = None;
+        let mut field_sender: Option<ConvoDefsReactionViewSender> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "value" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_value = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "sender" => {
+                    field_sender = Some(ConvoDefsReactionViewSender::decode_cbor(decoder)?);
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsReactionView {
+            value: field_value.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'value'".into())
+            })?,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8204,9 +15765,7 @@ impl ConvoDefsReactionView {
                     }
                 }
                 "sender" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_sender = Some(ConvoDefsReactionViewSender::decode_cbor(&mut dec)?);
+                    field_sender = Some(ConvoDefsReactionViewSender::from_cbor_value(value)?);
                 }
                 "createdAt" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -8237,6 +15796,111 @@ impl ConvoDefsReactionView {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsReactionViewCborView<'a> {
+    pub value: &'a str,
+    pub sender: ConvoDefsReactionViewSenderCborView<'a>,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsReactionViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsReactionView, crate::cbor::CborError> {
+        Ok(ConvoDefsReactionView {
+            value: self.value.to_owned(),
+            sender: self.sender.to_owned()?,
+            created_at: self.created_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_value: Option<&'a str> = None;
+        let mut field_sender: Option<ConvoDefsReactionViewSenderCborView<'a>> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x65\x76\x61\x6c\x75\x65", |decoder| {
+            field_value = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x64\x65\x72", |decoder| {
+            field_sender = Some(ConvoDefsReactionViewSenderCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"value" => {
+                    field_value = Some(decoder.text()?);
+                }
+                b"sender" => {
+                    field_sender = Some(ConvoDefsReactionViewSenderCborView::decode_cbor(decoder)?);
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            value: field_value.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'value'".into())
+            })?,
+            sender: field_sender.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sender'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8299,7 +15963,47 @@ impl ConvoDefsReactionViewSender {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsReactionViewSender {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8333,6 +16037,95 @@ impl ConvoDefsReactionViewSender {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsReactionViewSenderCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsReactionViewSenderCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsReactionViewSender, crate::cbor::CborError> {
+        Ok(ConvoDefsReactionViewSender {
+            did: self.did.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8395,7 +16188,44 @@ impl ConvoDefsReplyRef {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_message_id: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "messageId" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_message_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsReplyRef {
+            message_id: field_message_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'messageId'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8426,6 +16256,79 @@ impl ConvoDefsReplyRef {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsReplyRefCborView<'a> {
+    pub message_id: &'a str,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsReplyRefCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsReplyRef, crate::cbor::CborError> {
+        Ok(ConvoDefsReplyRef {
+            message_id: self.message_id.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_message_id: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x69\x6d\x65\x73\x73\x61\x67\x65\x49\x64", |decoder| {
+            field_message_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"messageId" => {
+                    field_message_id = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            message_id: field_message_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'messageId'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8506,7 +16409,59 @@ impl ConvoDefsSystemMessageDataAddMember {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_role: Option<crate::api::chat::bsky::ActorDefsMemberRole> = None;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut field_added_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "role" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_role = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                "addedBy" => {
+                    field_added_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataAddMember {
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            added_by: field_added_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'addedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8527,15 +16482,12 @@ impl ConvoDefsSystemMessageDataAddMember {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                    field_member =
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 "addedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_added_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -8556,6 +16508,113 @@ impl ConvoDefsSystemMessageDataAddMember {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataAddMemberCborView<'a> {
+    pub role: &'a str,
+    pub member: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub added_by: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataAddMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageDataAddMember, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataAddMember {
+            role: self.role.to_owned(),
+            member: self.member.to_owned()?,
+            added_by: self.added_by.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_role: Option<&'a str> = None;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut field_added_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x72\x6f\x6c\x65", |decoder| {
+            field_role = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x61\x64\x64\x65\x64\x42\x79", |decoder| {
+            field_added_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"role" => {
+                    field_role = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                b"addedBy" => {
+                    field_added_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            added_by: field_added_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'addedBy'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8610,7 +16669,32 @@ impl ConvoDefsSystemMessageDataCreateJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataCreateJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8630,6 +16714,68 @@ impl ConvoDefsSystemMessageDataCreateJoinLink {
         Ok(ConvoDefsSystemMessageDataCreateJoinLink {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataCreateJoinLinkCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataCreateJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataCreateJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataCreateJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8684,7 +16830,32 @@ impl ConvoDefsSystemMessageDataDisableJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataDisableJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8704,6 +16875,68 @@ impl ConvoDefsSystemMessageDataDisableJoinLink {
         Ok(ConvoDefsSystemMessageDataDisableJoinLink {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataDisableJoinLinkCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataDisableJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataDisableJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataDisableJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8796,7 +17029,52 @@ impl ConvoDefsSystemMessageDataEditGroup {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_new_name: Option<String> = None;
+        let mut field_old_name: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "newName" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_new_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "oldName" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_old_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataEditGroup {
+            new_name: field_new_name,
+            old_name: field_old_name,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8834,6 +17112,88 @@ impl ConvoDefsSystemMessageDataEditGroup {
             old_name: field_old_name,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataEditGroupCborView<'a> {
+    pub new_name: Option<&'a str>,
+    pub old_name: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataEditGroupCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageDataEditGroup, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataEditGroup {
+            new_name: self.new_name.as_ref().map(|value| (*value).to_owned()),
+            old_name: self.old_name.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_new_name: Option<&'a str> = None;
+        let mut field_old_name: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x6e\x65\x77\x4e\x61\x6d\x65", |decoder| {
+            field_new_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x6f\x6c\x64\x4e\x61\x6d\x65", |decoder| {
+            field_old_name = Some(decoder.text()?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"newName" => {
+                    field_new_name = Some(decoder.text()?);
+                }
+                b"oldName" => {
+                    field_old_name = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            new_name: field_new_name,
+            old_name: field_old_name,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8888,7 +17248,32 @@ impl ConvoDefsSystemMessageDataEditJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataEditJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8908,6 +17293,68 @@ impl ConvoDefsSystemMessageDataEditJoinLink {
         Ok(ConvoDefsSystemMessageDataEditJoinLink {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataEditJoinLinkCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataEditJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataEditJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataEditJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -8962,7 +17409,32 @@ impl ConvoDefsSystemMessageDataEnableJoinLink {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataEnableJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -8982,6 +17454,68 @@ impl ConvoDefsSystemMessageDataEnableJoinLink {
         Ok(ConvoDefsSystemMessageDataEnableJoinLink {
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataEnableJoinLinkCborView<'a> {
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataEnableJoinLinkCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataEnableJoinLink, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataEnableJoinLink {
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9045,7 +17579,40 @@ impl ConvoDefsSystemMessageDataLockConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_locked_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "lockedBy" => {
+                    field_locked_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataLockConvo {
+            locked_by: field_locked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9057,10 +17624,8 @@ impl ConvoDefsSystemMessageDataLockConvo {
         for (key, value) in entries {
             match key {
                 "lockedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_locked_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9075,6 +17640,83 @@ impl ConvoDefsSystemMessageDataLockConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataLockConvoCborView<'a> {
+    pub locked_by: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataLockConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageDataLockConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataLockConvo {
+            locked_by: self.locked_by.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_locked_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x68\x6c\x6f\x63\x6b\x65\x64\x42\x79", |decoder| {
+            field_locked_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"lockedBy" => {
+                    field_locked_by = Some(
+                        ConvoDefsSystemMessageReferredUserCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            locked_by: field_locked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockedBy'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9138,7 +17780,40 @@ impl ConvoDefsSystemMessageDataLockConvoPermanently {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_locked_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "lockedBy" => {
+                    field_locked_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataLockConvoPermanently {
+            locked_by: field_locked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9150,10 +17825,8 @@ impl ConvoDefsSystemMessageDataLockConvoPermanently {
         for (key, value) in entries {
             match key {
                 "lockedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_locked_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9168,6 +17841,85 @@ impl ConvoDefsSystemMessageDataLockConvoPermanently {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataLockConvoPermanentlyCborView<'a> {
+    pub locked_by: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataLockConvoPermanentlyCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataLockConvoPermanently, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataLockConvoPermanently {
+            locked_by: self.locked_by.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_locked_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x68\x6c\x6f\x63\x6b\x65\x64\x42\x79", |decoder| {
+            field_locked_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"lockedBy" => {
+                    field_locked_by = Some(
+                        ConvoDefsSystemMessageReferredUserCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            locked_by: field_locked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lockedBy'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9259,7 +18011,57 @@ impl ConvoDefsSystemMessageDataMemberJoin {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_role: Option<crate::api::chat::bsky::ActorDefsMemberRole> = None;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut field_approved_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "role" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_role = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                "approvedBy" => {
+                    field_approved_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataMemberJoin {
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            approved_by: field_approved_by,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9280,15 +18082,12 @@ impl ConvoDefsSystemMessageDataMemberJoin {
                     }
                 }
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                    field_member =
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 "approvedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_approved_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9307,6 +18106,115 @@ impl ConvoDefsSystemMessageDataMemberJoin {
             approved_by: field_approved_by,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataMemberJoinCborView<'a> {
+    pub role: &'a str,
+    pub member: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub approved_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataMemberJoinCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageDataMemberJoin, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataMemberJoin {
+            role: self.role.to_owned(),
+            member: self.member.to_owned()?,
+            approved_by: self
+                .approved_by
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_role: Option<&'a str> = None;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut field_approved_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x72\x6f\x6c\x65", |decoder| {
+            field_role = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x61\x70\x70\x72\x6f\x76\x65\x64\x42\x79", |decoder| {
+            field_approved_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"role" => {
+                    field_role = Some(decoder.text()?);
+                }
+                b"member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                b"approvedBy" => {
+                    field_approved_by = Some(
+                        ConvoDefsSystemMessageReferredUserCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            role: field_role.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'role'".into())
+            })?,
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            approved_by: field_approved_by,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9370,7 +18278,39 @@ impl ConvoDefsSystemMessageDataMemberLeave {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataMemberLeave {
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9382,9 +18322,8 @@ impl ConvoDefsSystemMessageDataMemberLeave {
         for (key, value) in entries {
             match key {
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                    field_member =
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9399,6 +18338,85 @@ impl ConvoDefsSystemMessageDataMemberLeave {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataMemberLeaveCborView<'a> {
+    pub member: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataMemberLeaveCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataMemberLeave, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataMemberLeave {
+            member: self.member.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9470,7 +18488,47 @@ impl ConvoDefsSystemMessageDataRemoveMember {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut field_removed_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                "removedBy" => {
+                    field_removed_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataRemoveMember {
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            removed_by: field_removed_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'removedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9483,15 +18541,12 @@ impl ConvoDefsSystemMessageDataRemoveMember {
         for (key, value) in entries {
             match key {
                 "member" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_member = Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                    field_member =
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 "removedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_removed_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9509,6 +18564,102 @@ impl ConvoDefsSystemMessageDataRemoveMember {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataRemoveMemberCborView<'a> {
+    pub member: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub removed_by: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataRemoveMemberCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataRemoveMember, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataRemoveMember {
+            member: self.member.to_owned()?,
+            removed_by: self.removed_by.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_member: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut field_removed_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x66\x6d\x65\x6d\x62\x65\x72", |decoder| {
+            field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x72\x65\x6d\x6f\x76\x65\x64\x42\x79", |decoder| {
+            field_removed_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"member" => {
+                    field_member = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                        decoder,
+                    )?);
+                }
+                b"removedBy" => {
+                    field_removed_by = Some(
+                        ConvoDefsSystemMessageReferredUserCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            member: field_member.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'member'".into())
+            })?,
+            removed_by: field_removed_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'removedBy'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9572,7 +18723,40 @@ impl ConvoDefsSystemMessageDataUnlockConvo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_unlocked_by: Option<ConvoDefsSystemMessageReferredUser> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "unlockedBy" => {
+                    field_unlocked_by =
+                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(decoder)?);
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageDataUnlockConvo {
+            unlocked_by: field_unlocked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'unlockedBy'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9584,10 +18768,8 @@ impl ConvoDefsSystemMessageDataUnlockConvo {
         for (key, value) in entries {
             match key {
                 "unlockedBy" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_unlocked_by =
-                        Some(ConvoDefsSystemMessageReferredUser::decode_cbor(&mut dec)?);
+                        Some(ConvoDefsSystemMessageReferredUser::from_cbor_value(value)?);
                 }
                 _ => {
                     let raw = crate::cbor::encode_value(&value)?;
@@ -9602,6 +18784,85 @@ impl ConvoDefsSystemMessageDataUnlockConvo {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageDataUnlockConvoCborView<'a> {
+    pub unlocked_by: ConvoDefsSystemMessageReferredUserCborView<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageDataUnlockConvoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<ConvoDefsSystemMessageDataUnlockConvo, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageDataUnlockConvo {
+            unlocked_by: self.unlocked_by.to_owned()?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_unlocked_by: Option<ConvoDefsSystemMessageReferredUserCborView<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x6a\x75\x6e\x6c\x6f\x63\x6b\x65\x64\x42\x79", |decoder| {
+            field_unlocked_by = Some(ConvoDefsSystemMessageReferredUserCborView::decode_cbor(
+                decoder,
+            )?);
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"unlockedBy" => {
+                    field_unlocked_by = Some(
+                        ConvoDefsSystemMessageReferredUserCborView::decode_cbor(decoder)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            unlocked_by: field_unlocked_by.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'unlockedBy'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -9664,7 +18925,47 @@ impl ConvoDefsSystemMessageReferredUser {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageReferredUser {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -9698,6 +18999,95 @@ impl ConvoDefsSystemMessageReferredUser {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageReferredUserCborView<'a> {
+    pub did: crate::syntax::Did,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageReferredUserCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageReferredUser, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageReferredUser {
+            did: self.did.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_did: Option<crate::syntax::Did> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x64\x69\x64", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_did = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"did" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_did = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            did: field_did.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'did'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -10313,7 +19703,81 @@ impl ConvoDefsSystemMessageView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_id: Option<String> = None;
+        let mut field_rev: Option<String> = None;
+        let mut field_data: Option<ConvoDefsSystemMessageViewDataUnion> = None;
+        let mut field_sent_at: Option<crate::syntax::Datetime> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "id" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_id = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "rev" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_rev = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "data" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_data = Some(ConvoDefsSystemMessageViewDataUnion::decode_cbor(&mut dec)?);
+                }
+                "sentAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_sent_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(ConvoDefsSystemMessageView {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            data: field_data.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'data'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -10378,6 +19842,130 @@ impl ConvoDefsSystemMessageView {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct ConvoDefsSystemMessageViewCborView<'a> {
+    pub id: &'a str,
+    pub rev: &'a str,
+    pub data: ConvoDefsSystemMessageViewDataUnion,
+    pub sent_at: crate::syntax::DatetimeRef<'a>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> ConvoDefsSystemMessageViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<ConvoDefsSystemMessageView, crate::cbor::CborError> {
+        Ok(ConvoDefsSystemMessageView {
+            id: self.id.to_owned(),
+            rev: self.rev.to_owned(),
+            data: self.data.clone(),
+            sent_at: self.sent_at.to_owned(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_id: Option<&'a str> = None;
+        let mut field_rev: Option<&'a str> = None;
+        let mut field_data: Option<ConvoDefsSystemMessageViewDataUnion> = None;
+        let mut field_sent_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x62\x69\x64", |decoder| {
+            field_id = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x72\x65\x76", |decoder| {
+            field_rev = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x64\x61\x74\x61", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_data = Some(ConvoDefsSystemMessageViewDataUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x73\x65\x6e\x74\x41\x74", |decoder| {
+            field_sent_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"id" => {
+                    field_id = Some(decoder.text()?);
+                }
+                b"rev" => {
+                    field_rev = Some(decoder.text()?);
+                }
+                b"data" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_data = Some(ConvoDefsSystemMessageViewDataUnion::decode_cbor(&mut dec)?);
+                }
+                b"sentAt" => {
+                    field_sent_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            id: field_id.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'id'".into())
+            })?,
+            rev: field_rev.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'rev'".into())
+            })?,
+            data: field_data.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'data'".into())
+            })?,
+            sent_at: field_sent_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'sentAt'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

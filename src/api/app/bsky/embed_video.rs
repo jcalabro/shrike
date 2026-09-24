@@ -66,7 +66,57 @@ impl EmbedVideoCaption {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_file: Option<crate::api::Blob> = None;
+        let mut field_lang: Option<crate::syntax::Language> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "file" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_file = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                "lang" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_lang = Some(
+                            crate::syntax::Language::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(EmbedVideoCaption {
+            file: field_file.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'file'".into())
+            })?,
+            lang: field_lang.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lang'".into())
+            })?,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -109,6 +159,114 @@ impl EmbedVideoCaption {
             })?,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedVideoCaptionCborView<'a> {
+    pub file: crate::api::Blob,
+    pub lang: crate::syntax::Language,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedVideoCaptionCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedVideoCaption, crate::cbor::CborError> {
+        Ok(EmbedVideoCaption {
+            file: self.file.clone(),
+            lang: self.lang.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_file: Option<crate::api::Blob> = None;
+        let mut field_lang: Option<crate::syntax::Language> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x64\x66\x69\x6c\x65", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_file = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x64\x6c\x61\x6e\x67", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_lang = Some(
+                    crate::syntax::Language::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"file" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_file = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                b"lang" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_lang = Some(
+                            crate::syntax::Language::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            file: field_file.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'file'".into())
+            })?,
+            lang: field_lang.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'lang'".into())
+            })?,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -250,7 +408,81 @@ impl EmbedVideo {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_alt: Option<String> = None;
+        let mut field_video: Option<crate::api::Blob> = None;
+        let mut field_captions: Vec<EmbedVideoCaption> = Vec::new();
+        let mut field_aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatio> = None;
+        let mut field_presentation: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "alt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_alt = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "video" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_video = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                "captions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_captions.push(EmbedVideoCaption::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                "aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatio::decode_cbor(decoder)?,
+                    );
+                }
+                "presentation" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_presentation = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(EmbedVideo {
+            alt: field_alt,
+            video: field_video.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'video'".into())
+            })?,
+            captions: field_captions,
+            aspect_ratio: field_aspect_ratio,
+            presentation: field_presentation,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -280,20 +512,15 @@ impl EmbedVideo {
                 "captions" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
-                            field_captions.push(EmbedVideoCaption::decode_cbor(&mut dec)?);
+                            field_captions.push(EmbedVideoCaption::from_cbor_value(item)?);
                         }
                     } else {
                         return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
                     }
                 }
                 "aspectRatio" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_aspect_ratio = Some(
-                        crate::api::app::bsky::EmbedDefsAspectRatio::decode_cbor(&mut dec)?,
-                    );
+                    field_aspect_ratio =
+                        Some(crate::api::app::bsky::EmbedDefsAspectRatio::from_cbor_value(value)?);
                 }
                 "presentation" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -319,6 +546,159 @@ impl EmbedVideo {
             presentation: field_presentation,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedVideoCborView<'a> {
+    pub alt: Option<&'a str>,
+    pub video: crate::api::Blob,
+    pub captions: Vec<EmbedVideoCaption>,
+    pub aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>>,
+    pub presentation: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedVideoCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedVideo, crate::cbor::CborError> {
+        Ok(EmbedVideo {
+            alt: self.alt.as_ref().map(|value| (*value).to_owned()),
+            video: self.video.clone(),
+            captions: self.captions.clone(),
+            aspect_ratio: self
+                .aspect_ratio
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            presentation: self.presentation.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_video: Option<crate::api::Blob> = None;
+        let mut field_captions: Vec<EmbedVideoCaption> = Vec::new();
+        let mut field_aspect_ratio: Option<
+            crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>,
+        > = None;
+        let mut field_presentation: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x65\x76\x69\x64\x65\x6f", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_video = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x63\x61\x70\x74\x69\x6f\x6e\x73", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Array(items) = value {
+                for item in items {
+                    field_captions.push(EmbedVideoCaption::from_cbor_value(item)?);
+                }
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x61\x73\x70\x65\x63\x74\x52\x61\x74\x69\x6f",
+            |decoder| {
+                field_aspect_ratio = Some(
+                    crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x70\x72\x65\x73\x65\x6e\x74\x61\x74\x69\x6f\x6e",
+            |decoder| {
+                field_presentation = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"video" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_video = Some(crate::api::Blob::decode_cbor(&mut dec)?);
+                }
+                b"captions" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_captions.push(EmbedVideoCaption::from_cbor_value(item)?);
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                b"aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                    );
+                }
+                b"presentation" => {
+                    field_presentation = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt,
+            video: field_video.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'video'".into())
+            })?,
+            captions: field_captions,
+            aspect_ratio: field_aspect_ratio,
+            presentation: field_presentation,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }
@@ -462,7 +842,93 @@ impl EmbedVideoView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_alt: Option<String> = None;
+        let mut field_cid: Option<String> = None;
+        let mut field_playlist: Option<String> = None;
+        let mut field_thumbnail: Option<String> = None;
+        let mut field_aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatio> = None;
+        let mut field_presentation: Option<String> = None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "alt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_alt = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "cid" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_cid = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "playlist" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_playlist = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "thumbnail" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_thumbnail = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatio::decode_cbor(decoder)?,
+                    );
+                }
+                "presentation" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_presentation = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(EmbedVideoView {
+            alt: field_alt,
+            cid: field_cid.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'cid'".into())
+            })?,
+            playlist: field_playlist.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'playlist'".into())
+            })?,
+            thumbnail: field_thumbnail,
+            aspect_ratio: field_aspect_ratio,
+            presentation: field_presentation,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -507,11 +973,8 @@ impl EmbedVideoView {
                     }
                 }
                 "aspectRatio" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
-                    field_aspect_ratio = Some(
-                        crate::api::app::bsky::EmbedDefsAspectRatio::decode_cbor(&mut dec)?,
-                    );
+                    field_aspect_ratio =
+                        Some(crate::api::app::bsky::EmbedDefsAspectRatio::from_cbor_value(value)?);
                 }
                 "presentation" => {
                     if let crate::cbor::Value::Text(s) = value {
@@ -540,6 +1003,152 @@ impl EmbedVideoView {
             presentation: field_presentation,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct EmbedVideoViewCborView<'a> {
+    pub alt: Option<&'a str>,
+    pub cid: &'a str,
+    pub playlist: &'a str,
+    pub thumbnail: Option<&'a str>,
+    pub aspect_ratio: Option<crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>>,
+    pub presentation: Option<&'a str>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> EmbedVideoViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<EmbedVideoView, crate::cbor::CborError> {
+        Ok(EmbedVideoView {
+            alt: self.alt.as_ref().map(|value| (*value).to_owned()),
+            cid: self.cid.to_owned(),
+            playlist: self.playlist.to_owned(),
+            thumbnail: self.thumbnail.as_ref().map(|value| (*value).to_owned()),
+            aspect_ratio: self
+                .aspect_ratio
+                .as_ref()
+                .map(|value| value.to_owned())
+                .transpose()?,
+            presentation: self.presentation.as_ref().map(|value| (*value).to_owned()),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_alt: Option<&'a str> = None;
+        let mut field_cid: Option<&'a str> = None;
+        let mut field_playlist: Option<&'a str> = None;
+        let mut field_thumbnail: Option<&'a str> = None;
+        let mut field_aspect_ratio: Option<
+            crate::api::app::bsky::EmbedDefsAspectRatioCborView<'a>,
+        > = None;
+        let mut field_presentation: Option<&'a str> = None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x61\x6c\x74", |decoder| {
+            field_alt = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x63\x63\x69\x64", |decoder| {
+            field_cid = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x68\x70\x6c\x61\x79\x6c\x69\x73\x74", |decoder| {
+            field_playlist = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x74\x68\x75\x6d\x62\x6e\x61\x69\x6c", |decoder| {
+            field_thumbnail = Some(decoder.text()?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x61\x73\x70\x65\x63\x74\x52\x61\x74\x69\x6f",
+            |decoder| {
+                field_aspect_ratio = Some(
+                    crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x70\x72\x65\x73\x65\x6e\x74\x61\x74\x69\x6f\x6e",
+            |decoder| {
+                field_presentation = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"alt" => {
+                    field_alt = Some(decoder.text()?);
+                }
+                b"cid" => {
+                    field_cid = Some(decoder.text()?);
+                }
+                b"playlist" => {
+                    field_playlist = Some(decoder.text()?);
+                }
+                b"thumbnail" => {
+                    field_thumbnail = Some(decoder.text()?);
+                }
+                b"aspectRatio" => {
+                    field_aspect_ratio = Some(
+                        crate::api::app::bsky::EmbedDefsAspectRatioCborView::decode_cbor(decoder)?,
+                    );
+                }
+                b"presentation" => {
+                    field_presentation = Some(decoder.text()?);
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            alt: field_alt,
+            cid: field_cid.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'cid'".into())
+            })?,
+            playlist: field_playlist.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'playlist'".into())
+            })?,
+            thumbnail: field_thumbnail,
+            aspect_ratio: field_aspect_ratio,
+            presentation: field_presentation,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

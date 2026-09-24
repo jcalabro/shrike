@@ -46,6 +46,58 @@ fn decode_std(data: &[u8]) -> Option<Value<'_>> {
 fuzz_target!(|data: &[u8]| {
     let std = decode_std(data);
 
+    // Generated streaming decoders must retain the generic parser's strict
+    // wire checks, and preserve unknown fields through typed round trips.
+    macro_rules! typed_roundtrip {
+        ($ty:ty) => {
+            if let Ok(value) = <$ty>::from_cbor(data) {
+                assert!(
+                    std.is_some(),
+                    "typed decoder accepted invalid canonical CBOR"
+                );
+                let encoded = value.to_cbor().expect("accepted value encodes");
+                let roundtrip = <$ty>::from_cbor(&encoded).expect("typed round trip decodes");
+                assert_eq!(
+                    encoded,
+                    roundtrip.to_cbor().expect("typed round trip encodes")
+                );
+            }
+        };
+    }
+    typed_roundtrip!(shrike::api::app::bsky::FeedLike);
+    typed_roundtrip!(shrike::api::app::bsky::FeedPost);
+    typed_roundtrip!(shrike::api::app::bsky::ActorProfile);
+
+    macro_rules! borrowed_equivalence {
+        ($owned:ty, $view:ty) => {
+            let owned = <$owned>::from_cbor(data);
+            let view = <$view>::from_cbor(data);
+            assert_eq!(
+                owned.is_ok(),
+                view.is_ok(),
+                "owned/view acceptance mismatch"
+            );
+            if let (Ok(owned), Ok(view)) = (owned, view) {
+                assert_eq!(
+                    owned.to_cbor().unwrap(),
+                    view.to_owned().unwrap().to_cbor().unwrap()
+                );
+            }
+        };
+    }
+    borrowed_equivalence!(
+        shrike::api::app::bsky::FeedLike,
+        shrike::api::app::bsky::FeedLikeCborView
+    );
+    borrowed_equivalence!(
+        shrike::api::app::bsky::FeedPost,
+        shrike::api::app::bsky::FeedPostCborView
+    );
+    borrowed_equivalence!(
+        shrike::api::app::bsky::ActorProfile,
+        shrike::api::app::bsky::ActorProfileCborView
+    );
+
     let bump = Bump::new();
     let mut dec = Decoder::new(data);
     let bump_val = dec

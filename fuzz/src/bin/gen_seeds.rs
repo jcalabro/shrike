@@ -67,6 +67,40 @@ fn main() {
         }
     }
 
+    // Real generated records exercise nested typed maps as well as generic CBOR.
+    for (name, bytes) in [
+        (
+            "feed_like",
+            include_bytes!("../../../benches/fixtures/record_like.cbor").as_slice(),
+        ),
+        (
+            "feed_post",
+            include_bytes!("../../../benches/fixtures/record_post.cbor").as_slice(),
+        ),
+        (
+            "actor_profile",
+            include_bytes!("../../../benches/fixtures/record_profile.cbor").as_slice(),
+        ),
+    ] {
+        for target in ["cbor_decode", "cbor_decode_differential"] {
+            write_seed(target, name, bytes);
+        }
+    }
+
+    // Archive seeds reach column validation and decompression past the headers.
+    let frame = include_bytes!("../../../testdata/jetstream/golden/golden_block.bin");
+    write_seed("jetstream_decode_block_frame", "golden", frame);
+    let segment = include_bytes!("../../../testdata/jetstream/golden/golden_seal.bin");
+    for target in ["jetstream_decode_segment", "jetstream_read_header"] {
+        write_seed(target, "golden", segment);
+    }
+    if let Ok(body) = shrike::jetstream::decompress_bounded(frame, 1 << 20, None) {
+        write_seed("jetstream_decode_block_body", "golden", &body);
+    }
+    let mut bounded = vec![0xff, 0xff];
+    bounded.extend_from_slice(frame);
+    write_seed("jetstream_decompress", "golden", &bounded);
+
     // --- MST node blocks (mst_decode_node_data*, mst_load_and_walk) ---
     let nodes: &[(&str, NodeData)] = &[
         (

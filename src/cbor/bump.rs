@@ -225,17 +225,7 @@ impl<'data> Decoder<'data> {
                         "unsupported CBOR tag: {tag_num} (only tag 42 is allowed)"
                     )));
                 }
-                let inner = self.decode_bump_inner(bump, depth)?;
-                let bytes = match inner {
-                    BumpValue::Bytes(b) => b,
-                    _ => {
-                        return Err(CborError::InvalidCbor(
-                            "tag 42 must wrap a bytestring".into(),
-                        ));
-                    }
-                };
-                let cid = Cid::from_tag42_bytes(bytes)?;
-                Ok(BumpValue::Cid(cid))
+                Ok(BumpValue::Cid(self.read_tag42_body()?))
             }
             7 => match additional {
                 20 => Ok(BumpValue::Bool(false)),

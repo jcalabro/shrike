@@ -15,6 +15,10 @@ rust-version = "1.92"
 [package.metadata.docs.rs]
 all-features = true
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
 [workspace]
 resolver = "2"
 members = [
@@ -48,7 +52,9 @@ unsafe_code = "deny"
 [workspace.dependencies]
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `raw_value` lets the jetstream live parser inspect a commit record's raw JSON
+# text (duplicate-key rejection) without a second full parse of the frame.
+serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 data-encoding = "2"
 p256 = { version = "0.13", features = ["ecdsa"] }
@@ -100,18 +106,30 @@ oauth = ["syntax", "crypto", "identity", "dep:reqwest", "dep:tokio", "dep:url", 
 sync = ["syntax", "cbor", "crypto", "mst", "repo", "car", "identity", "xrpc", "dep:tokio", "dep:async-trait"]
 backfill = ["syntax", "sync", "xrpc", "dep:tokio", "dep:tokio-util", "dep:rand", "dep:futures"]
 
+# Jetstream v2 replay/live client. Deliberately separate from the legacy
+# `streaming` Jetstream client, which is left untouched. Dependencies are added
+# per milestone as they come into use; M0 covers the portable segment codec
+# (zstd on native, ruzstd on wasm, xxh3 checksums via twox-hash), M1 adds the
+# protocol value model (`bytes` record backing, `jiff` RFC-3339 <-> micros), M4
+# adds the live WebSocket transport (`tokio-tungstenite` native, `gloo-net`
+# browser, `url` for wire-URL construction), M6 adds the browser archive HTTP
+# transport (`gloo-net`'s `http` `fetch` wrapper plus `web-sys`/`wasm-bindgen`
+# for incremental `ReadableStream` body reads) — all already resolved in the tree
+# via `gloo-net` and the browser crypto backends, so no new crate is introduced.
+jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff", "dep:futures", "dep:tokio-tungstenite", "dep:gloo-net", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:url", "api"]
+
 # Everything
 full = [
     "syntax", "cbor", "crypto", "mst", "repo", "car",
     "lexicon", "xrpc", "xrpc-server", "identity", "streaming",
-    "sync", "backfill", "labeling", "oauth", "api",
+    "sync", "backfill", "labeling", "oauth", "api", "jetstream",
 ]
 
 # Browser-safe client functionality. Server, sync, and backfill features are
 # intentionally excluded because they require native sockets or threads.
 wasm = [
     "syntax", "cbor", "crypto", "mst", "repo", "car", "lexicon",
-    "xrpc", "identity", "streaming", "labeling", "oauth", "api",
+    "xrpc", "identity", "streaming", "labeling", "oauth", "api", "jetstream",
 ]
 
 # === Always-on dependencies (used by many modules) ===
@@ -153,22 +171,49 @@ tokio-util = { workspace = true, optional = true }
 # oauth, sync
 async-trait = { workspace = true, optional = true }
 
+# jetstream (cross-target): xxh3 segment checksums. No default features keeps
+# this off `rand`/`std`-random and portable to wasm32-unknown-unknown.
+twox-hash = { version = "2.1", default-features = false, features = ["xxhash3_64", "alloc"], optional = true }
+# jetstream (cross-target): reference-counted record backing so archive rows
+# share one decompressed slab without `unsafe` or self-referential structs.
+bytes = { version = "1", optional = true }
+# jetstream (cross-target): exact RFC-3339 <-> Unix-microsecond conversion for
+# live timestamps vs archive witnessed time. No default features avoids the
+# bundled tzdb and system-clock code; we only parse and format instants.
+jiff = { version = "0.2", default-features = false, features = ["std", "perf-inline"], optional = true }
+
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 # Native modules use Tokio networking and timers. Keeping these features off the
 # browser target is what lets the same high-level clients compile there.
 tokio = { workspace = true, optional = true, features = ["full"] }
 hickory-resolver = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
+# jetstream (native): bounded zstd block/frame decode via libzstd.
+zstd = { version = "0.14", optional = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "macros", "io-util"] }
-gloo-net = { version = "0.6", features = ["websocket"], optional = true }
+# jetstream (wasm): `websocket` powers the live tail; `http` powers the archive
+# `fetch` transport. Both draw only on `web-sys` bindings already in the tree.
+gloo-net = { version = "0.6", features = ["websocket", "http"], optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 js-sys = { workspace = true, optional = true }
+# jetstream (wasm): the browser archive transport streams the `fetch` response
+# body incrementally through a `ReadableStream` reader, so `read_body_bounded`
+# enforces the caller's exact per-request byte cap chunk-by-chunk (matching the
+# native `reqwest` path) instead of buffering a whole response first. These
+# crates are already resolved via `gloo-net`; pinned to the workspace versions.
+wasm-bindgen = { workspace = true, optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
+web-sys = { version = "=0.3.104", optional = true, features = ["ReadableStream", "ReadableStreamDefaultReader", "RequestRedirect", "RequestMode", "RequestCredentials"] }
 # Shrike currently reaches both getrandom 0.2 (elliptic-curve) and 0.3 (rand).
 # Opt both generations into their browser crypto backends.
 getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"], optional = true }
 getrandom-03 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
+# jetstream (wasm): pure-Rust zstd decoder for the browser target, where the
+# libzstd C build is unavailable. Decode-only; must agree byte-for-byte with the
+# native `zstd` path on the shared golden corpus.
+ruzstd = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
@@ -219,10 +264,18 @@ required-features = ["sync", "streaming", "identity"]
 name = "sync_1_1_verifier"
 required-features = ["sync", "identity"]
 
+[[test]]
+name = "jetstream_property_tests"
+required-features = ["jetstream"]
+
 [[bench]]
 name = "cbor_benchmarks"
 harness = false
 required-features = ["cbor"]
+
+[[example]]
+name = "jetstream_bench"
+required-features = ["jetstream"]
 
 [[bench]]
 name = "mst_benchmarks"

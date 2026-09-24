@@ -22,5 +22,5 @@ axum.workspace = true
 
 shrike = { path = "../..", features = [
     "syntax", "crypto", "cbor", "car", "repo", "lexicon",
-    "identity", "xrpc", "streaming", "api", "oauth",
+    "identity", "xrpc", "streaming", "api", "oauth", "jetstream",
 ] }

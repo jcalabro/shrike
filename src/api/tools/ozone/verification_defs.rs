@@ -807,7 +807,197 @@ impl VerificationDefsVerificationView {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_uri: Option<crate::syntax::AtUri> = None;
+        let mut field_handle: Option<crate::syntax::Handle> = None;
+        let mut field_issuer: Option<crate::syntax::Did> = None;
+        let mut field_subject: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::Datetime> = None;
+        let mut field_revoked_at: Option<crate::syntax::Datetime> = None;
+        let mut field_revoked_by: Option<crate::syntax::Did> = None;
+        let mut field_issuer_repo: Option<VerificationDefsVerificationViewIssuerRepoUnion> = None;
+        let mut field_display_name: Option<String> = None;
+        let mut field_subject_repo: Option<VerificationDefsVerificationViewSubjectRepoUnion> = None;
+        let mut field_revoke_reason: Option<String> = None;
+        let mut field_issuer_profile: Option<VerificationDefsVerificationViewIssuerProfileUnion> =
+            None;
+        let mut field_subject_profile: Option<VerificationDefsVerificationViewSubjectProfileUnion> =
+            None;
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "uri" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_uri = Some(
+                            crate::syntax::AtUri::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "handle" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_handle = Some(
+                            crate::syntax::Handle::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "issuer" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_issuer = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "subject" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "createdAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_created_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "revokedAt" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_revoked_at = Some(
+                            crate::syntax::Datetime::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "revokedBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_revoked_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "issuerRepo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_issuer_repo = Some(
+                        VerificationDefsVerificationViewIssuerRepoUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                "displayName" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_display_name = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "subjectRepo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_subject_repo = Some(
+                        VerificationDefsVerificationViewSubjectRepoUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                "revokeReason" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_revoke_reason = Some(s.to_string());
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                "issuerProfile" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_issuer_profile = Some(
+                        VerificationDefsVerificationViewIssuerProfileUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                "subjectProfile" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_subject_profile = Some(
+                        VerificationDefsVerificationViewSubjectProfileUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(VerificationDefsVerificationView {
+            uri: field_uri.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'uri'".into())
+            })?,
+            handle: field_handle.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'handle'".into())
+            })?,
+            issuer: field_issuer.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'issuer'".into())
+            })?,
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            revoked_at: field_revoked_at,
+            revoked_by: field_revoked_by,
+            issuer_repo: field_issuer_repo,
+            display_name: field_display_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'displayName'".into())
+            })?,
+            subject_repo: field_subject_repo,
+            revoke_reason: field_revoke_reason,
+            issuer_profile: field_issuer_profile,
+            subject_profile: field_subject_profile,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -979,6 +1169,358 @@ impl VerificationDefsVerificationView {
             subject_profile: field_subject_profile,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct VerificationDefsVerificationViewCborView<'a> {
+    pub uri: crate::syntax::AtUriRef<'a>,
+    pub handle: crate::syntax::Handle,
+    pub issuer: crate::syntax::Did,
+    pub subject: crate::syntax::Did,
+    pub created_at: crate::syntax::DatetimeRef<'a>,
+    pub revoked_at: Option<crate::syntax::DatetimeRef<'a>>,
+    pub revoked_by: Option<crate::syntax::Did>,
+    pub issuer_repo: Option<VerificationDefsVerificationViewIssuerRepoUnion>,
+    pub display_name: &'a str,
+    pub subject_repo: Option<VerificationDefsVerificationViewSubjectRepoUnion>,
+    pub revoke_reason: Option<&'a str>,
+    pub issuer_profile: Option<VerificationDefsVerificationViewIssuerProfileUnion>,
+    pub subject_profile: Option<VerificationDefsVerificationViewSubjectProfileUnion>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> VerificationDefsVerificationViewCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(&self) -> Result<VerificationDefsVerificationView, crate::cbor::CborError> {
+        Ok(VerificationDefsVerificationView {
+            uri: self.uri.to_owned(),
+            handle: self.handle.clone(),
+            issuer: self.issuer.clone(),
+            subject: self.subject.clone(),
+            created_at: self.created_at.to_owned(),
+            revoked_at: self.revoked_at.as_ref().map(|value| (*value).to_owned()),
+            revoked_by: self.revoked_by.clone(),
+            issuer_repo: self.issuer_repo.clone(),
+            display_name: self.display_name.to_owned(),
+            subject_repo: self.subject_repo.clone(),
+            revoke_reason: self.revoke_reason.as_ref().map(|value| (*value).to_owned()),
+            issuer_profile: self.issuer_profile.clone(),
+            subject_profile: self.subject_profile.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_uri: Option<crate::syntax::AtUriRef<'a>> = None;
+        let mut field_handle: Option<crate::syntax::Handle> = None;
+        let mut field_issuer: Option<crate::syntax::Did> = None;
+        let mut field_subject: Option<crate::syntax::Did> = None;
+        let mut field_created_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_revoked_at: Option<crate::syntax::DatetimeRef<'a>> = None;
+        let mut field_revoked_by: Option<crate::syntax::Did> = None;
+        let mut field_issuer_repo: Option<VerificationDefsVerificationViewIssuerRepoUnion> = None;
+        let mut field_display_name: Option<&'a str> = None;
+        let mut field_subject_repo: Option<VerificationDefsVerificationViewSubjectRepoUnion> = None;
+        let mut field_revoke_reason: Option<&'a str> = None;
+        let mut field_issuer_profile: Option<VerificationDefsVerificationViewIssuerProfileUnion> =
+            None;
+        let mut field_subject_profile: Option<VerificationDefsVerificationViewSubjectProfileUnion> =
+            None;
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x63\x75\x72\x69", |decoder| {
+            field_uri = Some(
+                crate::syntax::AtUriRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x68\x61\x6e\x64\x6c\x65", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_handle = Some(
+                    crate::syntax::Handle::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x66\x69\x73\x73\x75\x65\x72", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_issuer = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x67\x73\x75\x62\x6a\x65\x63\x74", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_subject = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x63\x72\x65\x61\x74\x65\x64\x41\x74", |decoder| {
+            field_created_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x72\x65\x76\x6f\x6b\x65\x64\x41\x74", |decoder| {
+            field_revoked_at = Some(
+                crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                    .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+            );
+            Ok(())
+        })?;
+        entries.try_field(b"\x69\x72\x65\x76\x6f\x6b\x65\x64\x42\x79", |decoder| {
+            let value = decoder.decode()?;
+            if let crate::cbor::Value::Text(s) = value {
+                field_revoked_by = Some(
+                    crate::syntax::Did::try_from(s)
+                        .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                );
+            } else {
+                return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+            }
+            Ok(())
+        })?;
+        entries.try_field(b"\x6a\x69\x73\x73\x75\x65\x72\x52\x65\x70\x6f", |decoder| {
+            let value = decoder.decode()?;
+            let raw = crate::cbor::encode_value(&value)?;
+            let mut dec = crate::cbor::Decoder::new(&raw);
+            field_issuer_repo =
+                Some(VerificationDefsVerificationViewIssuerRepoUnion::decode_cbor(&mut dec)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6b\x64\x69\x73\x70\x6c\x61\x79\x4e\x61\x6d\x65",
+            |decoder| {
+                field_display_name = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6b\x73\x75\x62\x6a\x65\x63\x74\x52\x65\x70\x6f",
+            |decoder| {
+                let value = decoder.decode()?;
+                let raw = crate::cbor::encode_value(&value)?;
+                let mut dec = crate::cbor::Decoder::new(&raw);
+                field_subject_repo =
+                    Some(VerificationDefsVerificationViewSubjectRepoUnion::decode_cbor(&mut dec)?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6c\x72\x65\x76\x6f\x6b\x65\x52\x65\x61\x73\x6f\x6e",
+            |decoder| {
+                field_revoke_reason = Some(decoder.text()?);
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6d\x69\x73\x73\x75\x65\x72\x50\x72\x6f\x66\x69\x6c\x65",
+            |decoder| {
+                let value = decoder.decode()?;
+                let raw = crate::cbor::encode_value(&value)?;
+                let mut dec = crate::cbor::Decoder::new(&raw);
+                field_issuer_profile = Some(
+                    VerificationDefsVerificationViewIssuerProfileUnion::decode_cbor(&mut dec)?,
+                );
+                Ok(())
+            },
+        )?;
+        entries.try_field(
+            b"\x6e\x73\x75\x62\x6a\x65\x63\x74\x50\x72\x6f\x66\x69\x6c\x65",
+            |decoder| {
+                let value = decoder.decode()?;
+                let raw = crate::cbor::encode_value(&value)?;
+                let mut dec = crate::cbor::Decoder::new(&raw);
+                field_subject_profile = Some(
+                    VerificationDefsVerificationViewSubjectProfileUnion::decode_cbor(&mut dec)?,
+                );
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"uri" => {
+                    field_uri = Some(
+                        crate::syntax::AtUriRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"handle" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_handle = Some(
+                            crate::syntax::Handle::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"issuer" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_issuer = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"subject" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_subject = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"createdAt" => {
+                    field_created_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"revokedAt" => {
+                    field_revoked_at = Some(
+                        crate::syntax::DatetimeRef::try_from(decoder.text()?)
+                            .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                    );
+                }
+                b"revokedBy" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Text(s) = value {
+                        field_revoked_by = Some(
+                            crate::syntax::Did::try_from(s)
+                                .map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?,
+                        );
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected text".into()));
+                    }
+                }
+                b"issuerRepo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_issuer_repo = Some(
+                        VerificationDefsVerificationViewIssuerRepoUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                b"displayName" => {
+                    field_display_name = Some(decoder.text()?);
+                }
+                b"subjectRepo" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_subject_repo = Some(
+                        VerificationDefsVerificationViewSubjectRepoUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                b"revokeReason" => {
+                    field_revoke_reason = Some(decoder.text()?);
+                }
+                b"issuerProfile" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_issuer_profile = Some(
+                        VerificationDefsVerificationViewIssuerProfileUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                b"subjectProfile" => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    let mut dec = crate::cbor::Decoder::new(&raw);
+                    field_subject_profile = Some(
+                        VerificationDefsVerificationViewSubjectProfileUnion::decode_cbor(&mut dec)?,
+                    );
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            uri: field_uri.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'uri'".into())
+            })?,
+            handle: field_handle.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'handle'".into())
+            })?,
+            issuer: field_issuer.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'issuer'".into())
+            })?,
+            subject: field_subject.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'subject'".into())
+            })?,
+            created_at: field_created_at.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'createdAt'".into())
+            })?,
+            revoked_at: field_revoked_at,
+            revoked_by: field_revoked_by,
+            issuer_repo: field_issuer_repo,
+            display_name: field_display_name.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'displayName'".into())
+            })?,
+            subject_repo: field_subject_repo,
+            revoke_reason: field_revoke_reason,
+            issuer_profile: field_issuer_profile,
+            subject_profile: field_subject_profile,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

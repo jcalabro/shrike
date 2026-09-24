@@ -16,6 +16,14 @@ pub enum AtIdentifier {
 }
 
 impl AtIdentifier {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
+        if raw.starts_with("did:") {
+            Did::validate(raw)
+        } else {
+            Handle::validate(raw)
+        }
+    }
+
     /// Returns `true` if this identifier is a DID.
     pub fn is_did(&self) -> bool {
         matches!(self, AtIdentifier::Did(_))

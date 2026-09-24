@@ -148,7 +148,242 @@ fn gen_cbor_impl_inner(
     out.push('\n');
     gen_from_cbor(&mut out, type_name, &fields, type_nsid);
     writeln!(out, "}}").ok();
+    gen_borrowed_view(&mut out, type_name, &fields, type_nsid);
     Ok(out)
+}
+
+/// Experimental lending record representation. Text and nested objects borrow
+/// the validated input; complex array/union fields retain their existing owned
+/// decoders. No schema names or workload assumptions enter this decision.
+fn view_type(field: &CborField) -> String {
+    let optional = field.rust_type.starts_with("Option<");
+    let inner = if optional {
+        &field.rust_type[7..field.rust_type.len() - 1]
+    } else {
+        &field.rust_type
+    };
+    let result = match &field.kind {
+        FieldKind::Text => "&'a str".to_owned(),
+        FieldKind::SyntaxText(ty)
+            if matches!(
+                ty.as_str(),
+                "crate::syntax::AtUri" | "crate::syntax::Datetime"
+            ) =>
+        {
+            format!("{ty}Ref<'a>")
+        }
+        FieldKind::Struct => format!("{inner}CborView<'a>"),
+        _ => inner.to_owned(),
+    };
+    if optional {
+        format!("Option<{result}>")
+    } else {
+        result
+    }
+}
+
+fn gen_borrowed_view(out: &mut String, name: &str, fields: &[CborField], nsid: Option<&str>) {
+    writeln!(
+        out,
+        "\n/// A validated CBOR view. Borrowed fields cannot outlive the input."
+    )
+    .ok();
+    writeln!(out, "#[derive(Debug)]\npub struct {name}CborView<'a> {{").ok();
+    for field in fields {
+        writeln!(out, "    pub {}: {},", field.rust_field, view_type(field)).ok();
+    }
+    writeln!(
+        out,
+        "    pub extra_cbor: Vec<(&'a str, &'a [u8])>,\n    raw_cbor: &'a [u8],\n}}"
+    )
+    .ok();
+    writeln!(out, "impl<'a> {name}CborView<'a> {{").ok();
+    writeln!(
+        out,
+        "    #[inline]\n    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {{"
+    )
+    .ok();
+    writeln!(out, "        let mut decoder = crate::cbor::Decoder::new(data);\n        let result = Self::decode_cbor(&mut decoder)?;").ok();
+    writeln!(out, "        if !decoder.is_empty() {{ return Err(crate::cbor::CborError::InvalidCbor(\"trailing data\".into())); }}\n        Ok(result)\n    }}").ok();
+    writeln!(
+        out,
+        "    pub fn to_owned(&self) -> Result<{name}, crate::cbor::CborError> {{ Ok({name} {{"
+    )
+    .ok();
+    for f in fields {
+        let field = &f.rust_field;
+        let optional = f.rust_type.starts_with("Option<");
+        let source = if optional {
+            "value".to_owned()
+        } else {
+            format!("self.{field}")
+        };
+        let value = match &f.kind {
+            FieldKind::Text => {
+                if optional {
+                    "(*value).to_owned()".to_owned()
+                } else {
+                    format!("{source}.to_owned()")
+                }
+            }
+            FieldKind::SyntaxText(ty)
+                if matches!(
+                    ty.as_str(),
+                    "crate::syntax::AtUri" | "crate::syntax::Datetime"
+                ) =>
+            {
+                if optional {
+                    "(*value).to_owned()".to_owned()
+                } else {
+                    format!("{source}.to_owned()")
+                }
+            }
+            FieldKind::Struct => format!("{source}.to_owned()?"),
+            FieldKind::Integer | FieldKind::Bool => {
+                if optional {
+                    "*value".to_owned()
+                } else {
+                    source.clone()
+                }
+            }
+            FieldKind::SyntaxText(ty) if ty == "crate::syntax::Tid" => {
+                if optional {
+                    "*value".to_owned()
+                } else {
+                    source.clone()
+                }
+            }
+            _ => format!("{source}.clone()"),
+        };
+        let value = if optional {
+            if view_type(f) == f.rust_type {
+                if matches!(f.kind, FieldKind::Integer | FieldKind::Bool)
+                    || matches!(&f.kind, FieldKind::SyntaxText(ty) if ty == "crate::syntax::Tid")
+                {
+                    format!("self.{field}")
+                } else {
+                    format!("self.{field}.clone()")
+                }
+            } else if matches!(f.kind, FieldKind::Struct) {
+                format!("self.{field}.as_ref().map(|value| value.to_owned()).transpose()?")
+            } else {
+                format!("self.{field}.as_ref().map(|value| {value})")
+            }
+        } else {
+            value
+        };
+        writeln!(out, "        {field}: {value},").ok();
+    }
+    writeln!(out, "        extra: std::collections::HashMap::new(),
+        extra_cbor: self.extra_cbor.iter().map(|(key, value)| ((*key).to_owned(), value.to_vec())).collect(),
+    }}) }}").ok();
+    writeln!(
+        out,
+        "    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {{ self.raw_cbor }}"
+    )
+    .ok();
+    writeln!(out, "    #[inline]\n    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder<'a>) -> Result<Self, crate::cbor::CborError> {{\n        let start = decoder.position();").ok();
+    for f in fields.iter().filter(|f| !is_json_only(&f.kind)) {
+        let clean = clean_field_name(&f.rust_field);
+        let ty = view_type(f);
+        if ty.starts_with("Vec<") {
+            writeln!(out, "        let mut field_{clean}: {ty} = Vec::new();").ok();
+        } else if ty.starts_with("Option<") {
+            writeln!(out, "        let mut field_{clean}: {ty} = None;").ok();
+        } else {
+            writeln!(out, "        let mut field_{clean}: Option<{ty}> = None;").ok();
+        }
+    }
+    writeln!(out, "        let mut extra_cbor = Vec::new();\n        let mut entries = decoder.map_entries()?;").ok();
+    for f in fields.iter().filter(|f| !is_json_only(&f.kind)) {
+        let mut encoded = Vec::new();
+        shrike::cbor::Encoder::new(&mut encoded)
+            .encode_text(&f.json_name)
+            .map_err(|_| ())
+            .ok();
+        let literal = encoded
+            .iter()
+            .map(|b| format!("\\x{b:02x}"))
+            .collect::<String>();
+        writeln!(
+            out,
+            "        entries.try_field(b\"{literal}\", |decoder| {{"
+        )
+        .ok();
+        gen_view_decode_field(out, f, &clean_field_name(&f.rust_field));
+        writeln!(out, "            Ok(())\n        }})?;").ok();
+    }
+    writeln!(out, "        while let Some(result) = entries.next_raw(|key, decoder| {{\n            match key {{").ok();
+    for f in fields.iter().filter(|f| !is_json_only(&f.kind)) {
+        let clean = clean_field_name(&f.rust_field);
+        writeln!(out, "                b{:?} => {{", f.json_name).ok();
+        gen_view_decode_field(out, f, &clean);
+        writeln!(out, "                }}").ok();
+    }
+    writeln!(out, "                _ => {{\n                    let key = core::str::from_utf8(key).map_err(|_| crate::cbor::CborError::InvalidCbor(\"invalid UTF-8 in text string\".into()))?;\n                    let start = decoder.position();\n                    let _ = decoder.decode()?;\n                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));\n                }}\n            }}\n            Ok(())\n        }}) {{ result?; }}\n        drop(entries);\n        Ok(Self {{").ok();
+    for f in fields {
+        let name = &f.rust_field;
+        let clean = clean_field_name(name);
+        if is_json_only(&f.kind) {
+            writeln!(out, "            {name}: Default::default(),").ok();
+        } else if f.rust_type.starts_with("Option<") || f.rust_type.starts_with("Vec<") {
+            writeln!(out, "            {name}: field_{clean},").ok();
+        } else if f.json_name == "$type" && nsid.is_some() {
+            writeln!(
+                out,
+                "            {name}: field_{clean}.unwrap_or({:?}),",
+                nsid.unwrap_or_default()
+            )
+            .ok();
+        } else {
+            writeln!(out, "            {name}: field_{clean}.ok_or_else(|| crate::cbor::CborError::InvalidCbor(\"missing required field '{}'\".into()))?,", f.json_name).ok();
+        }
+    }
+    writeln!(out, "            extra_cbor,\n            raw_cbor: &decoder.raw_input()[start..decoder.position()],\n        }})\n    }}\n}}").ok();
+}
+
+fn gen_view_decode_field(out: &mut String, f: &CborField, clean: &str) {
+    if f.nullable {
+        writeln!(out, "                    if decoder.raw_input().get(decoder.position()) == Some(&0xf6) {{ let _ = decoder.decode()?; }} else {{").ok();
+    }
+    match &f.kind {
+        FieldKind::Text => {
+            writeln!(
+                out,
+                "                    field_{clean} = Some(decoder.text()?);"
+            )
+            .ok();
+        }
+        FieldKind::SyntaxText(ty)
+            if matches!(
+                ty.as_str(),
+                "crate::syntax::AtUri" | "crate::syntax::Datetime"
+            ) =>
+        {
+            writeln!(out, "                    field_{clean} = Some({ty}Ref::try_from(decoder.text()?).map_err(|e| crate::cbor::CborError::InvalidCbor(e.to_string()))?);").ok();
+        }
+        FieldKind::Struct => {
+            let ty = view_type(f);
+            let ty = ty
+                .strip_prefix("Option<")
+                .and_then(|s| s.strip_suffix('>'))
+                .unwrap_or(&ty);
+            let ty = ty.replace("<'a>", "");
+            writeln!(
+                out,
+                "                    field_{clean} = Some({ty}::decode_cbor(decoder)?);"
+            )
+            .ok();
+        }
+        _ => {
+            writeln!(out, "                    let value = decoder.decode()?;").ok();
+            gen_decode_field(out, f, clean, "                    ");
+        }
+    }
+    if f.nullable {
+        writeln!(out, "                    }}").ok();
+    }
 }
 
 /// Generate CBOR encode/decode methods for a union enum type.
@@ -510,9 +745,6 @@ fn gen_to_cbor(out: &mut String, fields: &[CborField]) {
 }
 
 fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_nsid: Option<&str>) {
-    // Filter out JSON-only fields.
-    let cbor_fields: Vec<&CborField> = fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
-
     // from_cbor: convenience wrapper
     writeln!(
         out,
@@ -542,7 +774,15 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
 
     // decode_cbor
     writeln!(out, "    pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {{").ok();
-    writeln!(out, "        let val = decoder.decode()?;").ok();
+    gen_decode_struct_body(out, type_name, fields, type_nsid, true);
+    writeln!(out, "    }}").ok();
+    out.push('\n');
+    // Nested values have already passed the decoder's canonical-form, depth,
+    // length, and duplicate-key checks. Consume them without encoding and
+    // parsing them again; retain the same typed field validation below.
+    // Root-only types have no nested value callers.
+    writeln!(out, "    #[allow(dead_code)]").ok();
+    writeln!(out, "    pub(crate) fn from_cbor_value(val: crate::cbor::Value<'_>) -> Result<Self, crate::cbor::CborError> {{").ok();
     writeln!(out, "        let entries = match val {{").ok();
     writeln!(
         out,
@@ -556,6 +796,24 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     writeln!(out, "        }};").ok();
     out.push('\n');
+
+    gen_decode_struct_body(out, type_name, fields, type_nsid, false);
+    writeln!(out, "    }}").ok();
+}
+
+/// Both entry paths use the same field conversion and required-field rules.
+/// Streamed struct fields decode directly from the shared bounded decoder;
+/// generic values (including array elements) consume their existing map.
+fn gen_decode_struct_body(
+    out: &mut String,
+    type_name: &str,
+    fields: &[CborField],
+    type_nsid: Option<&str>,
+    streamed: bool,
+) {
+    let mut cbor_fields: Vec<&CborField> =
+        fields.iter().filter(|f| !is_json_only(&f.kind)).collect();
+    cbor_fields.sort_by(|a, b| cbor_key_cmp(&a.json_name, &b.json_name));
 
     // Declare variables for each field.
     for f in &cbor_fields {
@@ -590,13 +848,39 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     out.push('\n');
 
-    writeln!(out, "        for (key, value) in entries {{").ok();
+    if streamed {
+        writeln!(out, "        let mut entries = decoder.map_entries()?;").ok();
+        writeln!(
+            out,
+            "        while let Some(result) = entries.next_with(|key, decoder| {{"
+        )
+        .ok();
+    } else {
+        writeln!(out, "        for (key, value) in entries {{").ok();
+    }
     writeln!(out, "            match key {{").ok();
 
     for f in &cbor_fields {
         let key = &f.json_name;
         let clean_var = clean_field_name(&f.rust_field);
         writeln!(out, "                {key:?} => {{").ok();
+        if streamed && matches!(f.kind, FieldKind::Struct) && !f.nullable {
+            let ty = f
+                .rust_type
+                .strip_prefix("Option<")
+                .and_then(|ty| ty.strip_suffix('>'))
+                .unwrap_or(&f.rust_type);
+            writeln!(
+                out,
+                "                    field_{clean_var} = Some({ty}::decode_cbor(decoder)?);"
+            )
+            .ok();
+            writeln!(out, "                }}").ok();
+            continue;
+        }
+        if streamed {
+            writeln!(out, "                    let value = decoder.decode()?;").ok();
+        }
         if f.nullable {
             // A nullable field carries either the value or CBOR null; null
             // leaves the Option as None rather than erroring on type mismatch.
@@ -615,6 +899,9 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
 
     // Unknown keys go to extra_cbor.
     writeln!(out, "                _ => {{").ok();
+    if streamed {
+        writeln!(out, "                    let value = decoder.decode()?;").ok();
+    }
     writeln!(
         out,
         "                    let raw = crate::cbor::encode_value(&value)?;"
@@ -627,7 +914,12 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     .ok();
     writeln!(out, "                }}").ok();
     writeln!(out, "            }}").ok();
-    writeln!(out, "        }}").ok();
+    if streamed {
+        writeln!(out, "            Ok(())").ok();
+        writeln!(out, "        }}) {{ result?; }}").ok();
+    } else {
+        writeln!(out, "        }}").ok();
+    }
     out.push('\n');
 
     // Build the struct, verifying required fields.
@@ -656,7 +948,6 @@ fn gen_from_cbor(out: &mut String, type_name: &str, fields: &[CborField], type_n
     writeln!(out, "            extra: std::collections::HashMap::new(),").ok();
     writeln!(out, "            extra_cbor,").ok();
     writeln!(out, "        }})").ok();
-    writeln!(out, "    }}").ok();
 }
 
 // ─── Encoding helpers ──────────────────────────────────────────────
@@ -1084,7 +1375,14 @@ fn gen_decode_single(
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected CID\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
-        FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
+        FieldKind::Struct => {
+            writeln!(
+                out,
+                "{indent}{assign_pre}{rust_type}::from_cbor_value(value)?{assign_post}"
+            )
+            .ok();
+        }
+        FieldKind::Blob | FieldKind::Union => {
             writeln!(out, "{indent}let raw = crate::cbor::encode_value(&value)?;").ok();
             writeln!(
                 out,
@@ -1232,7 +1530,14 @@ fn gen_decode_array_item(
             writeln!(out, "{indent}    return Err(crate::cbor::CborError::InvalidCbor(\"expected CID in array\".into()));").ok();
             writeln!(out, "{indent}}}").ok();
         }
-        FieldKind::Blob | FieldKind::Struct | FieldKind::Union => {
+        FieldKind::Struct => {
+            writeln!(
+                out,
+                "{indent}{target}.push({inner_type}::from_cbor_value(item)?);"
+            )
+            .ok();
+        }
+        FieldKind::Blob | FieldKind::Union => {
             writeln!(out, "{indent}let raw = crate::cbor::encode_value(&item)?;").ok();
             writeln!(
                 out,

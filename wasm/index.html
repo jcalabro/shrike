@@ -26,6 +26,14 @@
     .event { padding: .3rem .5rem; border-left-color: #d2a8ff; font-size: .85rem; overflow-wrap: anywhere; }
     .event strong { color: #7ee787; }
     .event .collection { color: #79c0ff; }
+    label { color: #8b949e; display: inline-flex; gap: .35rem; align-items: center; }
+    input { font: inherit; padding: .4rem .5rem; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: inherit; }
+    #v2-events { height: 320px; margin-top: .75rem; padding: .5rem; overflow-y: auto; background: #010409; border-radius: 6px; display: grid; gap: .3rem; align-content: start; }
+    #v2-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .4rem; margin: .6rem 0 0; }
+    #v2-stats .stat { border: 1px solid #30363d; border-radius: 6px; padding: .35rem .55rem; background: #161b22; font-size: .8rem; }
+    #v2-stats .stat b { color: #79c0ff; display: block; margin-bottom: .1rem; }
+    #v2-status { color: #8b949e; margin-top: .5rem; }
+    .note { color: #d29922; font-size: .85rem; }
   </style>
 </head>
 <body>
@@ -45,6 +53,40 @@
   </div>
   <div id="events" aria-live="polite"></div>
 
+  <h2>Jetstream v2 · sealed archive + live</h2>
+  <p>
+    Replays sealed <code>.jss</code> archive segments and merges them into the
+    live tail as one ordered, duplicate-free stream via the dedicated
+    <code>connectJetstreamV2</code> binding. A live-only tail needs no key;
+    bounded replay (<code>afterSeq</code>/<code>beforeSeq</code>/snapshot) reads
+    the authenticated archive and needs an access key.
+  </p>
+  <p class="note">
+    The archive key is held only in this tab's memory for the run — it is never
+    written to storage or the URL, and the field is cleared once the stream
+    starts. Do not paste a long-lived key into a page you do not control.
+  </p>
+  <div class="controls">
+    <label>Host <input id="v2-host" value="jetstream.us-east.bsky.network" size="30"></label>
+    <label>Collections <input id="v2-collections" value="app.bsky.feed.post" size="22" placeholder="comma-separated NSIDs"></label>
+    <label><input id="v2-insecure" type="checkbox"> insecure (ws/http)</label>
+  </div>
+  <div class="controls">
+    <label>afterSeq <input id="v2-after" type="number" min="0" placeholder="live only" size="10"></label>
+    <label>beforeSeq <input id="v2-before" type="number" min="0" placeholder="none" size="10"></label>
+    <label><input id="v2-snapshot" type="checkbox"> snapshot only</label>
+    <label><input id="v2-nocompress" type="checkbox"> disable compression</label>
+  </div>
+  <div class="controls">
+    <label>Replay key <input id="v2-key" type="password" autocomplete="off" placeholder="session only; required for replay" size="26"></label>
+    <button id="v2-start" disabled>Start</button>
+    <button id="v2-stop" class="stop" disabled>Stop</button>
+    <button id="v2-clear">Clear</button>
+  </div>
+  <div id="v2-status">Loading WASM…</div>
+  <div id="v2-stats" aria-live="polite"></div>
+  <div id="v2-events" aria-live="polite"></div>
+
   <h2>API smoke test</h2>
   <div id="results"></div>
 
@@ -58,6 +100,7 @@
       cidForBytes,
       connectFirehose,
       connectJetstream,
+      connectJetstreamV2,
       generatePkce,
       parseAtUri,
       parseDid,
@@ -181,12 +224,166 @@
       updateStreamStatus(subscription ? "Waiting for events…" : "Ready");
     });
 
-    window.addEventListener("beforeunload", () => subscription?.close());
+    // === Jetstream v2 (sealed archive + live) ===============================
+    // Events, stats, and info all arrive as ES Maps (see `to_js`), so every
+    // v2 hands back plain JS objects, so property access works without `plain()`.
+    let v2sub;
+    let v2count = 0;
+    let v2statsTimer;
+    const v2status = $("v2-status");
+    const v2events = $("v2-events");
+    const v2stats = $("v2-stats");
+
+    function renderV2Stats() {
+      if (!v2sub) return;
+      let snapshot;
+      try {
+        snapshot = v2sub.stats();
+      } catch {
+        return; // subscription already closed
+      }
+      const fields = [
+        ["last seq", snapshot.lastProcessedSeq],
+        ["delivered", snapshot.deliveredEvents],
+        ["sealed tip", snapshot.sealedTipSeq],
+        ["planned →", snapshot.plannedThroughSeq],
+        ["residual gap", snapshot.residualGap],
+        ["archive pages", snapshot.pages],
+        ["active downloads", snapshot.activeDownloads],
+      ];
+      v2stats.replaceChildren(...fields.map(([label, value]) => {
+        const cell = document.createElement("div");
+        cell.className = "stat";
+        const heading = document.createElement("b");
+        heading.textContent = label;
+        cell.append(heading, String(value ?? 0));
+        return cell;
+      }));
+    }
+
+    function v2AddEvent(event) {
+      const row = document.createElement("div");
+      row.className = "event";
+      const kind = document.createElement("strong");
+      kind.textContent = event.kind ?? "?";
+      const seq = document.createElement("span");
+      seq.className = "collection";
+      seq.textContent = `#${event.seq}`;
+      row.append(kind, " ", seq, " ", event.did ?? "");
+      if (event.kind === "commit") {
+        const collection = event.collection?.split(".").at(-1) ?? "";
+        row.append(` · ${event.operation ?? ""} ${collection}`);
+        const preview = event.record?.text;
+        if (preview) row.append(" — ", String(preview).slice(0, 120));
+      }
+      v2events.prepend(row);
+      while (v2events.children.length > 120) v2events.lastElementChild.remove();
+      v2count += 1;
+      if (v2count === 1 || v2count % 25 === 0) v2status.textContent = `${v2count} events delivered`;
+    }
+
+    function v2Info(info) {
+      const row = document.createElement("div");
+      row.className = "event";
+      row.style.borderLeftColor = "#d29922";
+      row.textContent = `info: ${info.name}${info.message ? ` — ${info.message}` : ""}`;
+      v2events.prepend(row);
+    }
+
+    function v2Error(error) {
+      // Recoverable errors are reported while the stream keeps running; show
+      // them inline without tearing down the "delivered" status line. A fatal
+      // error ends the stream — onComplete fires right after.
+      if (error?.recoverable) {
+        const row = document.createElement("div");
+        row.className = "event";
+        row.style.borderLeftColor = "#d29922";
+        row.textContent = `recoverable: ${errorText(error)}`;
+        v2events.prepend(row);
+      } else {
+        v2status.textContent = `Stream error: ${errorText(error)}`;
+      }
+    }
+
+    function v2Complete(result) {
+      const summary = result.ok ? "completed" : `failed: ${errorText(result.error)}`;
+      v2status.textContent = `${v2count} events delivered · ${summary}`;
+    }
+
+    function v2Stop() {
+      v2sub?.close();
+      v2sub = undefined;
+      clearInterval(v2statsTimer);
+      $("v2-start").disabled = false;
+      $("v2-stop").disabled = true;
+      renderV2Stats();
+      v2status.textContent = `${v2count} events delivered · stopped`;
+    }
+
+    // Sequence cursors are i64 on the wire; parse them exactly. `Number()`
+    // silently rounds integers above 2^53 and turns junk into NaN/Infinity, so
+    // a mistyped or very large cursor would otherwise be sent as a *different*
+    // cursor with no error. Require plain non-negative safe integers instead.
+    function parseSeq(label, value) {
+      if (!/^\d+$/.test(value)) throw new Error(`${label} must be a non-negative integer`);
+      const seq = Number(value);
+      if (!Number.isSafeInteger(seq)) throw new Error(`${label} is too large for this demo`);
+      return seq;
+    }
+
+    $("v2-start").addEventListener("click", () => {
+      const keyField = $("v2-key");
+      v2count = 0;
+      v2events.replaceChildren();
+      v2stats.replaceChildren();
+      v2status.textContent = "Connecting…";
+      try {
+        const collections = $("v2-collections").value.split(",").map(entry => entry.trim()).filter(Boolean);
+        const after = $("v2-after").value.trim();
+        const before = $("v2-before").value.trim();
+        const options = {
+          host: $("v2-host").value.trim() || "jetstream.us-east.bsky.network",
+          collections,
+          insecure: $("v2-insecure").checked,
+          snapshotOnly: $("v2-snapshot").checked,
+          noCompression: $("v2-nocompress").checked,
+        };
+        if (after) options.afterSeq = parseSeq("afterSeq", after);
+        if (before) options.beforeSeq = parseSeq("beforeSeq", before);
+        if (keyField.value) options.replayKey = keyField.value;
+
+        v2sub = connectJetstreamV2(options, v2AddEvent, v2Info, v2Error, v2Complete);
+        $("v2-start").disabled = true;
+        $("v2-stop").disabled = false;
+        renderV2Stats();
+        v2statsTimer = setInterval(renderV2Stats, 500);
+      } catch (error) {
+        v2Error(error);
+      } finally {
+        // The engine owns any key by now; clear the field on every path
+        // (success or a synchronous failure) so it never lingers in the DOM.
+        keyField.value = "";
+      }
+    });
+
+    $("v2-stop").addEventListener("click", v2Stop);
+    $("v2-clear").addEventListener("click", () => {
+      v2events.replaceChildren();
+      v2count = 0;
+      v2status.textContent = v2sub ? "Waiting for events…" : "Ready";
+    });
+
+    window.addEventListener("beforeunload", () => {
+      subscription?.close();
+      v2sub?.close();
+    });
 
     try {
       await init();
       start.disabled = false;
+      $("v2-start").disabled = false;
       updateStreamStatus("Ready");
+      v2status.textContent = "Ready";
 
       await test("Syntax", () => ({
         did: parseDid("did:plc:ewvi7nxzyoun6zhxrhs64oiz"),
@@ -227,6 +424,7 @@
     } catch (error) {
       result("WASM initialization", errorText(error), false);
       updateStreamStatus("Failed to load WASM");
+      v2status.textContent = "Failed to load WASM";
     }
   </script>
 </body>

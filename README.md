@@ -23,6 +23,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `xrpc-server` | [`shrike::xrpc_server`](https://docs.rs/shrike/latest/shrike/xrpc_server/) | Axum-based XRPC server framework |
 | `identity` | [`shrike::identity`](https://docs.rs/shrike/latest/shrike/identity/) | DID resolution and handle verification |
 | `streaming` | [`shrike::streaming`](https://docs.rs/shrike/latest/shrike/streaming/) | firehose and Jetstream WebSocket consumers |
+| `jetstream` | [`shrike::jetstream`](https://docs.rs/shrike/latest/shrike/jetstream/) | Jetstream v2 client merging sealed `.jss` archive replay with the live tail |
 | `sync` | [`shrike::sync`](https://docs.rs/shrike/latest/shrike/sync/) | repository download and verification |
 | `backfill` | [`shrike::backfill`](https://docs.rs/shrike/latest/shrike/backfill/) | concurrent bulk repo downloading |
 | `labeling` | [`shrike::labeling`](https://docs.rs/shrike/latest/shrike/labeling/) | label signing and verification |

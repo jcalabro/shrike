@@ -112,7 +112,58 @@ impl SignatureFindRelatedAccountsRelatedAccount {
     }
 
     pub fn decode_cbor(decoder: &mut crate::cbor::Decoder) -> Result<Self, crate::cbor::CborError> {
-        let val = decoder.decode()?;
+        let mut field_account: Option<crate::api::com::atproto::AdminDefsAccountView> = None;
+        let mut field_similarities: Vec<crate::api::tools::ozone::SignatureDefsSigDetail> =
+            Vec::new();
+        let mut extra_cbor: Vec<(String, Vec<u8>)> = Vec::new();
+
+        let mut entries = decoder.map_entries()?;
+        while let Some(result) = entries.next_with(|key, decoder| {
+            match key {
+                "account" => {
+                    field_account = Some(
+                        crate::api::com::atproto::AdminDefsAccountView::decode_cbor(decoder)?,
+                    );
+                }
+                "similarities" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_similarities.push(
+                                crate::api::tools::ozone::SignatureDefsSigDetail::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let value = decoder.decode()?;
+                    let raw = crate::cbor::encode_value(&value)?;
+                    extra_cbor.push((key.to_string(), raw));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+
+        Ok(SignatureFindRelatedAccountsRelatedAccount {
+            account: field_account.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'account'".into())
+            })?,
+            similarities: field_similarities,
+            extra: std::collections::HashMap::new(),
+            extra_cbor,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_cbor_value(
+        val: crate::cbor::Value<'_>,
+    ) -> Result<Self, crate::cbor::CborError> {
         let entries = match val {
             crate::cbor::Value::Map(entries) => entries,
             _ => return Err(crate::cbor::CborError::InvalidCbor("expected map".into())),
@@ -126,20 +177,16 @@ impl SignatureFindRelatedAccountsRelatedAccount {
         for (key, value) in entries {
             match key {
                 "account" => {
-                    let raw = crate::cbor::encode_value(&value)?;
-                    let mut dec = crate::cbor::Decoder::new(&raw);
                     field_account = Some(
-                        crate::api::com::atproto::AdminDefsAccountView::decode_cbor(&mut dec)?,
+                        crate::api::com::atproto::AdminDefsAccountView::from_cbor_value(value)?,
                     );
                 }
                 "similarities" => {
                     if let crate::cbor::Value::Array(items) = value {
                         for item in items {
-                            let raw = crate::cbor::encode_value(&item)?;
-                            let mut dec = crate::cbor::Decoder::new(&raw);
                             field_similarities.push(
-                                crate::api::tools::ozone::SignatureDefsSigDetail::decode_cbor(
-                                    &mut dec,
+                                crate::api::tools::ozone::SignatureDefsSigDetail::from_cbor_value(
+                                    item,
                                 )?,
                             );
                         }
@@ -161,6 +208,124 @@ impl SignatureFindRelatedAccountsRelatedAccount {
             similarities: field_similarities,
             extra: std::collections::HashMap::new(),
             extra_cbor,
+        })
+    }
+}
+
+/// A validated CBOR view. Borrowed fields cannot outlive the input.
+#[derive(Debug)]
+pub struct SignatureFindRelatedAccountsRelatedAccountCborView<'a> {
+    pub account: crate::api::com::atproto::AdminDefsAccountViewCborView<'a>,
+    pub similarities: Vec<crate::api::tools::ozone::SignatureDefsSigDetail>,
+    pub extra_cbor: Vec<(&'a str, &'a [u8])>,
+    raw_cbor: &'a [u8],
+}
+impl<'a> SignatureFindRelatedAccountsRelatedAccountCborView<'a> {
+    #[inline]
+    pub fn from_cbor(data: &'a [u8]) -> Result<Self, crate::cbor::CborError> {
+        let mut decoder = crate::cbor::Decoder::new(data);
+        let result = Self::decode_cbor(&mut decoder)?;
+        if !decoder.is_empty() {
+            return Err(crate::cbor::CborError::InvalidCbor("trailing data".into()));
+        }
+        Ok(result)
+    }
+    pub fn to_owned(
+        &self,
+    ) -> Result<SignatureFindRelatedAccountsRelatedAccount, crate::cbor::CborError> {
+        Ok(SignatureFindRelatedAccountsRelatedAccount {
+            account: self.account.to_owned()?,
+            similarities: self.similarities.clone(),
+            extra: std::collections::HashMap::new(),
+            extra_cbor: self
+                .extra_cbor
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), value.to_vec()))
+                .collect(),
+        })
+    }
+    /// The original input, unaffected by changes to public view fields.
+    pub fn original_cbor(&self) -> &'a [u8] {
+        self.raw_cbor
+    }
+    #[inline]
+    pub fn decode_cbor(
+        decoder: &mut crate::cbor::Decoder<'a>,
+    ) -> Result<Self, crate::cbor::CborError> {
+        let start = decoder.position();
+        let mut field_account: Option<crate::api::com::atproto::AdminDefsAccountViewCborView<'a>> =
+            None;
+        let mut field_similarities: Vec<crate::api::tools::ozone::SignatureDefsSigDetail> =
+            Vec::new();
+        let mut extra_cbor = Vec::new();
+        let mut entries = decoder.map_entries()?;
+        entries.try_field(b"\x67\x61\x63\x63\x6f\x75\x6e\x74", |decoder| {
+            field_account =
+                Some(crate::api::com::atproto::AdminDefsAccountViewCborView::decode_cbor(decoder)?);
+            Ok(())
+        })?;
+        entries.try_field(
+            b"\x6c\x73\x69\x6d\x69\x6c\x61\x72\x69\x74\x69\x65\x73",
+            |decoder| {
+                let value = decoder.decode()?;
+                if let crate::cbor::Value::Array(items) = value {
+                    for item in items {
+                        field_similarities.push(
+                            crate::api::tools::ozone::SignatureDefsSigDetail::from_cbor_value(
+                                item,
+                            )?,
+                        );
+                    }
+                } else {
+                    return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                }
+                Ok(())
+            },
+        )?;
+        while let Some(result) = entries.next_raw(|key, decoder| {
+            match key {
+                b"account" => {
+                    field_account = Some(
+                        crate::api::com::atproto::AdminDefsAccountViewCborView::decode_cbor(
+                            decoder,
+                        )?,
+                    );
+                }
+                b"similarities" => {
+                    let value = decoder.decode()?;
+                    if let crate::cbor::Value::Array(items) = value {
+                        for item in items {
+                            field_similarities.push(
+                                crate::api::tools::ozone::SignatureDefsSigDetail::from_cbor_value(
+                                    item,
+                                )?,
+                            );
+                        }
+                    } else {
+                        return Err(crate::cbor::CborError::InvalidCbor("expected array".into()));
+                    }
+                }
+                _ => {
+                    let key = core::str::from_utf8(key).map_err(|_| {
+                        crate::cbor::CborError::InvalidCbor("invalid UTF-8 in text string".into())
+                    })?;
+                    let start = decoder.position();
+                    let _ = decoder.decode()?;
+                    extra_cbor.push((key, &decoder.raw_input()[start..decoder.position()]));
+                }
+            }
+            Ok(())
+        }) {
+            result?;
+        }
+        drop(entries);
+        Ok(Self {
+            account: field_account.ok_or_else(|| {
+                crate::cbor::CborError::InvalidCbor("missing required field 'account'".into())
+            })?,
+            similarities: field_similarities,
+            extra_cbor,
+            raw_cbor: &decoder.raw_input()[start..decoder.position()],
         })
     }
 }

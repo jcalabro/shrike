@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use super::small_string::SmallString;
 use crate::syntax::SyntaxError;
 
 /// A validated AT Protocol record key.
@@ -14,7 +15,7 @@ use crate::syntax::SyntaxError;
 /// - `"."` and `".."` are rejected (reserved path components)
 /// - No `/` or whitespace
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RecordKey(String);
+pub struct RecordKey(SmallString);
 
 impl RecordKey {
     /// Returns the inner string slice.
@@ -41,10 +42,8 @@ impl Borrow<str> for RecordKey {
     }
 }
 
-impl TryFrom<&str> for RecordKey {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl RecordKey {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidRecordKey(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -56,13 +55,23 @@ impl TryFrom<&str> for RecordKey {
         if raw == "." || raw == ".." {
             return Err(err("disallowed value"));
         }
-        for b in raw.bytes() {
-            if !is_record_key_char(b) {
-                return Err(err("invalid character"));
-            }
+        if !raw
+            .bytes()
+            .fold(true, |valid, b| valid & is_record_key_char(b))
+        {
+            return Err(err("invalid character"));
         }
 
-        Ok(RecordKey(raw.to_owned()))
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for RecordKey {
+    type Error = SyntaxError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::validate(raw)?;
+        Ok(RecordKey(SmallString::from(raw)))
     }
 }
 

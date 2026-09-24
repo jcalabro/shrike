@@ -3,6 +3,7 @@
 pub mod app;
 pub mod chat;
 pub mod com;
+pub mod network;
 pub mod tools;
 
 /// Raw bytes for use in AT Protocol objects (lexicon `bytes` type).

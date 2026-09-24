@@ -40,10 +40,8 @@ impl Borrow<str> for Handle {
     }
 }
 
-impl TryFrom<&str> for Handle {
-    type Error = SyntaxError;
-
-    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+impl Handle {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
         let err = |msg: &str| SyntaxError::InvalidHandle(format!("{raw:?}: {msg}"));
 
         if raw.is_empty() {
@@ -123,7 +121,15 @@ impl TryFrom<&str> for Handle {
             return Err(err("TLD must start with a letter"));
         }
 
-        // Normalize to lowercase.
+        Ok(())
+    }
+}
+
+impl TryFrom<&str> for Handle {
+    type Error = SyntaxError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::validate(raw)?;
         Ok(Handle(raw.to_ascii_lowercase()))
     }
 }

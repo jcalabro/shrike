@@ -123,6 +123,9 @@ pub mod oauth;
 #[cfg(feature = "api")]
 pub mod api;
 
+#[cfg(feature = "jetstream")]
+pub mod jetstream;
+
 // Re-export common types at root for convenience
 #[cfg(feature = "cbor")]
 pub use crate::cbor::Cid;
