@@ -42,6 +42,8 @@ struct MockState {
     /// If set, the refresh_token grant returns a different `sub` (to test that
     /// a refresh changing the subject is rejected).
     refresh_returns_wrong_sub: bool,
+    /// Most recent token request parameters, for client auth assertions.
+    last_token_params: Option<HashMap<String, String>>,
 }
 
 type SharedState = Arc<Mutex<MockState>>;
@@ -157,6 +159,7 @@ async fn token_endpoint(
     {
         let mut s = state.lock().await;
         s.token_call_count += 1;
+        s.last_token_params = Some(params.clone());
         wrong_sub = s.refresh_returns_wrong_sub;
         if s.require_nonce_retry && s.token_call_count == 1 {
             return (
@@ -382,6 +385,7 @@ fn make_client_with_stores(
             dpop_bound_access_tokens: true,
             client_name: "Test App".into(),
             client_uri: base_url.into(),
+            ..Default::default()
         },
         session_store,
         state_store,
@@ -490,6 +494,43 @@ async fn callback_exchanges_code_for_tokens() {
         .await
         .unwrap();
     assert_eq!(retrieved.token_set.access_token, "test-at");
+}
+
+#[tokio::test]
+async fn loopback_client_id_reaches_token_endpoint() {
+    let (base_url, mock_state) = start_mock_server().await;
+    let redirect_uri = format!("{base_url}/callback");
+    let metadata = ClientMetadata::loopback(&redirect_uri, "atproto").unwrap();
+    let expected_client_id = metadata.client_id.clone();
+    let state_store = Box::new(MemoryStateStore::new());
+    let (state_key, pkce_challenge) = seed_auth_state(state_store.as_ref(), &base_url).await;
+    mock_state
+        .lock()
+        .await
+        .pkce_challenges
+        .insert("urn:test:request:123".into(), pkce_challenge);
+    let client = OAuthClient::new(OAuthClientConfig {
+        metadata,
+        session_store: Box::new(MemorySessionStore::new()),
+        state_store,
+        signing_key: None,
+        skip_issuer_verification: true,
+        address_policy: shrike::identity::AddressPolicy::AllowLocal,
+    });
+    assert!(client.validate_client_auth().is_ok());
+    client
+        .callback(CallbackParams {
+            code: "test-auth-code".into(),
+            state: state_key,
+            iss: Some(base_url),
+        })
+        .await
+        .unwrap();
+    let state = mock_state.lock().await;
+    let params = state.last_token_params.as_ref().unwrap();
+    assert_eq!(params.get("client_id"), Some(&expected_client_id));
+    assert_eq!(params.get("redirect_uri"), Some(&redirect_uri));
+    assert!(!params.contains_key("client_assertion"));
 }
 
 /// An authenticated request sends DPoP + Authorization headers.

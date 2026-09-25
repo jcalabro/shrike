@@ -22,10 +22,7 @@
 //!
 //! # async fn example(params: shrike::oauth::CallbackParams) -> Result<(), shrike::oauth::OAuthError> {
 //! let client = OAuthClient::new(OAuthClientConfig {
-//!     metadata: ClientMetadata {
-//!         client_id: "https://myapp.example/client-metadata.json".into(),
-//!         ..Default::default()
-//!     },
+//!     metadata: ClientMetadata::loopback("http://127.0.0.1:8080/callback", "atproto")?,
 //!     session_store: Box::new(MemorySessionStore::new()),
 //!     state_store: Box::new(MemoryStateStore::new()),
 //!     signing_key: None,
@@ -36,7 +33,7 @@
 //! // Start authorization
 //! let result = client.authorize(AuthorizeOptions {
 //!     input: "alice.bsky.social".into(),
-//!     redirect_uri: "http://localhost:8080/callback".into(),
+//!     redirect_uri: "http://127.0.0.1:8080/callback".into(),
 //!     scope: None,
 //!     state: None,
 //! }).await?;
@@ -64,6 +61,7 @@ pub use client::{
 };
 pub use client_auth::{ClientAuth, ConfidentialClientAuth, PublicClientAuth};
 pub use dpop::NonceStore;
+pub use jwk::{EcPublicJwk, JwkSet};
 pub use metadata::{AuthServerMetadata, ClientMetadata, ProtectedResourceMetadata};
 pub use session::{
     AuthState, MemorySessionStore, MemoryStateStore, Session, SessionStore, StateStore,

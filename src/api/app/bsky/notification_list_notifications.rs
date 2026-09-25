@@ -7,11 +7,13 @@ pub struct NotificationListNotificationsParams {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+    /// Deprecated: this parameter is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<bool>,
     /// Notification reasons to include in response.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
+    /// Deprecated: this parameter is unsupported and will cause an error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seen_at: Option<String>,
 }
@@ -23,6 +25,7 @@ pub struct NotificationListNotificationsOutput {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notifications: Vec<NotificationListNotificationsNotification>,
+    /// Deprecated: this field is no longer populated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

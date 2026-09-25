@@ -92,21 +92,13 @@ async fn oauth_login(args: OauthLoginArgs) -> Result<()> {
         .context("failed to get local address")?;
     let redirect_uri = format!("http://127.0.0.1:{}", local_addr.port());
 
-    // For CLI/loopback OAuth clients, AT Protocol accepts "http://localhost"
-    // as a special client_id that doesn't require a fetchable metadata document.
-    let client_id = "http://localhost".to_string();
+    let metadata = ClientMetadata::loopback(&redirect_uri, "atproto")?;
 
     let state_store = MemoryStateStore::new();
     let session_store = MemorySessionStore::new();
 
     let oauth = OAuthClient::new(OAuthClientConfig {
-        metadata: ClientMetadata {
-            client_id: client_id.clone(),
-            redirect_uris: vec![redirect_uri.clone()],
-            scope: "atproto".into(),
-            token_endpoint_auth_method: "none".into(),
-            ..Default::default()
-        },
+        metadata,
         session_store: Box::new(session_store),
         state_store: Box::new(state_store),
         signing_key: None,

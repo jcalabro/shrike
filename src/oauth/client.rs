@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use crate::crypto::P256SigningKey;
+use crate::crypto::{P256SigningKey, SigningKey};
 use crate::identity::{AddressPolicy, Directory};
 use crate::syntax::Did;
 
 use crate::oauth::OAuthError;
 use crate::oauth::client_auth::{ClientAuth, ConfidentialClientAuth, PublicClientAuth};
 use crate::oauth::dpop::{self, NonceStore};
+use crate::oauth::jwk::{EcPublicJwk, JwkSet};
 use crate::oauth::metadata::{self, ClientMetadata};
 use crate::oauth::pkce::{self, base64url_encode};
 use crate::oauth::session::{AuthState, Session, SessionStore, StateStore};
@@ -47,7 +48,7 @@ pub struct OAuthClientConfig {
 ///
 /// # async fn example() -> Result<(), shrike::oauth::OAuthError> {
 /// let client = OAuthClient::new(OAuthClientConfig {
-///     metadata: ClientMetadata { client_id: "https://myapp.example/client-metadata.json".into(), ..Default::default() },
+///     metadata: ClientMetadata::loopback("http://127.0.0.1:8080/callback", "atproto")?,
 ///     session_store: Box::new(MemorySessionStore::new()),
 ///     state_store: Box::new(MemoryStateStore::new()),
 ///     signing_key: None,
@@ -57,7 +58,7 @@ pub struct OAuthClientConfig {
 ///
 /// let result = client.authorize(AuthorizeOptions {
 ///     input: "alice.bsky.social".into(),
-///     redirect_uri: "http://localhost:8080/callback".into(),
+///     redirect_uri: "http://127.0.0.1:8080/callback".into(),
 ///     scope: None,
 ///     state: None,
 /// }).await?;
@@ -70,6 +71,7 @@ pub struct OAuthClient {
     sessions: Box<dyn SessionStore>,
     states: Box<dyn StateStore>,
     auth: Box<dyn ClientAuth>,
+    signing_public_key: Option<([u8; 33], String)>,
     http: reqwest::Client,
     nonces: Arc<NonceStore>,
     skip_issuer_verification: bool,
@@ -115,6 +117,10 @@ impl OAuthClient {
     /// Create a new `OAuthClient` from the given configuration.
     pub fn new(config: OAuthClientConfig) -> Self {
         let client_id = config.metadata.client_id.clone();
+        let signing_public_key = config
+            .signing_key
+            .as_ref()
+            .map(|(key, key_id)| (key.public_key().to_bytes(), key_id.clone()));
 
         let auth: Box<dyn ClientAuth> = match config.signing_key {
             Some((key, key_id)) => Box::new(ConfidentialClientAuth {
@@ -130,6 +136,7 @@ impl OAuthClient {
             sessions: config.session_store,
             states: config.state_store,
             auth,
+            signing_public_key,
             // Hardened: no redirects (SSRF on handle/DID resolution) + timeouts
             // + connect-time address filtering per the configured policy.
             // OAuth token/PAR/revocation endpoints are not expected to redirect,
@@ -142,12 +149,75 @@ impl OAuthClient {
         }
     }
 
+    /// Return the public authentication key to publish at `metadata.jwks_uri`.
+    /// Public clients return an empty key set.
+    pub fn public_jwks(&self) -> Result<JwkSet, OAuthError> {
+        let keys = match &self.signing_public_key {
+            Some((key, key_id)) => {
+                if key_id.is_empty() {
+                    return Err(OAuthError::InvalidMetadata(
+                        "confidential client key requires a kid".into(),
+                    ));
+                }
+                vec![EcPublicJwk::from_compressed(key, key_id)?]
+            }
+            None => Vec::new(),
+        };
+        Ok(JwkSet { keys })
+    }
+
+    /// Check that client authentication metadata agrees with the configured key.
+    /// Call this before publishing metadata; `authorize` also calls it.
+    pub fn validate_client_auth(&self) -> Result<(), OAuthError> {
+        self.metadata.validate_client_auth()?;
+        match self.metadata.token_endpoint_auth_method.as_str() {
+            "none" if self.signing_public_key.is_some() => {
+                return Err(OAuthError::InvalidMetadata(
+                    "public client must not configure a signing key or kid".into(),
+                ));
+            }
+            "none" => {}
+            "private_key_jwt" => {
+                if self
+                    .signing_public_key
+                    .as_ref()
+                    .is_none_or(|(_, kid)| kid.is_empty())
+                {
+                    return Err(OAuthError::InvalidMetadata(
+                        "private_key_jwt requires a signing key and kid".into(),
+                    ));
+                }
+                if let Some(set) = &self.metadata.jwks {
+                    let public = self.public_jwks()?;
+                    let matching: Vec<_> = set
+                        .keys
+                        .iter()
+                        .filter(|key| key.key_id == public.keys[0].key_id)
+                        .collect();
+                    if matching.len() != 1 {
+                        return Err(OAuthError::InvalidMetadata(
+                            "signing key must appear exactly once in jwks".into(),
+                        ));
+                    }
+                    if *matching[0] != public.keys[0] {
+                        return Err(OAuthError::InvalidMetadata(
+                            "signing key does not match public JWK".into(),
+                        ));
+                    }
+                }
+            }
+            _ => {} // Rejected by metadata validation above.
+        }
+        Ok(())
+    }
+
     /// Start the authorization flow.
     ///
     /// Resolves the input (handle or DID) to find the user's PDS, discovers
     /// the authorization server, submits a Pushed Authorization Request (PAR),
     /// and returns the URL the user should be redirected to.
     pub async fn authorize(&self, opts: AuthorizeOptions) -> Result<AuthorizeResult, OAuthError> {
+        self.validate_client_auth()?;
         // 0. The redirect_uri must be one registered in the client metadata.
         // Fail fast (and defend against an open-redirect via an unregistered
         // callback) rather than letting the authorization server reject it
@@ -628,6 +698,8 @@ fn oauth_error_from_json(body: &serde_json::Value) -> OAuthError {
 )]
 mod tests {
     use super::*;
+    use crate::crypto::{P256VerifyingKey, Signature, VerifyingKey};
+    use crate::oauth::pkce::base64url_decode;
     use crate::oauth::session::{MemorySessionStore, MemoryStateStore};
 
     fn make_client_metadata() -> ClientMetadata {
@@ -642,6 +714,7 @@ mod tests {
             dpop_bound_access_tokens: true,
             client_name: "Test App".into(),
             client_uri: "https://example.com".into(),
+            ..Default::default()
         }
     }
 
@@ -681,5 +754,148 @@ mod tests {
             client.metadata.client_id,
             "https://example.com/client-metadata.json"
         );
+    }
+
+    fn client_with_auth(
+        metadata: ClientMetadata,
+        signing_key: Option<(P256SigningKey, String)>,
+    ) -> OAuthClient {
+        OAuthClient::new(OAuthClientConfig {
+            metadata,
+            signing_key,
+            session_store: Box::new(MemorySessionStore::new()),
+            state_store: Box::new(MemoryStateStore::new()),
+            skip_issuer_verification: false,
+            address_policy: Default::default(),
+        })
+    }
+
+    #[test]
+    fn confidential_client_publishes_matching_key() {
+        let key = P256SigningKey::generate();
+        let key_bytes = key.to_bytes();
+        let published =
+            EcPublicJwk::from_compressed(&key.public_key().to_bytes(), "key-1").unwrap();
+        let metadata = ClientMetadata {
+            token_endpoint_auth_method: "private_key_jwt".into(),
+            token_endpoint_auth_signing_alg: "ES256".into(),
+            jwks_uri: Some("https://example.com/jwks.json".into()),
+            ..make_client_metadata()
+        };
+        let client = client_with_auth(metadata.clone(), Some((key, "key-1".into())));
+        assert!(client.validate_client_auth().is_ok());
+        let set = client.public_jwks().unwrap();
+        assert_eq!(set.keys.as_slice(), std::slice::from_ref(&published));
+        let json = serde_json::to_value(&set).unwrap();
+        assert_eq!(json["keys"][0]["kid"], "key-1");
+        assert!(json["keys"][0].get("d").is_none());
+        let mut inline = metadata;
+        inline.jwks_uri = None;
+        inline.jwks = Some(set);
+        assert!(
+            client_with_auth(
+                inline.clone(),
+                Some((
+                    P256SigningKey::from_bytes(&key_bytes).unwrap(),
+                    "key-1".into()
+                ))
+            )
+            .validate_client_auth()
+            .is_ok()
+        );
+        assert!(
+            client_with_auth(
+                inline.clone(),
+                Some((P256SigningKey::generate(), "key-1".into()))
+            )
+            .validate_client_auth()
+            .is_err()
+        );
+        let mismatched = EcPublicJwk {
+            key_id: "key-2".into(),
+            ..published
+        };
+        inline.jwks = Some(JwkSet {
+            keys: vec![mismatched],
+        });
+        assert!(
+            client_with_auth(inline, Some((P256SigningKey::generate(), "key-1".into())))
+                .validate_client_auth()
+                .is_err()
+        );
+
+        let mut params = Vec::new();
+        client
+            .auth
+            .apply(&mut params, "https://auth.example.com")
+            .unwrap();
+        let assertion = params
+            .iter()
+            .find(|(name, _)| name == "client_assertion")
+            .unwrap()
+            .1
+            .as_str();
+        let parts: Vec<_> = assertion.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let x = base64url_decode(json["keys"][0]["x"].as_str().unwrap()).unwrap();
+        let y = base64url_decode(json["keys"][0]["y"].as_str().unwrap()).unwrap();
+        let mut compressed = [0u8; 33];
+        compressed[0] = 2 + (y[31] & 1);
+        compressed[1..].copy_from_slice(&x);
+        let verifying_key = P256VerifyingKey::from_bytes(&compressed).unwrap();
+        let sig_bytes = base64url_decode(parts[2]).unwrap();
+        let signature = Signature::from_bytes(sig_bytes.try_into().unwrap());
+        assert!(
+            verifying_key
+                .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_auth_rejected_before_network() {
+        let metadata = ClientMetadata {
+            token_endpoint_auth_method: "private_key_jwt".into(),
+            token_endpoint_auth_signing_alg: "ES256".into(),
+            jwks_uri: Some("https://example.com/jwks.json".into()),
+            ..make_client_metadata()
+        };
+        let client = client_with_auth(metadata, None);
+        let result = client
+            .authorize(AuthorizeOptions {
+                input: "did:plc:test123456789abcdefghij".into(),
+                redirect_uri: "http://127.0.0.1:8080/callback".into(),
+                scope: None,
+                state: None,
+            })
+            .await;
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("requires a signing key and kid")
+        );
+        let public = client_with_auth(
+            make_client_metadata(),
+            Some((P256SigningKey::generate(), "key-1".into())),
+        );
+        assert!(
+            public
+                .validate_client_auth()
+                .unwrap_err()
+                .to_string()
+                .contains("public client")
+        );
+        let missing_kid = client_with_auth(
+            ClientMetadata {
+                token_endpoint_auth_method: "private_key_jwt".into(),
+                token_endpoint_auth_signing_alg: "ES256".into(),
+                jwks_uri: Some("https://example.com/jwks.json".into()),
+                ..make_client_metadata()
+            },
+            Some((P256SigningKey::generate(), String::new())),
+        );
+        assert!(missing_kid.public_jwks().is_err());
+        assert!(missing_kid.validate_client_auth().is_err());
     }
 }

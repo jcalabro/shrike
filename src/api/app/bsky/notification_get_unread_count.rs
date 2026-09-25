@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationGetUnreadCountParams {
+    /// Deprecated: this parameter is ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

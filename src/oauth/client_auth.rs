@@ -38,6 +38,11 @@ pub struct ConfidentialClientAuth {
 
 impl ClientAuth for ConfidentialClientAuth {
     fn apply(&self, params: &mut Vec<(String, String)>, issuer: &str) -> Result<(), OAuthError> {
+        if self.key_id.is_empty() {
+            return Err(OAuthError::InvalidMetadata(
+                "confidential client authentication requires a kid".into(),
+            ));
+        }
         params.push(("client_id".into(), self.client_id.clone()));
         params.push((
             "client_assertion_type".into(),
@@ -220,5 +225,20 @@ mod tests {
         // jti should be a non-empty string
         let jti = payload["jti"].as_str().unwrap();
         assert!(!jti.is_empty());
+    }
+
+    #[test]
+    fn confidential_auth_rejects_empty_kid_without_mutating_params() {
+        let auth = ConfidentialClientAuth {
+            client_id: "https://example.com/client".into(),
+            key: P256SigningKey::generate(),
+            key_id: String::new(),
+        };
+        let mut params = Vec::new();
+        assert!(
+            auth.apply(&mut params, "https://issuer.example.com")
+                .is_err()
+        );
+        assert!(params.is_empty());
     }
 }

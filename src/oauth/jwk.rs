@@ -2,7 +2,66 @@ use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::{AffinePoint, EncodedPoint};
 
 use crate::oauth::OAuthError;
-use crate::oauth::pkce::base64url_encode;
+use crate::oauth::pkce::{base64url_decode, base64url_encode};
+
+/// A public P-256 key used in a confidential client's JWKS.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EcPublicJwk {
+    pub kty: String,
+    pub crv: String,
+    pub x: String,
+    pub y: String,
+    #[serde(rename = "kid", skip_serializing_if = "String::is_empty", default)]
+    pub key_id: String,
+}
+
+/// Public keys advertised by a confidential OAuth client.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct JwkSet {
+    pub keys: Vec<EcPublicJwk>,
+}
+
+impl EcPublicJwk {
+    pub(crate) fn from_compressed(
+        compressed_bytes: &[u8; 33],
+        key_id: &str,
+    ) -> Result<Self, OAuthError> {
+        let value = p256_public_jwk(compressed_bytes)?;
+        let mut key: Self = serde_json::from_value(value)?;
+        key.key_id = key_id.to_string();
+        Ok(key)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), OAuthError> {
+        let invalid =
+            |reason: &str| OAuthError::InvalidMetadata(format!("public JWK in jwks {reason}"));
+        if self.key_id.is_empty() {
+            return Err(invalid("requires kid"));
+        }
+        if self.kty != "EC" || self.crv != "P-256" {
+            return Err(invalid("must be an EC P-256 key"));
+        }
+        let x = base64url_decode(&self.x).map_err(|_| invalid("has invalid x coordinate"))?;
+        let y = base64url_decode(&self.y).map_err(|_| invalid("has invalid y coordinate"))?;
+        if x.len() != 32 {
+            return Err(invalid("has invalid x coordinate"));
+        }
+        if y.len() != 32 {
+            return Err(invalid("has invalid y coordinate"));
+        }
+        let mut point = Vec::with_capacity(65);
+        point.push(4);
+        point.extend_from_slice(&x);
+        point.extend_from_slice(&y);
+        let encoded =
+            EncodedPoint::from_bytes(&point).map_err(|_| invalid("is not a P-256 point"))?;
+        let valid: Option<AffinePoint> = AffinePoint::from_encoded_point(&encoded).into();
+        if valid.is_none() {
+            return Err(invalid("is not a P-256 point"));
+        }
+        Ok(())
+    }
+}
 
 /// Converts a SEC1-compressed P-256 public key (33 bytes) to a JWK JSON object.
 ///
@@ -80,5 +139,30 @@ mod tests {
         result.copy_from_slice(compressed.as_bytes());
 
         assert_eq!(result, pub_bytes);
+    }
+
+    #[test]
+    fn client_jwk_rejects_malformed_and_off_curve_points() {
+        let key = P256SigningKey::generate();
+        let other = P256SigningKey::generate();
+        let jwk = EcPublicJwk::from_compressed(&key.public_key().to_bytes(), "key-1").unwrap();
+        assert!(jwk.validate().is_ok());
+        let no_kid = EcPublicJwk {
+            key_id: String::new(),
+            ..jwk.clone()
+        };
+        assert!(no_kid.validate().is_err());
+        let malformed = EcPublicJwk {
+            x: "not-base64".into(),
+            ..jwk.clone()
+        };
+        assert!(malformed.validate().is_err());
+        let other_jwk =
+            EcPublicJwk::from_compressed(&other.public_key().to_bytes(), "key-2").unwrap();
+        let off_curve = EcPublicJwk {
+            y: other_jwk.y,
+            ..jwk
+        };
+        assert!(off_curve.validate().is_err());
     }
 }
