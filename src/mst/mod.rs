@@ -5,13 +5,19 @@
 //! AT Protocol uses MSTs to store repository records with deterministic
 //! ordering and content addressing.
 //!
-//! The Tree type provides insert, get, remove, and list operations. All
-//! mutations produce a new root CID. The diff function compares two trees
-//! and returns added, updated, and removed entries.
+//! DetachedTree is the sans-IO core: it provides insert, get, remove, and
+//! walk operations, reads nodes it has not decoded yet from a BlockSource
+//! the caller supplies, and hands back new and retired node blocks from
+//! `flush` instead of writing them. Its `missing_blocks` method lets callers
+//! with asynchronous storage prefetch every node an operation needs.
 //!
-//! BlockStore manages the content-addressed blocks that make up the tree.
-//! Use MemBlockStore for in-memory trees or implement BlockStore for
-//! persistent storage.
+//! Tree wraps a DetachedTree around a synchronous BlockStore, loading nodes
+//! from it on demand and writing new nodes back when the root CID is
+//! computed. Use MemBlockStore for in-memory trees or implement BlockStore
+//! for persistent storage.
+//!
+//! The diff function compares two trees and returns added, updated, and
+//! removed entries.
 
 pub mod block_store;
 pub mod diff;
@@ -19,10 +25,10 @@ pub mod height;
 pub mod node;
 pub mod tree;
 
-pub use block_store::{BlockStore, MemBlockStore};
+pub use block_store::{BlockSource, BlockStore, MemBlockStore, NoBlocks};
 pub use diff::{Diff, diff};
 pub use height::height_for_key;
-pub use tree::Tree;
+pub use tree::{DetachedTree, Tree, TreeWrite};
 
 use thiserror::Error;
 

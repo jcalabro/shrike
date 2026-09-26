@@ -1,4 +1,4 @@
-use crate::cbor::{Cid, Encoder, Value, decode, encode_text_map};
+use crate::cbor::{Cid, Codec, Encoder, Value, decode, encode_text_map};
 use crate::crypto::{Signature, SigningKey, VerifyingKey};
 use crate::syntax::{Did, Tid};
 
@@ -25,11 +25,51 @@ pub struct Commit {
     pub sig: Option<Signature>,
 }
 
+/// A signed commit together with its encoded block and CID.
+#[derive(Debug, Clone)]
+pub struct SignedCommit {
+    /// The decoded commit.
+    pub commit: Commit,
+    /// CID of `bytes`.
+    pub cid: Cid,
+    /// The commit's DRISL encoding, as stored in the repository.
+    pub bytes: Vec<u8>,
+}
+
 /// CBOR key order (DAG-CBOR canonical: shorter encoded key first, then lex):
 ///
 ///   Full commit: "did"(3), "rev"(3), "sig"(3), "data"(4), "prev"(4), "version"(7)
 ///   Unsigned:    "did"(3), "rev"(3), "data"(4), "prev"(4), "version"(7)
 impl Commit {
+    /// Build, sign, and encode a v3 commit of the MST rooted at `data`.
+    ///
+    /// The caller supplies `rev`, which must sort after the repository's
+    /// previous revision.
+    pub fn create_signed(
+        did: Did,
+        rev: Tid,
+        data: Cid,
+        key: &dyn SigningKey,
+    ) -> Result<SignedCommit, RepoError> {
+        let mut commit = Commit {
+            did,
+            version: 3,
+            rev,
+            // v3 commits always carry prev: null. The field exists for v2
+            // backwards compatibility but is "virtually always null" per the
+            // repository spec; both atmos and the TS reference always emit null.
+            // A non-null prev would change the commit bytes and produce a
+            // commit CID that diverges from every other implementation.
+            prev: None,
+            data,
+            sig: None,
+        };
+        commit.sign(key)?;
+        let bytes = commit.to_cbor()?;
+        let cid = Cid::compute(Codec::Drisl, &bytes);
+        Ok(SignedCommit { commit, cid, bytes })
+    }
+
     /// Encode all fields except sig to DRISL bytes (for signing/verification).
     ///
     /// Uses a reusable buffer when called from `sign`/`verify` to avoid

@@ -1,7 +1,10 @@
+use std::borrow::Cow;
+use std::collections::HashSet;
+
 use crate::cbor::{Cid, Codec};
 
 use crate::mst::MstError;
-use crate::mst::block_store::BlockStore;
+use crate::mst::block_store::{BlockSource, BlockStore, NoBlocks};
 use crate::mst::height::height_for_key;
 use crate::mst::node::{EntryData, NodeData, decode_node_data, encode_node_data};
 
@@ -13,6 +16,10 @@ struct Entry {
 }
 
 /// An in-memory MST node.
+///
+/// A node is either loaded (its entries and child links are materialized)
+/// or an unloaded stub that knows only its CID and the height its parent
+/// implies. Stubs are decoded from a [`BlockSource`] on demand.
 struct Node {
     left: Option<Box<Node>>,
     entries: Vec<Entry>,
@@ -20,614 +27,954 @@ struct Node {
     cid: Option<Cid>,
     height: u8,
     dirty: bool,
+    loaded: bool,
 }
 
-/// AT Protocol Merkle Search Tree.
-///
-/// All operations (including reads like `get` and `walk`) take `&mut self`
-/// because they may trigger lazy loading of child nodes from the block store.
-pub struct Tree {
-    root: Option<Box<Node>>,
-    store: Box<dyn BlockStore>,
-}
-
-impl Tree {
-    /// Create a new empty MST backed by the given store.
-    pub fn new(store: Box<dyn BlockStore>) -> Self {
-        Tree { root: None, store }
+impl Node {
+    /// A new node that has not been persisted.
+    fn fresh(height: u8, left: Option<Box<Node>>, entries: Vec<Entry>) -> Node {
+        Node {
+            left,
+            entries,
+            cid: None,
+            height,
+            dirty: true,
+            loaded: true,
+        }
     }
 
-    /// Load an MST from a root CID using the given store.
-    /// Child nodes are loaded lazily on first access.
-    pub fn load(store: Box<dyn BlockStore>, root: Cid) -> Self {
-        Tree {
-            root: Some(Box::new(Node {
-                left: None,
-                entries: Vec::new(),
-                cid: Some(root),
-                height: 0,
-                dirty: false,
-            })),
-            store,
+    /// A persisted node that has not been decoded yet.
+    fn stub(cid: Cid, height: u8) -> Node {
+        Node {
+            left: None,
+            entries: Vec::new(),
+            cid: Some(cid),
+            height,
+            dirty: false,
+            loaded: false,
         }
+    }
+}
+
+/// AT Protocol Merkle Search Tree that owns no block storage.
+///
+/// `DetachedTree` is the sans-IO core of the MST. It never reads or writes
+/// storage on its own:
+///
+/// - Methods that may need a node the tree has not decoded yet take a
+///   [`BlockSource`] and read from it synchronously. Callers backed by async
+///   storage call [`missing_blocks`](Self::missing_blocks) in a loop,
+///   fetching each batch it reports (one round trip per tree level) until it
+///   reports nothing; operations on those keys then need no further blocks.
+/// - [`flush`](Self::flush) returns the new node blocks to persist and the
+///   CIDs of node blocks the tree no longer references, instead of writing
+///   them anywhere.
+///
+/// Mutations are failure-safe: `insert` and `remove` load every node they
+/// will touch before restructuring anything, so a missing or malformed block
+/// fails the call and leaves the tree as it was. If a mutation or flush
+/// fails after it began changing nodes, which only a bug can cause, the tree
+/// refuses all further use rather than report a wrong root.
+///
+/// The type is `Send` and `Sync`, so it can be held across `.await` points
+/// and inside storage transaction closures.
+pub struct DetachedTree {
+    root: Option<Box<Node>>,
+    /// CIDs of nodes known to be persisted: loaded from a source, or
+    /// returned by an earlier flush. `flush` reports the ones it can no
+    /// longer reach as retired.
+    persisted: HashSet<Cid>,
+    /// Set when a mutation or flush failed partway through changing nodes.
+    poisoned: bool,
+}
+
+// DetachedTree must stay usable across `.await` points and in storage
+// transaction closures.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<DetachedTree>();
+};
+
+/// The output of [`DetachedTree::flush`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeWrite {
+    /// The tree's root CID.
+    pub root: Cid,
+    /// Node blocks to persist: the nodes changed since the previous flush,
+    /// minus any block the tree already knows is persisted.
+    pub new_blocks: Vec<(Cid, Vec<u8>)>,
+    /// Persisted node blocks this tree no longer references, sorted.
+    pub retired: Vec<Cid>,
+}
+
+impl Default for DetachedTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DetachedTree {
+    /// Create an empty tree.
+    pub fn new() -> Self {
+        DetachedTree {
+            root: None,
+            persisted: HashSet::new(),
+            poisoned: false,
+        }
+    }
+
+    /// Open the tree rooted at `root`. Nothing is read until a method needs
+    /// a node.
+    pub fn load(root: Cid) -> Self {
+        DetachedTree {
+            root: Some(Box::new(Node::stub(root, 0))),
+            persisted: HashSet::new(),
+            poisoned: false,
+        }
+    }
+
+    /// Report the blocks `src` lacks that a get, insert, or remove of any of
+    /// `keys` needs.
+    ///
+    /// Loads every node on those keys' paths that `src` can supply and
+    /// returns the CIDs of the first unavailable node on each path, sorted
+    /// and deduplicated. What lies below an unavailable node is unknown
+    /// until it is supplied, so callers loop: fetch the reported blocks,
+    /// make them visible through `src`, and call again until the result is
+    /// empty. Each round descends at least one tree level.
+    pub fn missing_blocks<'k>(
+        &mut self,
+        src: &dyn BlockSource,
+        keys: impl IntoIterator<Item = &'k str>,
+    ) -> Result<Vec<Cid>, MstError> {
+        self.check_usable()?;
+        let mut missing = Vec::new();
+        if let Some(root) = self.root.as_deref_mut() {
+            let mut ld = Loader {
+                src,
+                persisted: &mut self.persisted,
+            };
+            for key in keys {
+                visit_key_path(&mut ld, root, key, &mut missing)?;
+            }
+        }
+        missing.sort_unstable();
+        missing.dedup();
+        Ok(missing)
     }
 
     /// Look up a key and return its value CID, or `None` if not found.
-    pub fn get(&mut self, key: &str) -> Result<Option<Cid>, MstError> {
-        match &mut self.root {
+    pub fn get(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
+        self.check_usable()?;
+        match self.root.as_deref_mut() {
             None => Ok(None),
-            Some(n) => Self::get_node(&*self.store, n, key),
-        }
-    }
-
-    fn get_node(store: &dyn BlockStore, n: &mut Node, key: &str) -> Result<Option<Cid>, MstError> {
-        ensure_loaded(store, n)?;
-
-        for i in 0..n.entries.len() {
-            if key < n.entries[i].key.as_str() {
-                let child = if i == 0 {
-                    &mut n.left
-                } else {
-                    &mut n.entries[i - 1].right
+            Some(root) => {
+                let mut ld = Loader {
+                    src,
+                    persisted: &mut self.persisted,
                 };
-                if let Some(child) = child {
-                    return Self::get_node(store, child, key);
-                }
-                return Ok(None);
-            }
-            if key == n.entries[i].key {
-                return Ok(Some(n.entries[i].val));
+                get_node(&mut ld, root, key)
             }
         }
-
-        // Check rightmost subtree.
-        if !n.entries.is_empty() {
-            let last = n.entries.len() - 1;
-            if let Some(child) = &mut n.entries[last].right {
-                return Self::get_node(store, child, key);
-            }
-        } else if let Some(left) = &mut n.left {
-            return Self::get_node(store, left, key);
-        }
-        Ok(None)
     }
 
-    /// Insert or update a key/value pair.
-    pub fn insert(&mut self, key: String, cid: Cid) -> Result<(), MstError> {
-        let h = height_for_key(&key);
-        let old_root = self.root.take();
-        let new_root = Self::insert_node(&*self.store, old_root, key, cid, h)?;
-        self.root = Some(new_root);
+    /// Insert or update a key/value pair, returning the value it replaced.
+    ///
+    /// Fails with [`MstError::BlockNotFound`] if `src` lacks a node on the
+    /// key's path, leaving the tree unchanged.
+    pub fn insert(
+        &mut self,
+        src: &dyn BlockSource,
+        key: String,
+        val: Cid,
+    ) -> Result<Option<Cid>, MstError> {
+        self.check_usable()?;
+        let prev = self.load_key_path(src, &key)?;
+        if prev == Some(val) {
+            return Ok(prev);
+        }
+        let height = height_for_key(&key);
+        let root = self.root.take();
+        match insert_node(root, key, val, height) {
+            Ok(root) => {
+                self.root = Some(root);
+                Ok(prev)
+            }
+            Err(e) => Err(self.poison(e)),
+        }
+    }
+
+    /// Remove a key from the tree, returning the removed value CID.
+    ///
+    /// Fails with [`MstError::BlockNotFound`] if `src` lacks a node the
+    /// removal touches, leaving the tree unchanged.
+    pub fn remove(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
+        self.check_usable()?;
+        if self.load_key_path(src, key)?.is_none() {
+            return Ok(None);
+        }
+        let Some(root) = self.root.take() else {
+            return Ok(None);
+        };
+        match remove_from_root(root, key) {
+            Ok((root, removed)) => {
+                self.root = root;
+                Ok(removed)
+            }
+            Err(e) => Err(self.poison(e)),
+        }
+    }
+
+    /// Serialize the nodes changed since the previous flush.
+    ///
+    /// Returns the root CID, the node blocks to persist, and the persisted
+    /// node blocks the tree no longer references. The caller is responsible
+    /// for storing `new_blocks`: the next flush reports only changes made
+    /// after this one. Whether retired blocks can be deleted depends on
+    /// whether anything else (an older commit, another tree) still needs
+    /// them.
+    pub fn flush(&mut self) -> Result<TreeWrite, MstError> {
+        self.check_usable()?;
+        let mut new_blocks = Vec::new();
+        let written = match self.root.as_deref_mut() {
+            None => empty_node_block().map(|(cid, data)| {
+                new_blocks.push((cid, data));
+                cid
+            }),
+            Some(root) => write_node(root, &mut new_blocks),
+        };
+        let root = written.map_err(|e| self.poison(e))?;
+
+        let mut reachable = HashSet::new();
+        match self.root.as_deref() {
+            None => {
+                reachable.insert(root);
+            }
+            Some(n) => collect_cids(n, &mut reachable),
+        }
+        let mut retired: Vec<Cid> = self.persisted.difference(&reachable).copied().collect();
+        retired.sort_unstable();
+        new_blocks.retain(|(cid, _)| !self.persisted.contains(cid));
+        self.persisted = reachable;
+
+        Ok(TreeWrite {
+            root,
+            new_blocks,
+            retired,
+        })
+    }
+
+    /// Collect all key/value pairs in sorted order into a Vec.
+    pub fn entries(&mut self, src: &dyn BlockSource) -> Result<Vec<(String, Cid)>, MstError> {
+        let mut result = Vec::new();
+        self.walk(src, |key, val| {
+            result.push((key.to_owned(), val));
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
+    /// Walk the tree in sorted order, calling `f` for each entry.
+    pub fn walk<F>(&mut self, src: &dyn BlockSource, mut f: F) -> Result<(), MstError>
+    where
+        F: FnMut(&str, Cid) -> Result<(), MstError>,
+    {
+        self.check_usable()?;
+        if let Some(root) = self.root.as_deref_mut() {
+            let mut ld = Loader {
+                src,
+                persisted: &mut self.persisted,
+            };
+            walk_node(&mut ld, root, &mut f)?;
+        }
         Ok(())
     }
 
-    fn insert_node(
-        store: &dyn BlockStore,
-        n: Option<Box<Node>>,
-        key: String,
-        val: Cid,
-        height: u8,
-    ) -> Result<Box<Node>, MstError> {
-        let Some(mut n) = n else {
-            return Ok(Box::new(Node {
-                left: None,
-                entries: vec![Entry {
-                    key,
-                    val,
-                    right: None,
-                }],
-                cid: None,
-                height,
-                dirty: true,
-            }));
+    /// Load every node an insert or remove of `key` touches, and return the
+    /// key's current value.
+    fn load_key_path(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
+        let Some(root) = self.root.as_deref_mut() else {
+            return Ok(None);
         };
-
-        ensure_loaded(store, &mut n)?;
-
-        if height > n.height {
-            // Step up one level, wrapping the current node as a child.
-            let child_height = n.height;
-            let parent = Box::new(Node {
-                left: Some(n),
-                entries: Vec::new(),
-                cid: None,
-                height: child_height + 1,
-                dirty: true,
-            });
-            return Self::insert_node(store, Some(parent), key, val, height);
+        let mut ld = Loader {
+            src,
+            persisted: &mut self.persisted,
+        };
+        let mut missing = Vec::new();
+        visit_key_path(&mut ld, root, key, &mut missing)?;
+        if let Some(cid) = missing.first() {
+            return Err(MstError::BlockNotFound(cid.to_string()));
         }
-
-        if height < n.height {
-            return Self::insert_below(store, n, key, val, height);
-        }
-
-        // Same height: insert into this node's entries.
-        Self::insert_at_level(store, n, key, val)
+        // Everything on the path is loaded now, so the lookup reads nothing.
+        ld.src = &NoBlocks;
+        get_node(&mut ld, root, key)
     }
 
-    /// Insert a key into a subtree of `n` (key height < n.height).
-    fn insert_below(
-        store: &dyn BlockStore,
-        mut n: Box<Node>,
-        key: String,
-        val: Cid,
-        height: u8,
-    ) -> Result<Box<Node>, MstError> {
-        let idx = find_child_index(&n, &key);
-
-        let child = if idx == 0 {
-            n.left.take()
-        } else {
-            n.entries[idx - 1].right.take()
-        };
-
-        // If no child exists and we're exactly one level above, create leaf directly.
-        if child.is_none() && n.height - 1 == height {
-            let new_child = Box::new(Node {
-                left: None,
-                entries: vec![Entry {
-                    key,
-                    val,
-                    right: None,
-                }],
-                cid: None,
-                height,
-                dirty: true,
-            });
-            n.dirty = true;
-            if idx == 0 {
-                n.left = Some(new_child);
-            } else {
-                n.entries[idx - 1].right = Some(new_child);
-            }
-            return Ok(n);
+    fn check_usable(&self) -> Result<(), MstError> {
+        if self.poisoned {
+            return Err(MstError::Internal(
+                "tree is unusable: an earlier mutation failed partway through".into(),
+            ));
         }
+        Ok(())
+    }
 
-        let child = match child {
-            Some(c) => Some(c),
-            None => Some(Box::new(Node {
-                left: None,
-                entries: Vec::new(),
-                cid: None,
-                height: n.height - 1,
-                dirty: true,
-            })),
+    fn poison(&mut self, e: MstError) -> MstError {
+        self.poisoned = true;
+        self.root = None;
+        e
+    }
+}
+
+/// Decodes stubs from a block source, recording each one as persisted.
+struct Loader<'a> {
+    src: &'a dyn BlockSource,
+    persisted: &'a mut HashSet<Cid>,
+}
+
+impl Loader<'_> {
+    /// Decode `n` if it is a stub. Returns the CID of its block if the
+    /// source does not have it.
+    fn load(&mut self, n: &mut Node) -> Result<Option<Cid>, MstError> {
+        if n.loaded {
+            return Ok(None);
+        }
+        let cid = n
+            .cid
+            .ok_or_else(|| MstError::Internal("unloaded MST node has no CID".into()))?;
+        let Some(data) = self.src.read_block(&cid)? else {
+            return Ok(Some(cid));
         };
+        populate_node(n, &decode_node_data(&data)?)?;
+        self.persisted.insert(cid);
+        Ok(None)
+    }
 
-        let new_child = Self::insert_node(store, child, key, val, height)?;
+    fn ensure_loaded(&mut self, n: &mut Node) -> Result<(), MstError> {
+        match self.load(n)? {
+            None => Ok(()),
+            Some(cid) => Err(MstError::BlockNotFound(cid.to_string())),
+        }
+    }
+}
 
+/// Fail unless `n` is loaded. Mutations call this where they used to load
+/// on demand: everything they touch is loaded before they start.
+fn require_loaded(n: &Node) -> Result<(), MstError> {
+    if n.loaded {
+        return Ok(());
+    }
+    Err(MstError::Internal(
+        "MST mutation reached a node that was not loaded first".into(),
+    ))
+}
+
+/// Load the nodes below `n` that a get, insert, or remove of `key`
+/// touches, collecting the CIDs of stubs the source cannot supply.
+///
+/// That is the key's search path, continued into both subtrees next to an
+/// entry equal to `key`. A remove merges those two subtrees along their
+/// facing edges, which is exactly where `key` sorts within each. A new
+/// key's split follows the search path, and the emptied root chain that
+/// `trim_top` collapses consists of nodes whose only child is on the path.
+fn visit_key_path(
+    ld: &mut Loader<'_>,
+    n: &mut Node,
+    key: &str,
+    missing: &mut Vec<Cid>,
+) -> Result<(), MstError> {
+    if let Some(cid) = ld.load(n)? {
+        missing.push(cid);
+        return Ok(());
+    }
+    match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
+        Ok(i) => {
+            if let Some(child) = child_before(n, i) {
+                visit_key_path(ld, child, key, missing)?;
+            }
+            if let Some(child) = n.entries[i].right.as_deref_mut() {
+                visit_key_path(ld, child, key, missing)?;
+            }
+        }
+        Err(i) => {
+            if let Some(child) = child_before(n, i) {
+                visit_key_path(ld, child, key, missing)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The subtree between `entries[i - 1]` and `entries[i]` (`left` when
+/// `i == 0`).
+fn child_before(n: &mut Node, i: usize) -> Option<&mut Node> {
+    if i == 0 {
+        n.left.as_deref_mut()
+    } else {
+        n.entries.get_mut(i - 1)?.right.as_deref_mut()
+    }
+}
+
+fn get_node(ld: &mut Loader<'_>, n: &mut Node, key: &str) -> Result<Option<Cid>, MstError> {
+    ld.ensure_loaded(n)?;
+
+    for i in 0..n.entries.len() {
+        if key < n.entries[i].key.as_str() {
+            let child = if i == 0 {
+                &mut n.left
+            } else {
+                &mut n.entries[i - 1].right
+            };
+            if let Some(child) = child {
+                return get_node(ld, child, key);
+            }
+            return Ok(None);
+        }
+        if key == n.entries[i].key {
+            return Ok(Some(n.entries[i].val));
+        }
+    }
+
+    // Check rightmost subtree.
+    if !n.entries.is_empty() {
+        let last = n.entries.len() - 1;
+        if let Some(child) = &mut n.entries[last].right {
+            return get_node(ld, child, key);
+        }
+    } else if let Some(left) = &mut n.left {
+        return get_node(ld, left, key);
+    }
+    Ok(None)
+}
+
+fn insert_node(
+    n: Option<Box<Node>>,
+    key: String,
+    val: Cid,
+    height: u8,
+) -> Result<Box<Node>, MstError> {
+    let Some(n) = n else {
+        return Ok(Box::new(Node::fresh(
+            height,
+            None,
+            vec![Entry {
+                key,
+                val,
+                right: None,
+            }],
+        )));
+    };
+
+    require_loaded(&n)?;
+
+    if height > n.height {
+        // Step up one level, wrapping the current node as a child.
+        let child_height = n.height;
+        let parent = Box::new(Node::fresh(child_height + 1, Some(n), Vec::new()));
+        return insert_node(Some(parent), key, val, height);
+    }
+
+    if height < n.height {
+        return insert_below(n, key, val, height);
+    }
+
+    // Same height: insert into this node's entries.
+    insert_at_level(n, key, val)
+}
+
+/// Insert a key into a subtree of `n` (key height < n.height).
+fn insert_below(
+    mut n: Box<Node>,
+    key: String,
+    val: Cid,
+    height: u8,
+) -> Result<Box<Node>, MstError> {
+    let idx = find_child_index(&n, &key);
+
+    let child = if idx == 0 {
+        n.left.take()
+    } else {
+        n.entries[idx - 1].right.take()
+    };
+
+    // If no child exists and we're exactly one level above, create leaf directly.
+    if child.is_none() && n.height - 1 == height {
+        let new_child = Box::new(Node::fresh(
+            height,
+            None,
+            vec![Entry {
+                key,
+                val,
+                right: None,
+            }],
+        ));
         n.dirty = true;
         if idx == 0 {
             n.left = Some(new_child);
         } else {
             n.entries[idx - 1].right = Some(new_child);
         }
-        Ok(n)
+        return Ok(n);
     }
 
-    /// Insert a key at the same height level as `n`.
-    fn insert_at_level(
-        store: &dyn BlockStore,
-        mut n: Box<Node>,
-        key: String,
-        val: Cid,
-    ) -> Result<Box<Node>, MstError> {
-        // Binary search for insertion point.
-        let i = n
-            .entries
-            .binary_search_by(|e| e.key.as_str().cmp(&key))
-            .unwrap_or_else(|x| x);
+    let child = match child {
+        Some(c) => c,
+        None => Box::new(Node::fresh(n.height - 1, None, Vec::new())),
+    };
 
-        // Check for update of existing key.
-        if i < n.entries.len() && n.entries[i].key == key {
-            n.entries[i].val = val;
-            n.dirty = true;
-            return Ok(n);
-        }
+    let new_child = insert_node(Some(child), key, val, height)?;
 
-        // Split the child between entries[i-1] and entries[i].
-        let child_to_split = if i == 0 {
-            n.left.take()
-        } else {
-            n.entries[i - 1].right.take()
-        };
+    n.dirty = true;
+    if idx == 0 {
+        n.left = Some(new_child);
+    } else {
+        n.entries[idx - 1].right = Some(new_child);
+    }
+    Ok(n)
+}
 
-        let (left, right) = Self::split_node(store, child_to_split, &key)?;
+/// Insert a key at the same height level as `n`.
+fn insert_at_level(mut n: Box<Node>, key: String, val: Cid) -> Result<Box<Node>, MstError> {
+    // Binary search for insertion point.
+    let i = n
+        .entries
+        .binary_search_by(|e| e.key.as_str().cmp(&key))
+        .unwrap_or_else(|x| x);
 
-        let new_entry = Entry {
-            key,
-            val,
-            right: right.map(Box::new),
-        };
-
-        n.entries.insert(i, new_entry);
-
-        // Update left pointer or previous entry's right.
-        if i == 0 {
-            n.left = left.map(Box::new);
-        } else {
-            n.entries[i - 1].right = left.map(Box::new);
-        }
-
+    // Check for update of existing key.
+    if i < n.entries.len() && n.entries[i].key == key {
+        n.entries[i].val = val;
         n.dirty = true;
-        Ok(n)
+        return Ok(n);
     }
 
-    /// Split a node at key, returning (left, right) subtrees.
-    /// Left contains everything < key, right contains everything > key.
-    fn split_node(
-        store: &dyn BlockStore,
-        n: Option<Box<Node>>,
-        key: &str,
-    ) -> Result<(Option<Node>, Option<Node>), MstError> {
-        let Some(mut n) = n else {
-            return Ok((None, None));
-        };
+    // Split the child between entries[i-1] and entries[i].
+    let child_to_split = if i == 0 {
+        n.left.take()
+    } else {
+        n.entries[i - 1].right.take()
+    };
 
-        ensure_loaded(store, &mut n)?;
+    let (left, right) = split_node(child_to_split, &key)?;
 
-        // Binary search for split point: first entry with key >= key.
-        let split_idx = match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
-            Ok(i) => Some(i),
-            Err(i) => {
-                if i < n.entries.len() {
-                    Some(i)
-                } else {
-                    None
-                }
-            }
-        };
+    let new_entry = Entry {
+        key,
+        val,
+        right: right.map(Box::new),
+    };
 
-        match split_idx {
-            None => {
-                // All entries < key. The rightmost child may still need splitting.
-                let last_child = if let Some(last) = n.entries.last_mut() {
-                    last.right.take()
-                } else {
-                    n.left.take()
-                };
-                let (child_left, child_right) = Self::split_node(store, last_child, key)?;
-                if let Some(last) = n.entries.last_mut() {
-                    last.right = child_left.map(Box::new);
-                } else {
-                    n.left = child_left.map(Box::new);
-                }
-                n.dirty = true;
-                let right_node = child_right.map(|cr| Node {
-                    left: Some(Box::new(cr)),
-                    entries: Vec::new(),
-                    cid: None,
-                    height: n.height,
-                    dirty: true,
-                });
-                Ok((trim_node(*n), trim_node_opt(right_node)))
-            }
-            Some(0) => {
-                // All entries >= key. The left child may still need splitting.
-                let left_child = n.left.take();
-                let (child_left, child_right) = Self::split_node(store, left_child, key)?;
-                n.left = child_right.map(Box::new);
-                n.dirty = true;
-                let left_node = child_left.map(|cl| Node {
-                    left: Some(Box::new(cl)),
-                    entries: Vec::new(),
-                    cid: None,
-                    height: n.height,
-                    dirty: true,
-                });
-                Ok((trim_node_opt(left_node), trim_node(*n)))
-            }
-            Some(split_i) => {
-                // Split in the middle.
-                let right_entries: Vec<Entry> = n.entries.drain(split_i..).collect();
-                let left_entries = std::mem::take(&mut n.entries);
+    n.entries.insert(i, new_entry);
 
-                let mut left_node = Node {
-                    left: n.left.take(),
-                    entries: left_entries,
-                    cid: None,
-                    height: n.height,
-                    dirty: true,
-                };
+    // Update left pointer or previous entry's right.
+    if i == 0 {
+        n.left = left.map(Box::new);
+    } else {
+        n.entries[i - 1].right = left.map(Box::new);
+    }
 
-                // The child between the two halves needs recursive splitting.
-                // split_i > 0 guarantees left_entries is non-empty.
-                let last = left_node
-                    .entries
-                    .last_mut()
-                    .ok_or_else(|| MstError::Internal("split produced empty left".into()))?;
-                let mid_child = last.right.take();
-                let (mid_left, mid_right) = Self::split_node(store, mid_child, key)?;
-                let last = left_node
-                    .entries
-                    .last_mut()
-                    .ok_or_else(|| MstError::Internal("split produced empty left".into()))?;
-                last.right = mid_left.map(Box::new);
+    n.dirty = true;
+    Ok(n)
+}
 
-                let right_node = Node {
-                    left: mid_right.map(Box::new),
-                    entries: right_entries,
-                    cid: None,
-                    height: n.height,
-                    dirty: true,
-                };
+/// Split a node at key, returning (left, right) subtrees.
+/// Left contains everything < key, right contains everything > key.
+fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<Node>), MstError> {
+    let Some(mut n) = n else {
+        return Ok((None, None));
+    };
 
-                Ok((trim_node(left_node), trim_node(right_node)))
+    require_loaded(&n)?;
+
+    // Binary search for split point: first entry with key >= key.
+    let split_idx = match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
+        Ok(i) => Some(i),
+        Err(i) => {
+            if i < n.entries.len() {
+                Some(i)
+            } else {
+                None
             }
         }
+    };
+
+    match split_idx {
+        None => {
+            // All entries < key. The rightmost child may still need splitting.
+            let last_child = if let Some(last) = n.entries.last_mut() {
+                last.right.take()
+            } else {
+                n.left.take()
+            };
+            let (child_left, child_right) = split_node(last_child, key)?;
+            if let Some(last) = n.entries.last_mut() {
+                last.right = child_left.map(Box::new);
+            } else {
+                n.left = child_left.map(Box::new);
+            }
+            n.dirty = true;
+            let right_node =
+                child_right.map(|cr| Node::fresh(n.height, Some(Box::new(cr)), Vec::new()));
+            Ok((trim_node(*n), trim_node_opt(right_node)))
+        }
+        Some(0) => {
+            // All entries >= key. The left child may still need splitting.
+            let left_child = n.left.take();
+            let (child_left, child_right) = split_node(left_child, key)?;
+            n.left = child_right.map(Box::new);
+            n.dirty = true;
+            let left_node =
+                child_left.map(|cl| Node::fresh(n.height, Some(Box::new(cl)), Vec::new()));
+            Ok((trim_node_opt(left_node), trim_node(*n)))
+        }
+        Some(split_i) => {
+            // Split in the middle.
+            let right_entries: Vec<Entry> = n.entries.drain(split_i..).collect();
+            let left_entries = std::mem::take(&mut n.entries);
+
+            let mut left_node = Node::fresh(n.height, n.left.take(), left_entries);
+
+            // The child between the two halves needs recursive splitting.
+            // split_i > 0 guarantees left_entries is non-empty.
+            let last = left_node
+                .entries
+                .last_mut()
+                .ok_or_else(|| MstError::Internal("split produced empty left".into()))?;
+            let mid_child = last.right.take();
+            let (mid_left, mid_right) = split_node(mid_child, key)?;
+            let last = left_node
+                .entries
+                .last_mut()
+                .ok_or_else(|| MstError::Internal("split produced empty left".into()))?;
+            last.right = mid_left.map(Box::new);
+
+            let right_node = Node::fresh(n.height, mid_right.map(Box::new), right_entries);
+
+            Ok((trim_node(left_node), trim_node(right_node)))
+        }
+    }
+}
+
+/// Remove `key` below `root`, then collapse the root chain it may leave.
+fn remove_from_root(
+    root: Box<Node>,
+    key: &str,
+) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
+    let (root, removed) = remove_node(root, key)?;
+    Ok((trim_top(root)?, removed))
+}
+
+fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
+    require_loaded(&n)?;
+
+    // Search for the key in entries.
+    for i in 0..n.entries.len() {
+        if key == n.entries[i].key {
+            let removed_val = n.entries[i].val;
+
+            // Merge left and right children around this entry.
+            let left_child = if i == 0 {
+                n.left.take()
+            } else {
+                n.entries[i - 1].right.take()
+            };
+            let right_child = n.entries[i].right.take();
+
+            let merged = merge_nodes(left_child, right_child)?;
+
+            n.entries.remove(i);
+
+            if i == 0 {
+                n.left = merged;
+            } else {
+                n.entries[i - 1].right = merged;
+            }
+            n.dirty = true;
+
+            return Ok((prune_empty(n), Some(removed_val)));
+        }
+
+        if key < n.entries[i].key.as_str() {
+            // Descend into left child.
+            let child = if i == 0 {
+                n.left.take()
+            } else {
+                n.entries[i - 1].right.take()
+            };
+            if let Some(child) = child {
+                let (new_child, removed) = remove_node(child, key)?;
+                if removed.is_some() {
+                    n.dirty = true;
+                }
+                if i == 0 {
+                    n.left = new_child;
+                } else {
+                    n.entries[i - 1].right = new_child;
+                }
+                return Ok((prune_empty(n), removed));
+            }
+            return Ok((Some(n), None));
+        }
+    }
+
+    // Key > all entries, descend into rightmost child.
+    if !n.entries.is_empty() {
+        let last = n.entries.len() - 1;
+        let child = n.entries[last].right.take();
+        if let Some(child) = child {
+            let (new_child, removed) = remove_node(child, key)?;
+            if removed.is_some() {
+                n.dirty = true;
+            }
+            n.entries[last].right = new_child;
+            return Ok((prune_empty(n), removed));
+        }
+    } else if let Some(left) = n.left.take() {
+        let (new_child, removed) = remove_node(left, key)?;
+        if removed.is_some() {
+            n.dirty = true;
+        }
+        n.left = new_child;
+        return Ok((prune_empty(n), removed));
+    }
+    Ok((Some(n), None))
+}
+
+/// Merge two sibling subtrees back together.
+fn merge_nodes(
+    left: Option<Box<Node>>,
+    right: Option<Box<Node>>,
+) -> Result<Option<Box<Node>>, MstError> {
+    let (mut left, mut right) = match (left, right) {
+        (None, r) => return Ok(r),
+        (l, None) => return Ok(l),
+        (Some(l), Some(r)) => (l, r),
+    };
+
+    require_loaded(&left)?;
+    require_loaded(&right)?;
+
+    // Merge the rightmost child of left with the left child of right.
+    let left_right_child = if let Some(last) = left.entries.last_mut() {
+        last.right.take()
+    } else {
+        left.left.take()
+    };
+
+    let merged = merge_nodes(left_right_child, right.left.take())?;
+
+    if let Some(last) = left.entries.last_mut() {
+        last.right = merged;
+    } else {
+        left.left = merged;
+    }
+
+    // Append right's entries to left.
+    left.entries.append(&mut right.entries);
+    left.dirty = true;
+
+    Ok(Some(left))
+}
+
+/// Encode the empty-tree node: no entries and no subtree.
+fn empty_node_block() -> Result<(Cid, Vec<u8>), MstError> {
+    let nd = NodeData {
+        left: None,
+        entries: vec![],
+    };
+    let data = encode_node_data(&nd)?;
+    Ok((Cid::compute(Codec::Drisl, &data), data))
+}
+
+/// Recursively encode dirty nodes into `out`. Returns the node's CID.
+fn write_node(n: &mut Node, out: &mut Vec<(Cid, Vec<u8>)>) -> Result<Cid, MstError> {
+    if !n.dirty {
+        return n
+            .cid
+            .ok_or_else(|| MstError::Internal("clean MST node has no CID".into()));
+    }
+    require_loaded(n)?;
+
+    // Recursively write children first.
+    if let Some(left) = &mut n.left {
+        write_node(left, out)?;
+    }
+    for entry in &mut n.entries {
+        if let Some(right) = &mut entry.right {
+            write_node(right, out)?;
+        }
+    }
+
+    let nd = node_to_data(n)?;
+    let data = encode_node_data(&nd)?;
+    let cid = Cid::compute(Codec::Drisl, &data);
+    out.push((cid, data));
+    n.cid = Some(cid);
+    n.dirty = false;
+    Ok(cid)
+}
+
+/// Collect the CIDs of every node reachable in memory, including stubs.
+/// All nodes must have been written.
+fn collect_cids(n: &Node, out: &mut HashSet<Cid>) {
+    if let Some(cid) = n.cid {
+        out.insert(cid);
+    }
+    if !n.loaded {
+        return;
+    }
+    if let Some(left) = &n.left {
+        collect_cids(left, out);
+    }
+    for entry in &n.entries {
+        if let Some(right) = &entry.right {
+            collect_cids(right, out);
+        }
+    }
+}
+
+/// Convert an in-memory node to the serializable NodeData.
+fn node_to_data(n: &Node) -> Result<NodeData, MstError> {
+    let mut nd = NodeData {
+        left: None,
+        entries: Vec::with_capacity(n.entries.len()),
+    };
+
+    if let Some(left) = &n.left {
+        nd.left = Some(left.cid.ok_or_else(|| {
+            MstError::Internal("left node CID not computed; call write_node first".into())
+        })?);
+    }
+
+    let mut prev_key: &str = "";
+    for e in &n.entries {
+        let prefix_len = shared_prefix_len(prev_key, &e.key);
+        let mut ed = EntryData {
+            prefix_len,
+            key_suffix: e.key.as_bytes()[prefix_len..].to_vec(),
+            value: e.val,
+            right: None,
+        };
+        if let Some(right) = &e.right {
+            ed.right = Some(right.cid.ok_or_else(|| {
+                MstError::Internal("right node CID not computed; call write_node first".into())
+            })?);
+        }
+        nd.entries.push(ed);
+        prev_key = &e.key;
+    }
+
+    Ok(nd)
+}
+
+fn walk_node<F>(ld: &mut Loader<'_>, n: &mut Node, f: &mut F) -> Result<(), MstError>
+where
+    F: FnMut(&str, Cid) -> Result<(), MstError>,
+{
+    ld.ensure_loaded(n)?;
+
+    if let Some(left) = &mut n.left {
+        walk_node(ld, left, f)?;
+    }
+
+    for entry in &mut n.entries {
+        f(&entry.key, entry.val)?;
+        if let Some(right) = &mut entry.right {
+            walk_node(ld, right, f)?;
+        }
+    }
+    Ok(())
+}
+
+/// AT Protocol Merkle Search Tree backed by a [`BlockStore`].
+///
+/// A wrapper around [`DetachedTree`] for synchronous stores: nodes load
+/// from the store on demand, and `root_cid` writes new node blocks back to
+/// it. All operations (including reads like `get` and `walk`) take
+/// `&mut self` because they may load nodes. Use `DetachedTree` directly for
+/// asynchronous storage or when the tree must be `Send`.
+pub struct Tree {
+    inner: DetachedTree,
+    store: Box<dyn BlockStore>,
+    /// Flushed blocks the store has not accepted yet.
+    unsaved: Vec<(Cid, Vec<u8>)>,
+}
+
+impl Tree {
+    /// Create a new empty MST backed by the given store.
+    pub fn new(store: Box<dyn BlockStore>) -> Self {
+        Tree {
+            inner: DetachedTree::new(),
+            store,
+            unsaved: Vec::new(),
+        }
+    }
+
+    /// Load an MST from a root CID using the given store.
+    /// Child nodes are loaded lazily on first access.
+    pub fn load(store: Box<dyn BlockStore>, root: Cid) -> Self {
+        Tree {
+            inner: DetachedTree::load(root),
+            store,
+            unsaved: Vec::new(),
+        }
+    }
+
+    /// Look up a key and return its value CID, or `None` if not found.
+    pub fn get(&mut self, key: &str) -> Result<Option<Cid>, MstError> {
+        self.inner.get(&StoreSource(&*self.store), key)
+    }
+
+    /// Insert or update a key/value pair.
+    pub fn insert(&mut self, key: String, cid: Cid) -> Result<(), MstError> {
+        self.inner
+            .insert(&StoreSource(&*self.store), key, cid)
+            .map(|_| ())
     }
 
     /// Remove a key from the tree. Returns the removed value CID, or `None`.
     pub fn remove(&mut self, key: &str) -> Result<Option<Cid>, MstError> {
-        let Some(root) = self.root.take() else {
-            return Ok(None);
-        };
-        let (new_root, removed) = Self::remove_node(&*self.store, root, key)?;
-        self.root = trim_top(&*self.store, new_root)?;
-        Ok(removed)
-    }
-
-    fn remove_node(
-        store: &dyn BlockStore,
-        mut n: Box<Node>,
-        key: &str,
-    ) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
-        ensure_loaded(store, &mut n)?;
-
-        // Search for the key in entries.
-        for i in 0..n.entries.len() {
-            if key == n.entries[i].key {
-                let removed_val = n.entries[i].val;
-
-                // Merge left and right children around this entry.
-                let left_child = if i == 0 {
-                    n.left.take()
-                } else {
-                    n.entries[i - 1].right.take()
-                };
-                let right_child = n.entries[i].right.take();
-
-                let merged = Self::merge_nodes(store, left_child, right_child)?;
-
-                n.entries.remove(i);
-
-                if i == 0 {
-                    n.left = merged;
-                } else {
-                    n.entries[i - 1].right = merged;
-                }
-                n.dirty = true;
-
-                if n.entries.is_empty() {
-                    return Ok((n.left, Some(removed_val)));
-                }
-                return Ok((Some(n), Some(removed_val)));
-            }
-
-            if key < n.entries[i].key.as_str() {
-                // Descend into left child.
-                let child = if i == 0 {
-                    n.left.take()
-                } else {
-                    n.entries[i - 1].right.take()
-                };
-                if let Some(child) = child {
-                    let (new_child, removed) = Self::remove_node(store, child, key)?;
-                    if removed.is_some() {
-                        n.dirty = true;
-                    }
-                    if i == 0 {
-                        n.left = new_child;
-                    } else {
-                        n.entries[i - 1].right = new_child;
-                    }
-                    return Ok((Some(n), removed));
-                }
-                return Ok((Some(n), None));
-            }
-        }
-
-        // Key > all entries, descend into rightmost child.
-        if !n.entries.is_empty() {
-            let last = n.entries.len() - 1;
-            let child = n.entries[last].right.take();
-            if let Some(child) = child {
-                let (new_child, removed) = Self::remove_node(store, child, key)?;
-                if removed.is_some() {
-                    n.dirty = true;
-                }
-                n.entries[last].right = new_child;
-                return Ok((Some(n), removed));
-            }
-        } else if let Some(left) = n.left.take() {
-            let (new_child, removed) = Self::remove_node(store, left, key)?;
-            if removed.is_some() {
-                n.dirty = true;
-            }
-            n.left = new_child;
-            return Ok((Some(n), removed));
-        }
-        Ok((Some(n), None))
-    }
-
-    /// Merge two sibling subtrees back together.
-    fn merge_nodes(
-        store: &dyn BlockStore,
-        left: Option<Box<Node>>,
-        right: Option<Box<Node>>,
-    ) -> Result<Option<Box<Node>>, MstError> {
-        let (mut left, mut right) = match (left, right) {
-            (None, r) => return Ok(r),
-            (l, None) => return Ok(l),
-            (Some(l), Some(r)) => (l, r),
-        };
-
-        ensure_loaded(store, &mut left)?;
-        ensure_loaded(store, &mut right)?;
-
-        // Merge the rightmost child of left with the left child of right.
-        let left_right_child = if let Some(last) = left.entries.last_mut() {
-            last.right.take()
-        } else {
-            left.left.take()
-        };
-
-        let merged = Self::merge_nodes(store, left_right_child, right.left.take())?;
-
-        if let Some(last) = left.entries.last_mut() {
-            last.right = merged;
-        } else {
-            left.left = merged;
-        }
-
-        // Append right's entries to left.
-        left.entries.append(&mut right.entries);
-        left.dirty = true;
-
-        Ok(Some(left))
+        self.inner.remove(&StoreSource(&*self.store), key)
     }
 
     /// Compute and return the root CID of the tree.
-    /// Serializes all dirty nodes to the block store.
+    /// Writes new node blocks to the block store.
     pub fn root_cid(&mut self) -> Result<Cid, MstError> {
-        match self.root.take() {
-            None => {
-                // Empty tree: encode an empty node.
-                let nd = NodeData {
-                    left: None,
-                    entries: vec![],
-                };
-                let data = encode_node_data(&nd)?;
-                let cid = Cid::compute(Codec::Drisl, &data);
-                self.store.put_block(cid, data)?;
-                Ok(cid)
-            }
-            Some(mut root) => {
-                let cid = Self::write_node(&*self.store, &mut root)?;
-                self.root = Some(root);
-                Ok(cid)
-            }
+        let write = self.inner.flush()?;
+        self.unsaved.extend(write.new_blocks);
+        // Put a copy so a block the store rejects is retried on the next call
+        // instead of being lost.
+        while let Some((cid, data)) = self.unsaved.last() {
+            self.store.put_block(*cid, data.clone())?;
+            self.unsaved.pop();
         }
-    }
-
-    /// Recursively write dirty nodes to the store. Returns the CID.
-    fn write_node(store: &dyn BlockStore, n: &mut Node) -> Result<Cid, MstError> {
-        if let (false, Some(cid)) = (n.dirty, n.cid) {
-            return Ok(cid);
-        }
-
-        ensure_loaded(store, n)?;
-
-        // Recursively write children first.
-        if let Some(left) = &mut n.left {
-            Self::write_node(store, left)?;
-        }
-        for entry in &mut n.entries {
-            if let Some(right) = &mut entry.right {
-                Self::write_node(store, right)?;
-            }
-        }
-
-        let nd = Self::node_to_data(n)?;
-        let data = encode_node_data(&nd)?;
-        let cid = Cid::compute(Codec::Drisl, &data);
-        store.put_block(cid, data)?;
-        n.cid = Some(cid);
-        n.dirty = false;
-        Ok(cid)
-    }
-
-    /// Convert an in-memory node to the serializable NodeData.
-    fn node_to_data(n: &Node) -> Result<NodeData, MstError> {
-        let mut nd = NodeData {
-            left: None,
-            entries: Vec::with_capacity(n.entries.len()),
-        };
-
-        if let Some(left) = &n.left {
-            nd.left = Some(left.cid.ok_or_else(|| {
-                MstError::Internal("left node CID not computed; call write_node first".into())
-            })?);
-        }
-
-        let mut prev_key: &str = "";
-        for e in &n.entries {
-            let prefix_len = shared_prefix_len(prev_key, &e.key);
-            let mut ed = EntryData {
-                prefix_len,
-                key_suffix: e.key.as_bytes()[prefix_len..].to_vec(),
-                value: e.val,
-                right: None,
-            };
-            if let Some(right) = &e.right {
-                ed.right = Some(right.cid.ok_or_else(|| {
-                    MstError::Internal("right node CID not computed; call write_node first".into())
-                })?);
-            }
-            nd.entries.push(ed);
-            prev_key = &e.key;
-        }
-
-        Ok(nd)
+        Ok(write.root)
     }
 
     /// Collect all key/value pairs in sorted order into a Vec.
     pub fn entries(&mut self) -> Result<Vec<(String, Cid)>, MstError> {
-        let mut result = Vec::new();
-        if let Some(root) = &mut self.root {
-            Self::walk_node(&*self.store, root, &mut result)?;
-        }
-        Ok(result)
+        self.inner.entries(&StoreSource(&*self.store))
     }
 
     /// Walk the tree in sorted order, calling `f` for each entry.
-    pub fn walk<F>(&mut self, mut f: F) -> Result<(), MstError>
+    pub fn walk<F>(&mut self, f: F) -> Result<(), MstError>
     where
         F: FnMut(&str, Cid) -> Result<(), MstError>,
     {
-        if let Some(root) = &mut self.root {
-            Self::walk_node_fn(&*self.store, root, &mut f)?;
-        }
-        Ok(())
+        self.inner.walk(&StoreSource(&*self.store), f)
     }
+}
 
-    fn walk_node(
-        store: &dyn BlockStore,
-        n: &mut Node,
-        result: &mut Vec<(String, Cid)>,
-    ) -> Result<(), MstError> {
-        ensure_loaded(store, n)?;
+/// Reads a [`BlockStore`] as a [`BlockSource`], mapping its not-found
+/// error to an absent block.
+struct StoreSource<'a>(&'a dyn BlockStore);
 
-        if let Some(left) = &mut n.left {
-            Self::walk_node(store, left, result)?;
+impl BlockSource for StoreSource<'_> {
+    fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
+        match self.0.get_block(cid) {
+            Ok(data) => Ok(Some(Cow::Owned(data))),
+            Err(MstError::BlockNotFound(_)) => Ok(None),
+            Err(e) => Err(e),
         }
-
-        for entry in &mut n.entries {
-            result.push((entry.key.clone(), entry.val));
-            if let Some(right) = &mut entry.right {
-                Self::walk_node(store, right, result)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn walk_node_fn<F>(store: &dyn BlockStore, n: &mut Node, f: &mut F) -> Result<(), MstError>
-    where
-        F: FnMut(&str, Cid) -> Result<(), MstError>,
-    {
-        ensure_loaded(store, n)?;
-
-        if let Some(left) = &mut n.left {
-            Self::walk_node_fn(store, left, f)?;
-        }
-
-        for entry in &mut n.entries {
-            f(&entry.key, entry.val)?;
-            if let Some(right) = &mut entry.right {
-                Self::walk_node_fn(store, right, f)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -638,18 +985,13 @@ impl Tree {
 /// on its left child. This walks down that chain until it finds a node
 /// with real entries (or runs out of nodes).
 ///
-/// Each candidate must be loaded from blocks before we test its emptiness:
-/// an unloaded stub looks like `(entries: [], left: None)` at the in-memory
-/// level even when its CID points at a real subtree. Without
-/// `ensure_loaded`, the loop would see `left.is_some() == false`, replace
-/// the root with `None`, and silently drop every record below the removed
-/// key.
-fn trim_top(
-    store: &dyn BlockStore,
-    mut n: Option<Box<Node>>,
-) -> Result<Option<Box<Node>>, MstError> {
-    while let Some(mut node) = n {
-        ensure_loaded(store, &mut node)?;
+/// Each candidate must be loaded before we test its emptiness: an unloaded
+/// stub has no entries and no left child in memory even when its CID
+/// points at a real subtree. Treating one as empty would replace the root
+/// with `None` and silently drop every record below the removed key.
+fn trim_top(mut n: Option<Box<Node>>) -> Result<Option<Box<Node>>, MstError> {
+    while let Some(node) = n {
+        require_loaded(&node)?;
         if !node.entries.is_empty() {
             return Ok(Some(node));
         }
@@ -658,24 +1000,23 @@ fn trim_top(
     Ok(None)
 }
 
-/// Ensure a node is loaded from the block store.
-#[inline]
-fn ensure_loaded(store: &dyn BlockStore, n: &mut Node) -> Result<(), MstError> {
-    if n.dirty || !n.entries.is_empty() || n.left.is_some() {
-        return Ok(()); // already loaded or newly created
+/// Drop a node left with no entries and no subtree by a remove.
+///
+/// A node with no entries but a left subtree is a canonical height filler
+/// and must stay: only the root chain is trimmed (see `trim_top`). A node
+/// with neither holds nothing, and the reference implementations remove it,
+/// cascading up through any intermediates it leaves empty in turn.
+fn prune_empty(n: Box<Node>) -> Option<Box<Node>> {
+    if n.loaded && n.entries.is_empty() && n.left.is_none() {
+        None
+    } else {
+        Some(n)
     }
-    let Some(cid) = n.cid else {
-        return Ok(()); // empty node
-    };
-
-    let data = store.get_block(&cid)?;
-    let nd = decode_node_data(&data)?;
-    populate_node(n, &nd)?;
-
-    Ok(())
 }
 
 /// Populate a node's in-memory fields from decoded `NodeData`.
+///
+/// Leaves `n` untouched if the data is malformed.
 ///
 /// Height handling is subtle. In the canonical MST every parent-child edge
 /// spans exactly one level, but on-disk node blocks do not record their
@@ -684,26 +1025,14 @@ fn ensure_loaded(store: &dyn BlockStore, n: &mut Node) -> Result<(), MstError> {
 /// empty-entries intermediates — the height-fillers the canonical shape
 /// requires whenever a parent and its only descendant span >1 level —
 /// there is no key to hash, so we rely on the parent having seeded
-/// `n.height` before calling `ensure_loaded`. After we know this node's
-/// own height we propagate `height - 1` down into each newly-created
-/// child stub so the chain stays correct as subsequent `ensure_loaded`
-/// calls walk further. atproto/indigo handles the same case via a
-/// post-load `ensureHeights` walk; we propagate eagerly during the
-/// existing lazy load instead.
+/// `n.height` when it created the stub. After we know this node's own
+/// height we propagate `height - 1` down into each newly-created child stub
+/// so the chain stays correct as later loads walk further. atproto/indigo
+/// handles the same case via a post-load `ensureHeights` walk; we propagate
+/// eagerly during the lazy load instead.
 fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
-    if let Some(left_cid) = nd.left {
-        n.left = Some(Box::new(Node {
-            left: None,
-            entries: Vec::new(),
-            cid: Some(left_cid),
-            height: 0,
-            dirty: false,
-        }));
-    }
-
     let mut key_buf = Vec::new();
-    n.entries = Vec::with_capacity(nd.entries.len());
-    let mut prev_key: Option<String> = None;
+    let mut entries: Vec<Entry> = Vec::with_capacity(nd.entries.len());
     for ed in &nd.entries {
         // The prefix length must not exceed the previous key's length. For the
         // first entry this means prefix_len must be 0 (full key). Vec::truncate
@@ -727,53 +1056,44 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
         // whole tree's get/diff/binary-search logic relies on it. A block whose
         // entries are out of order (malformed or hostile) must be rejected, not
         // loaded as-is. (atmos mst.go:894-896)
-        if let Some(prev) = &prev_key
-            && key.as_str() <= prev.as_str()
+        if let Some(prev) = entries.last()
+            && key.as_str() <= prev.key.as_str()
         {
             return Err(MstError::InvalidNode(format!(
-                "entry key {key:?} is not greater than previous key {prev:?}"
+                "entry key {key:?} is not greater than previous key {:?}",
+                prev.key
             )));
         }
 
-        let right = ed.right.map(|right_cid| {
-            Box::new(Node {
-                left: None,
-                entries: Vec::new(),
-                cid: Some(right_cid),
-                height: 0,
-                dirty: false,
-            })
-        });
-
-        n.entries.push(Entry {
-            key: key.clone(),
+        entries.push(Entry {
+            key,
             val: ed.value,
-            right,
+            right: ed.right.map(|cid| Box::new(Node::stub(cid, 0))),
         });
-        prev_key = Some(key);
     }
 
     // Derive height from entries when we have one; otherwise preserve the
     // parent-seeded height for empty intermediates.
-    if let Some(first) = n.entries.first() {
-        n.height = height_for_key(&first.key);
-    }
+    let height = match entries.first() {
+        Some(first) => height_for_key(&first.key),
+        None => n.height,
+    };
 
-    // Propagate height down to freshly-built child stubs. They were
-    // constructed above with a placeholder of 0 because n.height was not
-    // yet known. This is what keeps empty intermediates loadable: when a
-    // later ensure_loaded reaches such a child and finds entries empty,
-    // the height we seeded here is the only signal it has.
-    let child_height = n.height.saturating_sub(1);
-    if let Some(left) = &mut n.left {
-        left.height = child_height;
-    }
-    for entry in &mut n.entries {
+    // Child stubs need their height now, because n.height was not known when
+    // the entries were built. This is what keeps empty intermediates
+    // loadable: when a later load reaches such a child and finds its entries
+    // empty, the height seeded here is the only signal it has.
+    let child_height = height.saturating_sub(1);
+    for entry in &mut entries {
         if let Some(right) = &mut entry.right {
             right.height = child_height;
         }
     }
 
+    n.left = nd.left.map(|cid| Box::new(Node::stub(cid, child_height)));
+    n.entries = entries;
+    n.height = height;
+    n.loaded = true;
     Ok(())
 }
 
@@ -798,7 +1118,7 @@ fn shared_prefix_len(a: &str, b: &str) -> usize {
 
 /// Remove completely empty nodes (no entries and no children).
 fn trim_node(n: Node) -> Option<Node> {
-    if n.entries.is_empty() && n.left.is_none() {
+    if n.loaded && n.entries.is_empty() && n.left.is_none() {
         None
     } else {
         Some(n)
@@ -820,6 +1140,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::cbor::Codec;
     use crate::mst::block_store::MemBlockStore;
 
     /// Test-only adapter so the same `MemBlockStore` can back two `Tree`
@@ -1522,5 +1843,305 @@ mod tests {
         // Sanity: leaf_key must still be retrievable.
         let val = reloaded.get(leaf_key).unwrap();
         assert_eq!(val, Some(test_value_cid()), "leaf was dropped by trim loop");
+    }
+
+    /// Regression test: removing the only entry of a non-root node must
+    /// leave an empty intermediate node in place, not splice the node's
+    /// left child directly into the parent.
+    ///
+    /// The canonical MST (and every other implementation) keeps a node with
+    /// no entries but a subtree as a height filler; only the root chain is
+    /// trimmed. Splicing the child up broke the one-level-per-edge shape and
+    /// produced a root CID that disagreed with a fresh build of the same
+    /// key set.
+    ///
+    /// Shape: a height-2 root entry over a lone height-1 entry, which has a
+    /// height-0 leaf to its left. Removing the height-1 entry empties the
+    /// middle node while it still has a child.
+    #[test]
+    fn remove_keeps_empty_intermediate_node() {
+        let root_key = "com.example.record/0000027"; // height 2
+        let mid_key = "com.example.record/0000023"; // height 1 (removed)
+        let leaf_key = "com.example.record/0000020"; // height 0
+        assert_eq!(height_for_key(root_key), 2, "fixture height drifted");
+        assert_eq!(height_for_key(mid_key), 1, "fixture height drifted");
+        assert_eq!(height_for_key(leaf_key), 0, "fixture height drifted");
+
+        let mut tree = build_tree_from_keys(&[root_key, mid_key, leaf_key]);
+        tree.root_cid().unwrap();
+        assert_eq!(tree.remove(mid_key).unwrap(), Some(test_value_cid()));
+
+        assert_eq!(
+            tree.root_cid().unwrap(),
+            canonical_root_for(&[root_key, leaf_key]),
+            "remove spliced a child over an emptied intermediate node",
+        );
+    }
+
+    /// Regression test: a remove that empties a subtree must also drop the
+    /// empty intermediate nodes above it, not leave childless empty nodes
+    /// behind.
+    ///
+    /// Shape: a height-2 root entry whose only left descendant is a
+    /// height-0 leaf, reached through an empty height-1 intermediate.
+    /// Removing the leaf empties the intermediate, which then holds nothing
+    /// and must go too.
+    #[test]
+    fn remove_prunes_emptied_intermediate_chain() {
+        let root_key = "com.example.record/0000002"; // height 2
+        let leaf_key = "com.example.record/0000000"; // height 0 (removed)
+        assert_eq!(height_for_key(root_key), 2, "fixture height drifted");
+        assert_eq!(height_for_key(leaf_key), 0, "fixture height drifted");
+
+        let mut tree = build_tree_from_keys(&[root_key, leaf_key]);
+        tree.root_cid().unwrap();
+        assert_eq!(tree.remove(leaf_key).unwrap(), Some(test_value_cid()));
+
+        assert_eq!(
+            tree.root_cid().unwrap(),
+            canonical_root_for(&[root_key]),
+            "remove left an empty, childless intermediate node in the tree",
+        );
+    }
+
+    // --- DetachedTree: sans-IO loading, failure safety, flush bookkeeping. ---
+
+    /// A block source that can pretend blocks are missing. It also serves
+    /// the legacy `Tree` (through `Rc`), whose store reports hidden blocks
+    /// as not found.
+    #[derive(Default)]
+    struct HidingStore {
+        blocks: std::collections::HashMap<Cid, Vec<u8>>,
+        hidden: std::cell::RefCell<HashSet<Cid>>,
+    }
+
+    impl BlockSource for HidingStore {
+        fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
+            if self.hidden.borrow().contains(cid) {
+                return Ok(None);
+            }
+            self.blocks.read_block(cid)
+        }
+    }
+
+    impl BlockStore for Rc<HidingStore> {
+        fn get_block(&self, cid: &Cid) -> Result<Vec<u8>, MstError> {
+            match self.read_block(cid)? {
+                Some(data) => Ok(data.into_owned()),
+                None => Err(MstError::BlockNotFound(cid.to_string())),
+            }
+        }
+        fn put_block(&self, _cid: Cid, _data: Vec<u8>) -> Result<(), MstError> {
+            Err(MstError::Internal("read-only test store".into()))
+        }
+        fn has_block(&self, cid: &Cid) -> Result<bool, MstError> {
+            Ok(self.read_block(cid)?.is_some())
+        }
+    }
+
+    fn record_key(i: usize) -> String {
+        format!("com.example.record/{i:07}")
+    }
+
+    /// Build a tree from scratch and flush it. The MST is canonical, so the
+    /// result is the only acceptable root and block set for these entries.
+    fn canonical_write(entries: &std::collections::BTreeMap<String, Cid>) -> TreeWrite {
+        let mut tree = DetachedTree::new();
+        for (k, v) in entries {
+            tree.insert(&NoBlocks, k.clone(), *v).unwrap();
+        }
+        tree.flush().unwrap()
+    }
+
+    enum Op {
+        Insert(String, Cid),
+        Remove(String),
+    }
+
+    impl Op {
+        fn apply(&self, tree: &mut DetachedTree, src: &dyn BlockSource) -> Result<(), MstError> {
+            match self {
+                Op::Insert(k, v) => tree.insert(src, k.clone(), *v).map(|_| ()),
+                Op::Remove(k) => tree.remove(src, k).map(|_| ()),
+            }
+        }
+
+        fn apply_to_model(&self, model: &mut std::collections::BTreeMap<String, Cid>) {
+            match self {
+                Op::Insert(k, v) => {
+                    model.insert(k.clone(), *v);
+                }
+                Op::Remove(k) => {
+                    model.remove(k);
+                }
+            }
+        }
+    }
+
+    /// Regression test: a mutation that needs a block the source lacks must
+    /// fail without changing the tree. The store-backed tree used to detach
+    /// its root before restructuring, so a missing block partway through a
+    /// remove or insert dropped the whole tree and the next `root_cid`
+    /// silently returned the empty-tree CID.
+    ///
+    /// Tries every (operation, hidden node) pair on a multi-level tree.
+    #[test]
+    fn detached_mutation_with_missing_block_leaves_tree_unchanged() {
+        let base: std::collections::BTreeMap<String, Cid> = (0..80)
+            .map(|i| (record_key(i * 2), test_value_cid()))
+            .collect();
+        let base_write = canonical_write(&base);
+        let store = HidingStore {
+            blocks: base_write.new_blocks.iter().cloned().collect(),
+            ..Default::default()
+        };
+        let other_val = Cid::compute(Codec::Drisl, b"other");
+
+        let mut ops = Vec::new();
+        for i in (0..160).step_by(7) {
+            // Even keys exist (remove / update), odd keys are new (insert).
+            if i % 2 == 0 {
+                ops.push(Op::Remove(record_key(i)));
+                ops.push(Op::Insert(record_key(i), other_val));
+            } else {
+                ops.push(Op::Insert(record_key(i), test_value_cid()));
+            }
+        }
+
+        let mut failures = 0;
+        for op in &ops {
+            let mut expected = base.clone();
+            op.apply_to_model(&mut expected);
+            let expected_root = canonical_write(&expected).root;
+
+            for (hidden, _) in &base_write.new_blocks {
+                if *hidden == base_write.root {
+                    continue;
+                }
+                store.hidden.borrow_mut().insert(*hidden);
+                let mut tree = DetachedTree::load(base_write.root);
+                let result = op.apply(&mut tree, &store);
+                store.hidden.borrow_mut().clear();
+
+                if let Err(e) = result {
+                    failures += 1;
+                    assert!(
+                        matches!(&e, MstError::BlockNotFound(cid) if *cid == hidden.to_string()),
+                        "unexpected error: {e}"
+                    );
+                    let unchanged = tree.flush().unwrap();
+                    assert_eq!(
+                        unchanged.root, base_write.root,
+                        "failed op changed the root"
+                    );
+                    assert!(unchanged.new_blocks.is_empty());
+                    assert!(unchanged.retired.is_empty());
+                    op.apply(&mut tree, &store).unwrap();
+                }
+                assert_eq!(tree.flush().unwrap().root, expected_root);
+            }
+        }
+        assert!(
+            failures >= ops.len(),
+            "only {failures} ops hit a hidden block"
+        );
+    }
+
+    /// The store-backed wrapper keeps its root when a remove fails on a
+    /// missing block (the original symptom of the bug above).
+    #[test]
+    fn tree_remove_with_missing_block_keeps_root() {
+        let base: std::collections::BTreeMap<String, Cid> =
+            (0..80).map(|i| (record_key(i), test_value_cid())).collect();
+        let base_write = canonical_write(&base);
+        let store = Rc::new(HidingStore {
+            blocks: base_write.new_blocks.iter().cloned().collect(),
+            ..Default::default()
+        });
+
+        let mut failures = 0;
+        for (hidden, _) in &base_write.new_blocks {
+            if *hidden == base_write.root {
+                continue;
+            }
+            store.hidden.borrow_mut().insert(*hidden);
+            let mut tree = Tree::load(Box::new(Rc::clone(&store)), base_write.root);
+            if tree.remove(&record_key(27)).is_err() {
+                failures += 1;
+                assert_eq!(tree.root_cid().unwrap(), base_write.root);
+            }
+            store.hidden.borrow_mut().clear();
+        }
+        assert!(failures > 0, "no hidden block affected the remove");
+    }
+
+    /// `missing_blocks` prefetches everything the operations need, one tree
+    /// level per round, after which they run against a source with no
+    /// blocks at all.
+    #[test]
+    fn missing_blocks_prefetch_rounds() {
+        let base: std::collections::BTreeMap<String, Cid> = (0..200)
+            .map(|i| (record_key(i * 2), test_value_cid()))
+            .collect();
+        let base_write = canonical_write(&base);
+        let all: std::collections::HashMap<Cid, Vec<u8>> =
+            base_write.new_blocks.iter().cloned().collect();
+        let root_height = (0..200)
+            .map(|i| height_for_key(&record_key(i * 2)))
+            .max()
+            .unwrap();
+
+        let ops = [
+            Op::Remove(record_key(54)),
+            Op::Remove(record_key(114)),
+            Op::Insert(record_key(301), test_value_cid()),
+        ];
+        let keys = [record_key(54), record_key(114), record_key(301)];
+
+        let mut tree = DetachedTree::load(base_write.root);
+        let mut fetched = std::collections::HashMap::new();
+        let mut rounds = 0;
+        loop {
+            let missing = tree
+                .missing_blocks(&fetched, keys.iter().map(String::as_str))
+                .unwrap();
+            if missing.is_empty() {
+                break;
+            }
+            rounds += 1;
+            for cid in missing {
+                fetched.insert(cid, all[&cid].clone());
+            }
+        }
+        assert!(rounds >= 1 && rounds <= usize::from(root_height) + 1);
+        assert!(fetched.len() < all.len(), "prefetch loaded the whole tree");
+
+        let mut expected = base.clone();
+        for op in &ops {
+            op.apply(&mut tree, &NoBlocks).unwrap();
+            op.apply_to_model(&mut expected);
+        }
+        assert_eq!(tree.flush().unwrap().root, canonical_write(&expected).root);
+    }
+
+    /// Inserting the value a key already has is a no-op that reports it.
+    #[test]
+    fn detached_insert_same_value_is_noop() {
+        let mut tree = DetachedTree::new();
+        assert_eq!(
+            tree.insert(&NoBlocks, record_key(1), test_value_cid())
+                .unwrap(),
+            None
+        );
+        let first = tree.flush().unwrap();
+        assert_eq!(
+            tree.insert(&NoBlocks, record_key(1), test_value_cid())
+                .unwrap(),
+            Some(test_value_cid())
+        );
+        let second = tree.flush().unwrap();
+        assert_eq!(second.root, first.root);
+        assert!(second.new_blocks.is_empty());
+        assert!(second.retired.is_empty());
     }
 }

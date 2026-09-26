@@ -33,7 +33,7 @@ pub mod commit;
 #[allow(clippy::module_inception)]
 pub mod repo;
 
-pub use commit::Commit;
+pub use commit::{Commit, SignedCommit};
 pub use repo::Repo;
 
 use thiserror::Error;
@@ -702,6 +702,25 @@ mod tests {
 
         let cbor_bytes = commit.to_cbor().unwrap();
         let decoded = Commit::from_cbor(&cbor_bytes).unwrap();
+        decoded.verify(sk.public_key()).unwrap();
+    }
+
+    #[test]
+    fn create_signed_encodes_verifiable_v3_commit() {
+        let sk = crate::crypto::P256SigningKey::generate();
+        let did = Did::try_from("did:plc:test123456789abcdefghij").unwrap();
+        let rev = Tid::try_from("3jzfcijpj2z2a").unwrap();
+        let data = Cid::compute(Codec::Drisl, EMPTY_MAP);
+
+        let signed = Commit::create_signed(did.clone(), rev, data, &sk).unwrap();
+
+        assert_eq!(signed.cid, Cid::compute(Codec::Drisl, &signed.bytes));
+        let decoded = Commit::from_cbor(&signed.bytes).unwrap();
+        assert_eq!(decoded.did, did);
+        assert_eq!(decoded.version, 3);
+        assert_eq!(decoded.rev, rev);
+        assert_eq!(decoded.prev, None);
+        assert_eq!(decoded.data, data);
         decoded.verify(sk.public_key()).unwrap();
     }
 

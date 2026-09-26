@@ -121,30 +121,9 @@ impl Repo {
     /// Sign and produce a commit for the current repository state.
     pub fn commit(&mut self, key: &dyn SigningKey) -> Result<Commit, RepoError> {
         let root_cid = self.tree.root_cid()?;
-        let rev = self.clock.next();
-
-        let mut commit = Commit {
-            did: self.did.clone(),
-            version: 3,
-            rev,
-            // v3 commits always carry prev: null. The field exists for v2
-            // backwards compatibility but is "virtually always null" per the
-            // repository spec; both atmos and the TS reference always emit null.
-            // A non-null prev would change the commit bytes and produce a
-            // commit CID that diverges from every other implementation.
-            prev: None,
-            data: root_cid,
-            sig: None,
-        };
-
-        commit.sign(key)?;
-
-        // Store the commit block.
-        let commit_data = commit.to_cbor()?;
-        let commit_cid = Cid::compute(Codec::Drisl, &commit_data);
-        self.store.put_block(commit_cid, commit_data)?;
-
-        Ok(commit)
+        let signed = Commit::create_signed(self.did.clone(), self.clock.next(), root_cid, key)?;
+        self.store.put_block(signed.cid, signed.bytes)?;
+        Ok(signed.commit)
     }
 
     /// List all records in a collection, returned as (record_key, cid) pairs.
