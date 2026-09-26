@@ -1,0 +1,462 @@
+{
+  "_comment": "Ported from bluesky-social/atproto packages/lex/lex-json (src/lex-json.test.ts and tests/data-model-*.json). special: every $link/$bytes map becomes a CID or bytes. plain: converts under the reference's non-strict rules (malformed $link/$bytes maps stay maps), and DRISL->JSON gives back the input (or roundtrip). rejected: floats.",
+  "special": [
+    {
+      "note": "pure json",
+      "json": {
+        "string": "abc",
+        "unicode": "a~öñ©⽘☎𓋓😀👨‍👩‍👧‍👧",
+        "integer": 123,
+        "bool": true,
+        "null": null,
+        "array": [
+          "abc",
+          "def",
+          "ghi"
+        ],
+        "object": {
+          "string": "abc",
+          "number": 123,
+          "bool": true,
+          "arr": [
+            "abc",
+            "def",
+            "ghi"
+          ]
+        }
+      }
+    },
+    {
+      "note": "lex data",
+      "json": {
+        "a": {
+          "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+        },
+        "b": {
+          "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0"
+        },
+        "c": {
+          "$type": "blob",
+          "ref": {
+            "$link": "bafkreig77vqcdozl2wyk6z3cscaj5q5fggi53aoh64fewkdiri3cdauyn4"
+          },
+          "mimeType": "image/jpeg",
+          "size": 10000
+        }
+      }
+    },
+    {
+      "note": "lexArray",
+      "json": [
+        {
+          "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+        },
+        {
+          "$link": "bafyreigoxt64qghytzkr6ik7qvtzc7lyytiq5xbbrokbxjows2wp7vmo6q"
+        },
+        {
+          "$link": "bafyreiaizynclnqiolq7byfpjjtgqzn4sfrsgn7z2hhf6bo4utdwkin7ke"
+        },
+        {
+          "$link": "bafyreifd4w4tcr5tluxz7osjtnofffvtsmgdqcfrfi6evjde4pl27lrjpy"
+        }
+      ]
+    },
+    {
+      "note": "root cid",
+      "json": {
+        "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+      }
+    },
+    {
+      "note": "root bytes",
+      "json": {
+        "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0"
+      }
+    },
+    {
+      "note": "lexNested",
+      "json": {
+        "a": {
+          "b": [
+            {
+              "d": [
+                {
+                  "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+                },
+                {
+                  "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+                }
+              ],
+              "e": [
+                {
+                  "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0"
+                },
+                {
+                  "$bytes": "iE+sPoHobU9tSIqGI+309LLCcWQIRmEXwxcoDt19tas"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "note": "empty structures",
+      "json": {
+        "emptyObject": {},
+        "emptyArray": [],
+        "emtyBytes": {
+          "$bytes": ""
+        }
+      }
+    },
+    {
+      "note": "mixed types in array",
+      "json": {
+        "arr": [
+          "string",
+          123,
+          true,
+          null,
+          {
+            "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+          },
+          {
+            "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0"
+          },
+          {
+            "nested": "object"
+          },
+          [
+            "nested",
+            "array"
+          ]
+        ]
+      }
+    },
+    {
+      "note": "mismatched order in object doesn't affect equality",
+      "json": {
+        "a": "valueA",
+        "b": "valueB",
+        "c": {
+          "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+        },
+        "d": {
+          "a": "valueA",
+          "b": "valueB"
+        }
+      }
+    }
+  ],
+  "plain": [
+    {
+      "note": "non string $type",
+      "json": {
+        "$type": 3124,
+        "foo": "bar"
+      }
+    },
+    {
+      "note": "blob with wrong field type",
+      "json": {
+        "$type": "blob",
+        "ref": "bafkreig77vqcdozl2wyk6z3cscaj5q5fggi53aoh64fewkdiri3cdauyn4",
+        "mimeType": "image/jpeg",
+        "size": 10000
+      }
+    },
+    {
+      "note": "blob with missing key",
+      "json": {
+        "$type": "blob",
+        "mimeType": "image/jpeg",
+        "size": 10000
+      }
+    },
+    {
+      "note": "blob with extra fields",
+      "json": {
+        "$type": "blob",
+        "ref": {
+          "$link": "bafkreig77vqcdozl2wyk6z3cscaj5q5fggi53aoh64fewkdiri3cdauyn4"
+        },
+        "mimeType": "image/jpeg",
+        "size": 10000,
+        "other": "blah"
+      }
+    },
+    {
+      "note": "bytes with extra fields",
+      "json": {
+        "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0",
+        "other": "blah"
+      }
+    },
+    {
+      "note": "link with extra fields",
+      "json": {
+        "$link": "bafkreiccldh766hwcnuxnf2wh6jgzepf2nlu2lvcllt63eww5p6chi4ity",
+        "other": "blah"
+      }
+    },
+    {
+      "note": "$bytes and $link",
+      "json": {
+        "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0",
+        "$link": "bafkreiccldh766hwcnuxnf2wh6jgzepf2nlu2lvcllt63eww5p6chi4ity"
+      }
+    },
+    {
+      "note": "$bytes and $type",
+      "json": {
+        "$type": "bytes",
+        "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0"
+      }
+    },
+    {
+      "note": "$link and $type",
+      "json": {
+        "$type": "blob",
+        "$link": "bafkreiccldh766hwcnuxnf2wh6jgzepf2nlu2lvcllt63eww5p6chi4ity"
+      }
+    },
+    {
+      "note": "blob with CBOR CID ref",
+      "json": {
+        "$type": "blob",
+        "ref": {
+          "$link": "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"
+        },
+        "mimeType": "image/png",
+        "size": 1
+      }
+    },
+    {
+      "note": "object with empty $type",
+      "json": {
+        "$type": "",
+        "foo": "bar"
+      }
+    },
+    {
+      "note": "bytes with wrong field type",
+      "json": {
+        "$bytes": [
+          1,
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "note": "invalid base64 in $bytes",
+      "json": {
+        "$bytes": "🐻"
+      }
+    },
+    {
+      "note": "link with wrong field type",
+      "json": {
+        "$link": 1234
+      }
+    },
+    {
+      "note": "link with bogus CID",
+      "json": {
+        "$link": "."
+      }
+    },
+    {
+      "note": "data-model-valid: trivial record",
+      "json": {
+        "rcrd": {
+          "$type": "com.example.blah",
+          "a": 123,
+          "b": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-valid: float, but integer-like",
+      "json": {
+        "rcrd": {
+          "$type": "com.example.blah",
+          "a": 123.0,
+          "b": "blah"
+        }
+      },
+      "roundtrip": {
+        "rcrd": {
+          "$type": "com.example.blah",
+          "a": 123,
+          "b": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-valid: empty list and object",
+      "json": {
+        "rcrd": {
+          "$type": "com.example.blah",
+          "a": [],
+          "b": {}
+        }
+      }
+    },
+    {
+      "note": "data-model-valid: list of nullable",
+      "json": {
+        "arr": [
+          1,
+          2,
+          null
+        ]
+      }
+    },
+    {
+      "note": "data-model-valid: list of lists",
+      "json": {
+        "arr": [
+          [
+            1,
+            2,
+            3
+          ],
+          [
+            4,
+            5,
+            6
+          ]
+        ],
+        "arr2": [
+          null,
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "note": "data-model-invalid: top-level not an object",
+      "json": "blah"
+    },
+    {
+      "note": "data-model-invalid: record with $type null",
+      "json": {
+        "rcrd": {
+          "$type": null,
+          "a": 123,
+          "b": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: record with $type wrong type",
+      "json": {
+        "rcrd": {
+          "$type": 123,
+          "a": 123,
+          "b": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: record with empty $type string",
+      "json": {
+        "rcrd": {
+          "$type": "",
+          "a": 123,
+          "b": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: blob with string size",
+      "json": {
+        "blb": {
+          "$type": "blob",
+          "ref": {
+            "$link": "bafkreiccldh766hwcnuxnf2wh6jgzepf2nlu2lvcllt63eww5p6chi4ity"
+          },
+          "mimeType": "image/jpeg",
+          "size": "10000"
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: blob with missing key",
+      "json": {
+        "blb": {
+          "$type": "blob",
+          "mimeType": "image/jpeg",
+          "size": 10000
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: bytes with wrong field type",
+      "json": {
+        "lnk": {
+          "$bytes": [
+            1,
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: bytes with extra fields",
+      "json": {
+        "lnk": {
+          "$bytes": "nFERjvLLiw9qm45JrqH9QTzyC2Lu1Xb4ne6+sBrCzI0",
+          "other": "blah"
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: link with wrong field type",
+      "json": {
+        "lnk": {
+          "$link": 1234
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: link with bogus CID",
+      "json": {
+        "lnk": {
+          "$link": "."
+        }
+      }
+    },
+    {
+      "note": "data-model-invalid: link with extra fields",
+      "json": {
+        "lnk": {
+          "$link": "bafkreiccldh766hwcnuxnf2wh6jgzepf2nlu2lvcllt63eww5p6chi4ity",
+          "other": "blah"
+        }
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "note": "object with float values",
+      "json": {
+        "a": 1.5
+      }
+    },
+    {
+      "note": "data-model-invalid: float",
+      "json": {
+        "rcrd": {
+          "$type": "com.example.blah",
+          "a": 123.456,
+          "b": "blah"
+        }
+      }
+    }
+  ]
+}

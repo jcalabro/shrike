@@ -2,7 +2,8 @@
 //!
 //! - `testdata/cbor_data_model_fixtures.json` — AT Protocol data-model fixtures
 //!   (JSON + canonical CBOR + the resulting CID). Pins shrike's decode and CID
-//!   computation against the canonical cross-impl values.
+//!   computation against the canonical cross-impl values, and the JSON
+//!   codec against the fixture JSON.
 //! - `testdata/cbor_rfc8949_vectors.json` — the RFC 8949 test corpus
 //!   (valid/canonical/invalid). DAG-CBOR is *stricter* than standard CBOR, so
 //!   every RFC-invalid vector must be rejected, and the canonical vectors in
@@ -11,6 +12,7 @@
 #![cfg(feature = "cbor")]
 
 use serde::Deserialize;
+use shrike::cbor::json::{Integers, drisl_to_json, json_to_drisl};
 use shrike::cbor::{Cid, Codec, decode, encode_value};
 
 fn b64(s: &str) -> Vec<u8> {
@@ -26,6 +28,7 @@ fn hex(s: &str) -> Vec<u8> {
 
 #[derive(Debug, Deserialize)]
 struct DataModelFixture {
+    json: serde_json::Value,
     cbor_base64: String,
     cid: String,
 }
@@ -59,6 +62,10 @@ fn data_model_fixtures_cid_matches() {
             "re-encode diverged from the canonical CBOR for cid {}",
             f.cid
         );
+
+        // 4. The JSON codec agrees with the fixture in both directions.
+        assert_eq!(json_to_drisl(&f.json, Integers::Safe).unwrap(), bytes);
+        assert_eq!(drisl_to_json(&bytes).unwrap(), f.json);
     }
 }
 

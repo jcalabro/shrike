@@ -241,6 +241,10 @@ name = "cbor_interop"
 required-features = ["cbor"]
 
 [[test]]
+name = "lex_json"
+required-features = ["cbor"]
+
+[[test]]
 name = "repo_car_interop"
 required-features = ["repo", "car", "mst"]
 

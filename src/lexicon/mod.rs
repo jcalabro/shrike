@@ -399,5 +399,11 @@ mod tests {
         // Not valid base64.
         let bad = serde_json::json!({"by": {"$bytes": "!!!!"}});
         assert!(validate_record(&catalog, "com.example.by", &bad).is_err());
+        // Unpadded base64 counts the same.
+        let unpadded = serde_json::json!({"by": {"$bytes": "AAA"}});
+        validate_record(&catalog, "com.example.by", &unpadded).unwrap();
+        // A bare string is not bytes.
+        let bare = serde_json::json!({"by": "AA"});
+        assert!(validate_record(&catalog, "com.example.by", &bare).is_err());
     }
 }

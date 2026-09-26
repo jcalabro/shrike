@@ -68,9 +68,8 @@ impl<'de> serde::Deserialize<'de> for Bytes {
             bytes: String,
         }
         let repr = Repr::deserialize(deserializer)?;
-        let decoded = data_encoding::BASE64_NOPAD
-            .decode(repr.bytes.as_bytes())
-            .map_err(serde::de::Error::custom)?;
+        let decoded = crate::cbor::json::decode_base64(&repr.bytes)
+            .ok_or_else(|| serde::de::Error::custom("invalid base64 in $bytes"))?;
         Ok(Bytes(decoded))
     }
 }

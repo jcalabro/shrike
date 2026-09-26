@@ -321,6 +321,24 @@ fn label_bytes_sig_json_uses_dollar_bytes() {
 }
 
 #[test]
+fn bytes_json_accepts_padded_and_unpadded_base64() {
+    use shrike::api::Bytes;
+
+    for s in ["3q2+7w", "3q2+7w=="] {
+        let bytes: Bytes = serde_json::from_value(serde_json::json!({ "$bytes": s })).unwrap();
+        assert_eq!(bytes.0, vec![0xDE, 0xAD, 0xBE, 0xEF], "{s}");
+    }
+    for s in ["3q2+7w=", "3q2-7w", "3q2+ 7w"] {
+        assert!(
+            serde_json::from_value::<Bytes>(serde_json::json!({ "$bytes": s })).is_err(),
+            "{s}"
+        );
+    }
+    let json = serde_json::to_value(Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])).unwrap();
+    assert_eq!(json, serde_json::json!({"$bytes": "3q2+7w"}));
+}
+
+#[test]
 fn repo_op_nullable_cid_encodes_null_and_roundtrips() {
     // M29 regression: repoOp.cid is required+nullable ("null" on deletes). The
     // key must always be present (CBOR null when None), and decode must accept

@@ -71,6 +71,9 @@ pub const USER_AGENT: &str = concat!("shrike/", env!("CARGO_PKG_VERSION"));
 
 mod platform;
 
+#[cfg(any(feature = "cbor", feature = "lexicon"))]
+mod base64;
+
 #[cfg(any(feature = "xrpc", feature = "identity", feature = "oauth"))]
 mod outbound;
 

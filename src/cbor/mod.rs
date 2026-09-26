@@ -16,6 +16,7 @@
 pub mod cid;
 pub mod decode;
 pub mod encode;
+pub mod json;
 pub mod value;
 pub mod varint;
 
@@ -39,6 +40,9 @@ pub enum CborError {
     /// A CID has an unsupported version, codec, or hash function.
     #[error("invalid CID: {0}")]
     InvalidCid(String),
+    /// The value is outside the atproto data model, such as a float.
+    #[error("not in the atproto data model: {0}")]
+    DataModel(String),
     /// An underlying I/O error from the reader or writer.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

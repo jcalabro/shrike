@@ -516,19 +516,14 @@ fn validate_bytes(
     max_length: Option<u64>,
     errors: &mut Vec<ValidationError>,
 ) {
-    // In JSON, bytes are represented as objects with a "$bytes" key (base64).
-    // We accept either that form or a plain string (unusual but permitted for
-    // forward compat).
+    // In JSON, bytes are an object with a "$bytes" key holding base64. The
+    // length limits apply to the decoded bytes.
     let byte_len: u64 = match value {
         Value::Object(m) => {
             if let Some(b64) = m.get("$bytes").and_then(|v| v.as_str()) {
-                // Decode the base64 to get the EXACT raw byte count (the prior
-                // (len*3)/4 approximation ignored padding and mis-evaluated
-                // minLength/maxLength at boundaries) and to validate that the
-                // value is in fact valid base64.
-                match decode_dollar_bytes(b64) {
-                    Ok(raw) => raw.len() as u64,
-                    Err(()) => {
+                match crate::base64::decode(b64) {
+                    Some(raw) => raw.len() as u64,
+                    None => {
                         other_err(path, "$bytes is not valid base64", errors);
                         return;
                     }
@@ -538,7 +533,6 @@ fn validate_bytes(
                 return;
             }
         }
-        Value::String(s) => s.len() as u64,
         _ => {
             field_err(
                 path,
@@ -570,18 +564,6 @@ fn validate_bytes(
             errors,
         );
     }
-}
-
-/// Decode a JSON `$bytes` base64 string. The data-model specifies base64; we
-/// accept both the padded and unpadded standard alphabets for robustness across
-/// producers, returning the raw bytes (used for exact length checks).
-fn decode_dollar_bytes(s: &str) -> Result<Vec<u8>, ()> {
-    if let Ok(raw) = data_encoding::BASE64.decode(s.as_bytes()) {
-        return Ok(raw);
-    }
-    data_encoding::BASE64_NOPAD
-        .decode(s.as_bytes())
-        .map_err(|_| ())
 }
 
 // ---------------------------------------------------------------------------

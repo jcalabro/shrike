@@ -138,7 +138,8 @@ impl Record {
 pub fn record_cbor_to_json(cbor: &[u8]) -> Result<serde_json::Value> {
     let value = crate::cbor::decode(cbor)
         .map_err(|_| Error::InvalidRecord("record is not valid DAG-CBOR"))?;
-    value_to_json(&value)
+    crate::cbor::json::value_to_json(&value)
+        .map_err(|_| Error::InvalidRecord("record is outside the atproto data model"))
 }
 
 impl Clone for Record {
@@ -163,48 +164,6 @@ impl std::fmt::Debug for Record {
             .field("cid", &self.cid.get())
             .finish()
     }
-}
-
-/// Map a decoded DAG-CBOR value to atproto dag-json.
-fn value_to_json(value: &Value<'_>) -> Result<serde_json::Value> {
-    use serde_json::Value as J;
-    Ok(match value {
-        Value::Unsigned(u) => J::Number((*u).into()),
-        Value::Signed(i) => J::Number((*i).into()),
-        // The atproto data model has no floats; canonical record bytes never
-        // contain one, so encountering it means the bytes are not a record.
-        Value::Float(_) => return Err(Error::InvalidRecord("float not in atproto data model")),
-        Value::Bool(b) => J::Bool(*b),
-        Value::Null => J::Null,
-        Value::Text(s) => J::String((*s).to_owned()),
-        Value::Bytes(b) => {
-            let mut obj = serde_json::Map::with_capacity(1);
-            obj.insert(
-                "$bytes".to_owned(),
-                J::String(data_encoding::BASE64_NOPAD.encode(b)),
-            );
-            J::Object(obj)
-        }
-        Value::Cid(c) => {
-            let mut obj = serde_json::Map::with_capacity(1);
-            obj.insert("$link".to_owned(), J::String(c.to_string()));
-            J::Object(obj)
-        }
-        Value::Array(items) => {
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                out.push(value_to_json(item)?);
-            }
-            J::Array(out)
-        }
-        Value::Map(entries) => {
-            let mut obj = serde_json::Map::with_capacity(entries.len());
-            for (k, v) in entries {
-                obj.insert((*k).to_owned(), value_to_json(v)?);
-            }
-            J::Object(obj)
-        }
-    })
 }
 
 #[cfg(test)]
