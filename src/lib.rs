@@ -32,9 +32,10 @@
 //! | `cbor` | DAG-CBOR encoding, decoding, and content-addressed hashing ([`cbor::Cid`]) |
 //! | `crypto` | P-256 and secp256k1 signing and verification |
 //! | `mst` | Merkle Search Tree for record storage |
-//! | `repo` | In-memory AT Protocol repository with signed commits |
+//! | `repo` | In-memory AT Protocol repository with signed commits and record proofs |
 //! | `car` | Content Addressable aRchive (CAR v1) reading and writing |
 //! | `lexicon` | Lexicon schema loading and record validation |
+//! | `lexicon-resolver` | Network Lexicon resolution (DNS → DID → verified record); native only |
 //! | `xrpc` | XRPC HTTP/2 client with retry, rate limiting, and auth |
 //! | `xrpc-server` | Axum-based XRPC server framework |
 //! | `service-auth` | Inter-service auth JWT creation and verification |

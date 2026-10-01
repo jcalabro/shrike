@@ -12,6 +12,10 @@ const MAX_HEADER_SIZE: u64 = 1 << 20;
 /// data. Legitimate AT Protocol records are far smaller than this.
 const MAX_BLOCK_SIZE: u64 = 128 << 20;
 
+/// Largest block buffer reserved up front from an untrusted length prefix.
+/// Bigger blocks grow as their bytes arrive.
+const PREALLOC_LIMIT: usize = 1 << 20;
+
 /// Streaming CAR v1 reader. Parses the header on construction, then yields
 /// blocks one at a time via `next_block` or `next_block_into`.
 pub struct Reader<R: Read> {
@@ -176,16 +180,18 @@ impl<R: Read> Reader<R> {
         })?;
         block.cid = Cid::from_bytes(&cid_buf)?;
 
-        // Read data into the reusable buffer — resizes but reuses allocation
+        // Read data into the reusable buffer, reusing its allocation. The
+        // length prefix is untrusted, so grow only as bytes actually arrive: a
+        // tiny input claiming a 128 MiB block must not allocate 128 MiB.
         let data_len = block_len_usize - 36;
-        block.data.resize(data_len, 0);
-        self.reader.read_exact(&mut block.data).map_err(|e| {
-            if e.kind() == io::ErrorKind::UnexpectedEof {
-                CarError::InvalidBlock("truncated block data".into())
-            } else {
-                CarError::Io(e)
-            }
-        })?;
+        block.data.clear();
+        block.data.reserve(data_len.min(PREALLOC_LIMIT));
+        let read = (&mut self.reader)
+            .take(data_len as u64)
+            .read_to_end(&mut block.data)?;
+        if read != data_len {
+            return Err(CarError::InvalidBlock("truncated block data".into()));
+        }
 
         Ok(true)
     }

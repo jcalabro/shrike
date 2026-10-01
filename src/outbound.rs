@@ -129,10 +129,21 @@ pub enum AddressPolicy {
 #[cfg(any(feature = "identity", feature = "oauth"))]
 #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 pub(crate) fn hardened_client(policy: AddressPolicy) -> reqwest::Client {
+    hardened_client_with_timeout(policy, OUTBOUND_TIMEOUT)
+}
+
+/// [`hardened_client`] with a caller-chosen total-request timeout. The connect
+/// timeout is the smaller of `timeout` and the default.
+#[cfg(any(feature = "identity", feature = "oauth"))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub(crate) fn hardened_client_with_timeout(
+    policy: AddressPolicy,
+    timeout: std::time::Duration,
+) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(OUTBOUND_TIMEOUT)
-        .connect_timeout(OUTBOUND_CONNECT_TIMEOUT);
+        .timeout(timeout)
+        .connect_timeout(timeout.min(OUTBOUND_CONNECT_TIMEOUT));
 
     if policy == AddressPolicy::DenyLocal {
         builder = builder.dns_resolver(std::sync::Arc::new(LocalFilteringResolver));

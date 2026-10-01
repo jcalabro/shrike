@@ -179,6 +179,36 @@ fn main() {
         }
     }
 
+    // --- Record proofs (repo_record_proof) ---
+    // The key, DID, and record must match the fuzz target's constants: every
+    // commit holds RECORD at com.example.present and nothing at
+    // com.example.absent.
+    {
+        use shrike::crypto::P256SigningKey;
+        use shrike::repo::Repo;
+        use shrike::syntax::{Did, Nsid, RecordKey, TidClock};
+
+        let key = P256SigningKey::from_bytes(&[7; 32]).expect("valid key");
+        let did = Did::try_from("did:plc:fuzzfuzzfuzzfuzzfuzzfuzz").expect("valid DID");
+        let col = Nsid::try_from("com.atproto.lexicon.schema").expect("valid NSID");
+        let rk = |s: &str| RecordKey::try_from(s).expect("valid rkey");
+        for filler in [0usize, 20, 300] {
+            let mut repo = Repo::new(did.clone(), TidClock::new(0).expect("clock"));
+            repo.create(&col, &rk("com.example.present"), b"\xa1\x62id\x73com.example.present")
+                .expect("create");
+            for i in 0..filler {
+                repo.create(&col, &rk(&format!("com.example.f{i:04}")), b"\xa0")
+                    .expect("create");
+            }
+            repo.commit(&key).expect("commit");
+            for rkey in ["com.example.present", "com.example.absent"] {
+                if let Ok(car) = repo.record_proof(&col, &rk(rkey)) {
+                    write_seed("repo_record_proof", &format!("{rkey}_{filler}"), &car);
+                }
+            }
+        }
+    }
+
     // --- Syntax identifiers (syntax_parsers) ---
     for (name, s) in [
         ("did_plc", "did:plc:z72i7hdynmk6r22z27h6tvur"),

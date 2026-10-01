@@ -7,9 +7,17 @@
 //! Schemas define object shapes, string formats, integer ranges, array
 //! constraints, and type references. The validator checks required fields,
 //! types, and constraints but allows extra fields not in the schema.
+//!
+//! With the `lexicon-resolver` feature, [`resolver::LexiconResolver`] fetches
+//! and verifies published schemas from the network by NSID.
 
 mod catalog;
 mod error;
+#[cfg(all(
+    feature = "lexicon-resolver",
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
+pub mod resolver;
 mod schema;
 mod validate;
 

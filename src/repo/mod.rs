@@ -30,10 +30,12 @@
 //! ```
 
 pub mod commit;
+pub mod proof;
 #[allow(clippy::module_inception)]
 pub mod repo;
 
 pub use commit::{Commit, SignedCommit};
+pub use proof::{ProofError, RecordProof, record_proof_car, verify_record_proof};
 pub use repo::Repo;
 
 use thiserror::Error;

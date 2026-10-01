@@ -18,7 +18,7 @@ pub struct Nsid(SmallString);
 impl Nsid {
     /// Returns the authority in normal DNS order (reversed domain portion), lowercased.
     ///
-    /// For `"app.bsky.feed.post"` returns `"bsky.app"`.
+    /// For `"app.bsky.feed.post"` returns `"feed.bsky.app"`.
     pub fn authority(&self) -> String {
         let s = &self.0;
         // Validated on construction — always has at least 3 dot-separated segments.

@@ -21,6 +21,6 @@ futures = { workspace = true }
 axum.workspace = true
 
 shrike = { path = "../..", features = [
-    "syntax", "crypto", "cbor", "car", "repo", "lexicon",
+    "syntax", "crypto", "cbor", "car", "repo", "lexicon", "lexicon-resolver",
     "identity", "xrpc", "streaming", "api", "oauth", "jetstream",
 ] }

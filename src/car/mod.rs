@@ -285,6 +285,28 @@ mod tests {
     }
 
     #[test]
+    fn reader_does_not_preallocate_untrusted_block_length() {
+        // Regression: a block length prefix claiming ~128 MiB followed by a
+        // valid CID and a few bytes must fail as truncated without reserving
+        // the claimed size up front.
+        let root = Cid::compute(Codec::Raw, b"root");
+        let mut car = write_all(&[root], &[]).unwrap();
+        crate::cbor::varint::encode_varint((128 << 20) - 1, &mut car);
+        car.extend_from_slice(&root.to_bytes());
+        car.extend_from_slice(&[0u8; 8]);
+
+        let mut reader = Reader::new(&car[..]).unwrap();
+        let mut block = Block::default();
+        let err = reader.next_block_into(&mut block).unwrap_err();
+        assert!(matches!(err, CarError::InvalidBlock(_)), "got {err:?}");
+        assert!(
+            block.data.capacity() <= 1 << 20,
+            "reserved {} bytes for an 8-byte payload",
+            block.data.capacity()
+        );
+    }
+
+    #[test]
     fn reader_block_with_wrong_cid_length_errors() {
         // Build a header, then a block whose announced length < 36 (too short for a CID).
         let root = Cid::compute(Codec::Raw, b"root");

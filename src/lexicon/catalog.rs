@@ -21,19 +21,7 @@ impl Catalog {
     /// Returns an error if the JSON is invalid, the document has an unsupported
     /// lexicon version, or is missing required fields.
     pub fn add_schema(&mut self, json: &[u8]) -> Result<(), LexiconError> {
-        let schema: Schema = serde_json::from_slice(json)?;
-        if schema.lexicon != 1 {
-            return Err(LexiconError::InvalidSchema(format!(
-                "unsupported lexicon version {}",
-                schema.lexicon
-            )));
-        }
-        if schema.id.is_empty() {
-            return Err(LexiconError::InvalidSchema("missing id".to_owned()));
-        }
-        for def in schema.defs.values() {
-            check_def(def)?;
-        }
+        let schema = check_schema(serde_json::from_slice(json)?)?;
         self.schemas.insert(schema.id.clone(), schema);
         Ok(())
     }
@@ -53,6 +41,23 @@ impl Default for Catalog {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Check a parsed Lexicon document the way [`Catalog::add_schema`] does.
+pub(crate) fn check_schema(schema: Schema) -> Result<Schema, LexiconError> {
+    if schema.lexicon != 1 {
+        return Err(LexiconError::InvalidSchema(format!(
+            "unsupported lexicon version {}",
+            schema.lexicon
+        )));
+    }
+    if schema.id.is_empty() {
+        return Err(LexiconError::InvalidSchema("missing id".to_owned()));
+    }
+    for def in schema.defs.values() {
+        check_def(def)?;
+    }
+    Ok(schema)
 }
 
 /// Structural checks the reference parser makes beyond the JSON shape.

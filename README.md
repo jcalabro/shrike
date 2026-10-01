@@ -16,9 +16,10 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `cbor` | [`shrike::cbor`](https://docs.rs/shrike/latest/shrike/cbor/) | DAG-CBOR encoding and decoding |
 | `crypto` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | P-256 and secp256k1 signing, verification, and did:key encoding |
 | `mst` | [`shrike::mst`](https://docs.rs/shrike/latest/shrike/mst/) | Merkle Search Tree implementation |
-| `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits |
+| `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits and record proofs |
 | `car` | [`shrike::car`](https://docs.rs/shrike/latest/shrike/car/) | CAR v1 archive reading and writing |
 | `lexicon` | [`shrike::lexicon`](https://docs.rs/shrike/latest/shrike/lexicon/) | Lexicon schema loading and record validation |
+| `lexicon-resolver` | [`shrike::lexicon::resolver`](https://docs.rs/shrike/latest/shrike/lexicon/resolver/) | network Lexicon resolution with verified record proofs (native only) |
 | `xrpc` | [`shrike::xrpc`](https://docs.rs/shrike/latest/shrike/xrpc/) | XRPC HTTP client with retry and auth |
 | `xrpc-server` | [`shrike::xrpc_server`](https://docs.rs/shrike/latest/shrike/xrpc_server/) | Axum-based XRPC server framework |
 | `identity` | [`shrike::identity`](https://docs.rs/shrike/latest/shrike/identity/) | DID resolution and handle verification |
@@ -29,7 +30,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `labeling` | [`shrike::labeling`](https://docs.rs/shrike/latest/shrike/labeling/) | label signing and verification |
 | `oauth` | [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth/) | OAuth 2.0 client with PKCE and DPoP, and permission scope parsing and evaluation |
 | `api` | [`shrike::api`](https://docs.rs/shrike/latest/shrike/api/) | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
-| `wasm` | browser-safe subset | client-side features for `wasm32-unknown-unknown` (everything except `xrpc-server`, `sync`, and `backfill`) |
+| `wasm` | browser-safe subset | client-side features for `wasm32-unknown-unknown` (everything except `xrpc-server`, `sync`, `backfill`, and `lexicon-resolver`) |
 
 ## License
 

@@ -36,6 +36,7 @@ cargo install cargo-fuzz
 | `cbor_encode_roundtrip` | structured (`arbitrary`) value → encode → decode → re-encode is a **fixed point** |
 | `cid_parse` | CID parse never panics; bytes/string forms are **fixed points** (no non-canonical aliases) |
 | `car_read_all` | CAR v1 reader never panics on malformed framing |
+| `repo_record_proof` | record proof verifier never panics, and never accepts a record the fixed signing key did not commit to |
 | `mst_decode_node_data` | node decoder never panics |
 | `mst_decode_node_data_roundtrip` | accepted node blocks decode→encode→decode **stably** |
 | `mst_load_and_walk` | `Tree::load` + traverse (the prefix-reslice / key-order path; H2/H3/H4) never panics |

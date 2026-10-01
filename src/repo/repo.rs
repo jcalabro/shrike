@@ -7,6 +7,7 @@ use crate::syntax::{Did, Nsid, RecordKey, TidClock};
 
 use crate::repo::RepoError;
 use crate::repo::commit::Commit;
+use crate::repo::proof::{ProofError, record_proof_car};
 
 /// Wrapper around `Rc<MemBlockStore>` that implements `BlockStore`.
 ///
@@ -37,6 +38,8 @@ pub struct Repo {
     clock: TidClock,
     store: Rc<MemBlockStore>,
     tree: Tree,
+    /// CID of the latest commit block.
+    head: Option<Cid>,
 }
 
 impl Repo {
@@ -49,6 +52,7 @@ impl Repo {
             clock,
             store,
             tree,
+            head: None,
         }
     }
 
@@ -123,7 +127,16 @@ impl Repo {
         let root_cid = self.tree.root_cid()?;
         let signed = Commit::create_signed(self.did.clone(), self.clock.next(), root_cid, key)?;
         self.store.put_block(signed.cid, signed.bytes)?;
+        self.head = Some(signed.cid);
         Ok(signed.commit)
+    }
+
+    /// Build a record proof CAR for `collection/rkey` at the latest commit,
+    /// as `com.atproto.sync.getRecord` serves it. Writes made since that
+    /// commit are not reflected. See [`crate::repo::proof`].
+    pub fn record_proof(&self, collection: &Nsid, rkey: &RecordKey) -> Result<Vec<u8>, ProofError> {
+        let head = self.head.ok_or(ProofError::NoCommit)?;
+        record_proof_car(&*self.store, &head, collection, rkey)
     }
 
     /// List all records in a collection, returned as (record_key, cid) pairs.
@@ -155,7 +168,7 @@ impl Repo {
 /// Uses direct string concatenation instead of `format!` to avoid the
 /// formatting machinery overhead.
 #[inline]
-fn mst_key(collection: &Nsid, rkey: &RecordKey) -> String {
+pub(crate) fn mst_key(collection: &Nsid, rkey: &RecordKey) -> String {
     let col = collection.as_str();
     let rk = rkey.as_str();
     let mut key = String::with_capacity(col.len() + 1 + rk.len());

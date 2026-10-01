@@ -131,6 +131,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "repo_record_proof"
+path = "fuzz_targets/repo_record_proof.rs"
+test = false
+doc = false
+bench = false
+
 # --- Firehose / sync frames ---
 [[bin]]
 name = "firehose_frame"

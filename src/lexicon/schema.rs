@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 /// A parsed Lexicon schema document.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Schema {
     /// Lexicon version (currently always 1).
     pub lexicon: u32,
@@ -20,7 +20,7 @@ pub struct Schema {
 }
 
 /// A single named definition within a schema.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 #[allow(clippy::enum_variant_names, clippy::large_enum_variant)]
 pub enum Def {
@@ -52,7 +52,7 @@ pub enum Def {
 }
 
 /// A record definition — the main type for AT Protocol records.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RecordDef {
     /// Key type for this record (e.g., "tid", "any", or a literal value).
     #[serde(default)]
@@ -65,7 +65,7 @@ pub struct RecordDef {
 }
 
 /// An object definition with named properties.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ObjectDef {
     /// Property names that must be present.
     #[serde(default)]
@@ -82,7 +82,7 @@ pub struct ObjectDef {
 }
 
 /// The schema for a single field within an object or array.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 pub enum FieldSchema {
     #[serde(rename = "string")]
@@ -219,7 +219,7 @@ impl FieldSchema {
 }
 
 /// A query (XRPC GET) definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct QueryDef {
     /// Query parameters (sent as URL query string).
     #[serde(default)]
@@ -236,7 +236,7 @@ pub struct QueryDef {
 }
 
 /// A procedure (XRPC POST) definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProcedureDef {
     /// Query parameters (sent as URL query string).
     #[serde(default)]
@@ -256,7 +256,7 @@ pub struct ProcedureDef {
 }
 
 /// A subscription definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SubscriptionDef {
     #[serde(default)]
     pub parameters: Option<ParamsDef>,
@@ -269,7 +269,7 @@ pub struct SubscriptionDef {
 }
 
 /// A request or response body.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BodyDef {
     /// MIME type (e.g., "application/json", "application/vnd.ipld.car").
     pub encoding: String,
@@ -285,7 +285,7 @@ pub struct BodyDef {
 ///
 /// These have `"type": "params"` in the JSON but are structurally similar to
 /// objects with `properties` and `required`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ParamsDef {
     #[serde(default)]
     pub required: Vec<String>,
@@ -296,7 +296,7 @@ pub struct ParamsDef {
 }
 
 /// A subscription message definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MessageDef {
     #[serde(default)]
     pub schema: Option<FieldSchema>,
@@ -305,7 +305,7 @@ pub struct MessageDef {
 }
 
 /// An error that an endpoint can return.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ErrorDef {
     pub name: String,
     #[serde(default)]
@@ -313,14 +313,14 @@ pub struct ErrorDef {
 }
 
 /// A token definition (an opaque string constant).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TokenDef {
     #[serde(default)]
     pub description: Option<String>,
 }
 
 /// A top-level string type definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StringTypeDef {
     #[serde(default)]
     pub description: Option<String>,
@@ -329,28 +329,28 @@ pub struct StringTypeDef {
 }
 
 /// A top-level boolean type definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BooleanTypeDef {
     #[serde(default)]
     pub description: Option<String>,
 }
 
 /// A top-level integer type definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct IntegerTypeDef {
     #[serde(default)]
     pub description: Option<String>,
 }
 
 /// A top-level bytes type definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BytesTypeDef {
     #[serde(default)]
     pub description: Option<String>,
 }
 
 /// A top-level array type definition.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ArrayTypeDef {
     pub items: FieldSchema,
     #[serde(default)]

@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 mod account;
 mod jetstream;
 mod key;
+mod lexicon;
 mod plc;
 mod record;
 mod repo;
@@ -43,6 +44,10 @@ enum Command {
     /// Validate a JSON record against a Lexicon schema
     Validate(validate::Args),
 
+    /// Resolve published Lexicon schemas from the network
+    #[command(subcommand)]
+    Lexicon(lexicon::Command),
+
     /// Fetch or list records
     #[command(subcommand)]
     Record(record::Command),
@@ -68,6 +73,7 @@ async fn main() -> Result<()> {
         Command::Plc(cmd) => plc::run(cmd).await,
         Command::Repo(cmd) => repo::run(cmd).await,
         Command::Validate(args) => validate::run(args),
+        Command::Lexicon(cmd) => lexicon::run(cmd).await,
         Command::Record(cmd) => record::run(cmd).await,
         Command::Account(cmd) => account::run(cmd).await,
         Command::Subscribe(args) => subscribe::run(args).await,

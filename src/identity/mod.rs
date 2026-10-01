@@ -6,6 +6,10 @@
 //!
 //! Use [`Directory::lookup_did`] to fetch a DID document.
 //!
+//! On native targets, [`resolve_lexicon_authority`] resolves an NSID to the
+//! DID that publishes its Lexicon (the `_lexicon` DNS TXT record), through a
+//! pluggable [`TxtResolver`].
+//!
 //! # SSRF considerations
 //!
 //! Resolution fetches URLs whose host is derived from untrusted input (the
@@ -45,13 +49,21 @@ pub mod directory;
 pub mod handle;
 #[allow(clippy::module_inception)]
 pub mod identity;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub mod nsid;
 pub mod plc;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub mod txt;
 
 pub use crate::outbound::AddressPolicy;
 pub use directory::Directory;
 pub use handle::resolve_handle;
 pub use identity::{DidDocument, Identity, Service, ServiceEndpoint, VerificationMethod};
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub use nsid::{LexiconAuthorityError, lexicon_authority_name, resolve_lexicon_authority};
 pub use plc::PlcClient;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub use txt::{SystemTxtResolver, TxtError, TxtRecord, TxtResolver};
 
 /// Errors that can occur during identity resolution.
 #[derive(Debug, thiserror::Error)]
