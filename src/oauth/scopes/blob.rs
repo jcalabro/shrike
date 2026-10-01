@@ -41,7 +41,8 @@ impl BlobPermission {
     }
 
     /// Whether this permission allows uploading a blob of MIME type `mime`.
-    /// Matching is case-sensitive.
+    /// Matching is case-sensitive and uses the patterns as written, while
+    /// rendering lowercases them, as the reference implementation does.
     pub fn matches(&self, mime: &str) -> bool {
         self.accept.iter().any(|a| syntax::matches_accept(a, mime))
     }
