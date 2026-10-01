@@ -334,6 +334,11 @@ pub(crate) mod test_server {
     /// Serve one `200 OK` response with a body of `x` bytes, then return the
     /// URL to GET. Writing stops early if the client hangs up.
     pub(crate) async fn serve(body: Body) -> String {
+        serve_status(200, body).await
+    }
+
+    /// [`serve`] with the given status code.
+    pub(crate) async fn serve_status(status: u16, body: Body) -> String {
         const CHUNK: usize = 16 * 1024;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -348,7 +353,7 @@ pub(crate) mod test_server {
                 Body::Chunked { len } => ("Transfer-Encoding: chunked".into(), Some(len), true),
                 Body::Endless => ("Transfer-Encoding: chunked".into(), None, true),
             };
-            let head = format!("HTTP/1.1 200 OK\r\n{head}\r\nConnection: close\r\n\r\n");
+            let head = format!("HTTP/1.1 {status} X\r\n{head}\r\nConnection: close\r\n\r\n");
             if sock.write_all(head.as_bytes()).await.is_err() {
                 return;
             }

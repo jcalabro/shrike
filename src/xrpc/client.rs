@@ -123,15 +123,6 @@ impl Client {
         }
     }
 
-    async fn check_response_size(resp: &reqwest::Response, limit: u64) -> Result<(), Error> {
-        if let Some(len) = resp.content_length()
-            && len > limit
-        {
-            return Err(Error::ResponseTooLarge { size: len, limit });
-        }
-        Ok(())
-    }
-
     fn parse_retry_after(resp: &reqwest::Response) -> Option<std::time::Duration> {
         resp.headers()
             .get("retry-after")
@@ -148,24 +139,53 @@ impl Client {
             return Error::RateLimited { retry_after };
         }
 
-        match resp.text().await {
-            Ok(body) => {
-                if let Ok(err_body) = serde_json::from_str::<XrpcErrorBody>(&body) {
-                    Error::Xrpc {
-                        status,
-                        error: err_body.error,
-                        message: err_body.message,
-                    }
-                } else {
-                    Error::Xrpc {
-                        status,
-                        error: String::from("Unknown"),
-                        message: body,
-                    }
-                }
+        let body = match Self::read_body(resp, MAX_RESPONSE_BODY).await {
+            Ok(body) => body,
+            Err(Error::Network(e)) => return Error::Network(e),
+            // Keep the status even when the body is too large to report.
+            Err(e) => {
+                return Error::Xrpc {
+                    status,
+                    error: String::from("Unknown"),
+                    message: e.to_string(),
+                };
             }
-            Err(e) => Error::Network(e),
+        };
+        match serde_json::from_slice::<XrpcErrorBody>(&body) {
+            Ok(err_body) => Error::Xrpc {
+                status,
+                error: err_body.error,
+                message: err_body.message,
+            },
+            Err(_) => Error::Xrpc {
+                status,
+                error: String::from("Unknown"),
+                message: String::from_utf8_lossy(&body).into_owned(),
+            },
         }
+    }
+
+    /// Read a response body, failing as soon as it exceeds `limit` bytes.
+    async fn read_body(resp: reqwest::Response, limit: u64) -> Result<Vec<u8>, Error> {
+        if let Some(size) = resp.content_length()
+            && size > limit
+        {
+            return Err(Error::ResponseTooLarge { size, limit });
+        }
+        crate::outbound::read_capped(resp, limit as usize)
+            .await?
+            // A chunked body's full size is unknown; report the first byte
+            // over the limit.
+            .ok_or(Error::ResponseTooLarge {
+                size: limit + 1,
+                limit,
+            })
+    }
+
+    /// Read and deserialize a JSON response body of at most 5 MB.
+    async fn read_json<O: DeserializeOwned>(resp: reqwest::Response) -> Result<O, Error> {
+        let body = Self::read_body(resp, MAX_RESPONSE_BODY).await?;
+        Ok(serde_json::from_slice(&body)?)
     }
 
     fn is_retryable(status: u16) -> bool {
@@ -183,8 +203,7 @@ impl Client {
         params: &P,
     ) -> Result<O, Error> {
         let resp = self.query_response(nsid, params).await?;
-        Self::check_response_size(&resp, MAX_RESPONSE_BODY).await?;
-        resp.json::<O>().await.map_err(Error::Network)
+        Self::read_json(resp).await
     }
 
     /// Execute an XRPC query and return the successful HTTP response with its
@@ -255,7 +274,8 @@ impl Client {
     /// Execute an XRPC procedure (POST /xrpc/{nsid} with JSON body).
     ///
     /// Serializes `input` as the JSON request body and deserializes the JSON
-    /// response into `O`. Retries on 5xx and 429 responses.
+    /// response into `O`. Retries on 5xx and 429 responses. Response bodies
+    /// are limited to 5 MB.
     pub async fn procedure<I: Serialize, O: DeserializeOwned>(
         &self,
         nsid: &str,
@@ -299,8 +319,7 @@ impl Client {
             let status = resp.status();
 
             if status.is_success() {
-                Self::check_response_size(&resp, MAX_RESPONSE_BODY).await?;
-                return resp.json::<O>().await.map_err(Error::Network);
+                return Self::read_json(resp).await;
             }
 
             let status_u16 = status.as_u16();
@@ -331,23 +350,11 @@ impl Client {
         Self::read_body(resp, MAX_RAW_RESPONSE_BODY).await
     }
 
-    /// Read a response body, failing as soon as it exceeds `limit` bytes.
-    async fn read_body(resp: reqwest::Response, limit: u64) -> Result<Vec<u8>, Error> {
-        Self::check_response_size(&resp, limit).await?;
-        crate::outbound::read_capped(resp, limit as usize)
-            .await?
-            // A chunked body's full size is unknown; report the first byte
-            // over the limit.
-            .ok_or(Error::ResponseTooLarge {
-                size: limit + 1,
-                limit,
-            })
-    }
-
     /// Execute an XRPC procedure with a raw binary body (POST).
     ///
     /// Sends `body` with the given `content_type` and returns the JSON response
-    /// as `serde_json::Value`. Useful for uploading blobs.
+    /// as `serde_json::Value`. Useful for uploading blobs. Response bodies are
+    /// limited to 5 MB.
     pub async fn procedure_raw(
         &self,
         nsid: &str,
@@ -391,11 +398,7 @@ impl Client {
             let status = resp.status();
 
             if status.is_success() {
-                Self::check_response_size(&resp, MAX_RESPONSE_BODY).await?;
-                return resp
-                    .json::<serde_json::Value>()
-                    .await
-                    .map_err(Error::Network);
+                return Self::read_json(resp).await;
             }
 
             let status_u16 = status.as_u16();
@@ -441,7 +444,7 @@ impl Client {
         self.record_rate_limit(&resp).await;
         let status = resp.status();
         if status.is_success() {
-            let auth: AuthInfo = resp.json().await.map_err(Error::Network)?;
+            let auth: AuthInfo = Self::read_json(resp).await?;
             let mut guard = self.auth.write().await;
             *guard = Some(auth.clone());
             return Ok(auth);
@@ -465,7 +468,7 @@ impl Client {
         self.record_rate_limit(&resp).await;
         let status = resp.status();
         if status.is_success() {
-            let auth: AuthInfo = resp.json().await.map_err(Error::Network)?;
+            let auth: AuthInfo = Self::read_json(resp).await?;
             let mut guard = self.auth.write().await;
             *guard = Some(auth.clone());
             return Ok(auth);
@@ -1011,5 +1014,143 @@ mod tests {
         assert!(
             matches!(err, Error::Xrpc { status: 400, ref error, .. } if error == "InvalidRequest")
         );
+    }
+
+    /// Run `call` against a one-shot server, failing if it never returns.
+    async fn against<T>(
+        status: u16,
+        body: crate::outbound::test_server::Body,
+        call: impl AsyncFnOnce(Client) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let url = crate::outbound::test_server::serve_status(status, body).await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            call(Client::with_retry(
+                &url,
+                RetryPolicy {
+                    max_retries: 0,
+                    ..RetryPolicy::default()
+                },
+            )),
+        )
+        .await
+        .expect("body cap must apply while reading")
+    }
+
+    fn is_json_cap(err: &Error) -> bool {
+        matches!(
+            err,
+            Error::ResponseTooLarge { size, limit: MAX_RESPONSE_BODY } if *size == MAX_RESPONSE_BODY + 1
+        )
+    }
+
+    #[tokio::test]
+    async fn json_methods_cap_endless_chunked_bodies() {
+        // Regression: these checked Content-Length, then let reqwest buffer the
+        // whole body, so a chunked response was unbounded.
+        use crate::outbound::test_server::Body::Endless;
+        let err = against(200, Endless, async |c| {
+            c.query::<_, serde_json::Value>("com.example.q", &json!({}))
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+
+        let err = against(200, Endless, async |c| {
+            c.procedure::<_, serde_json::Value>("com.example.p", &json!({}))
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+
+        let err = against(200, Endless, async |c| {
+            c.procedure_raw("com.example.p", vec![1, 2, 3], "application/octet-stream")
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+
+        let err = against(200, Endless, async |c| c.create_session("a", "b").await)
+            .await
+            .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+
+        let err = against(200, Endless, async |c| c.refresh_session().await)
+            .await
+            .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn json_methods_reject_declared_oversized_length() {
+        use crate::outbound::test_server::Body;
+        let len = MAX_RESPONSE_BODY as usize + 1;
+        let err = against(
+            200,
+            Body::Length {
+                declared: len,
+                len: 0,
+            },
+            async |c| {
+                c.query::<_, serde_json::Value>("com.example.q", &json!({}))
+                    .await
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(is_json_cap(&err), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn error_body_is_capped_but_keeps_status() {
+        use crate::outbound::test_server::Body::Endless;
+        let err = against(400, Endless, async |c| {
+            c.query::<_, serde_json::Value>("com.example.q", &json!({}))
+                .await
+        })
+        .await
+        .unwrap_err();
+        match err {
+            Error::Xrpc {
+                status,
+                error,
+                message,
+            } => {
+                assert_eq!(status, 400);
+                assert_eq!(error, "Unknown");
+                assert!(message.contains("response too large"), "{message}");
+            }
+            other => panic!("expected Xrpc error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn non_json_error_body_becomes_message() {
+        use crate::outbound::test_server::Body::Chunked;
+        let err = against(403, Chunked { len: 5 }, async |c| {
+            c.query::<_, serde_json::Value>("com.example.q", &json!({}))
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::Xrpc { status: 403, ref error, ref message } if error == "Unknown" && message == "xxxxx"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_json_body_is_a_json_error() {
+        use crate::outbound::test_server::Body::Chunked;
+        let err = against(200, Chunked { len: 5 }, async |c| {
+            c.query::<_, serde_json::Value>("com.example.q", &json!({}))
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::Json(_)), "{err:?}");
     }
 }

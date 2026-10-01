@@ -345,8 +345,6 @@ impl From<crate::xrpc::Error> for ServerError {
             Error::RateLimited { retry_after } => ServerError::rate_limited(retry_after),
             Error::Json(e) => invalid(format!("Invalid response payload: {e}")),
             err @ Error::ResponseTooLarge { .. } => invalid(err.to_string()),
-            // The client decodes JSON bodies through reqwest.
-            Error::Network(e) if e.is_decode() => invalid(format!("Invalid response payload: {e}")),
             Error::Network(_) => ServerError::new(
                 StatusCode::BAD_GATEWAY,
                 "InternalServerError",
