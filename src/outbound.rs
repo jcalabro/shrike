@@ -171,21 +171,6 @@ pub(crate) fn hardened_client(_policy: AddressPolicy) -> reqwest::Client {
     reqwest::Client::new()
 }
 
-#[cfg(all(
-    feature = "oauth",
-    not(all(target_family = "wasm", target_os = "unknown"))
-))]
-pub(crate) fn no_redirect_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-}
-
-#[cfg(all(feature = "oauth", target_family = "wasm", target_os = "unknown"))]
-pub(crate) fn no_redirect_client() -> Result<reqwest::Client, reqwest::Error> {
-    Ok(reqwest::Client::new())
-}
-
 /// Report whether `host` is a literal IP address in a blocked local/private
 /// range under `policy`. Returns `false` for hostnames (which are filtered at
 /// connect time by [`hardened_client`]'s resolver instead) and for any host

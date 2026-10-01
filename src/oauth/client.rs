@@ -240,7 +240,8 @@ impl OAuthClient {
             .ok_or_else(|| OAuthError::Identity("no PDS endpoint in DID document".into()))?;
 
         // 2. Fetch protected resource metadata from PDS.
-        let pr_meta = metadata::fetch_protected_resource_metadata(pds_url).await?;
+        let pr_meta =
+            metadata::fetch_protected_resource_metadata(pds_url, self.address_policy).await?;
 
         // 3. Get the first authorization server URL.
         let issuer = pr_meta
@@ -252,7 +253,7 @@ impl OAuthClient {
             .clone();
 
         // 4. Fetch and validate AS metadata.
-        let as_meta = metadata::fetch_auth_server_metadata(&issuer).await?;
+        let as_meta = metadata::fetch_auth_server_metadata(&issuer, self.address_policy).await?;
         metadata::validate_auth_server_metadata(&as_meta)?;
 
         // 5. Generate a P-256 DPoP key.
@@ -504,7 +505,8 @@ impl OAuthClient {
             })?
             .to_owned();
 
-        let pr_meta = metadata::fetch_protected_resource_metadata(&pds_url).await?;
+        let pr_meta =
+            metadata::fetch_protected_resource_metadata(&pds_url, self.address_policy).await?;
         let actual_issuer = pr_meta.authorization_servers.first().ok_or_else(|| {
             OAuthError::IssuerVerification("no authorization servers in resource metadata".into())
         })?;

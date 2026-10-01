@@ -1,3 +1,4 @@
+use crate::identity::AddressPolicy;
 use crate::oauth::OAuthError;
 use crate::oauth::jwk::JwkSet;
 
@@ -270,11 +271,36 @@ fn numeric_ipv4_host(host: &str) -> bool {
 /// are a few KiB; the cap keeps a hostile server from exhausting memory.
 const MAX_METADATA_BYTES: usize = 1 << 20;
 
-/// Read a metadata response body, capped at [`MAX_METADATA_BYTES`], as JSON.
-async fn read_metadata<T: serde::de::DeserializeOwned>(
-    resp: reqwest::Response,
+/// GET a metadata document as JSON through the hardened client for `policy`:
+/// no redirects, bounded timeouts, local destinations refused under
+/// [`AddressPolicy::DenyLocal`], and a body capped at [`MAX_METADATA_BYTES`].
+async fn get_metadata<T: serde::de::DeserializeOwned>(
+    url: &str,
+    policy: AddressPolicy,
     what: &str,
 ) -> Result<T, OAuthError> {
+    let parsed =
+        url::Url::parse(url).map_err(|e| OAuthError::Http(format!("{what}: invalid URL: {e}")))?;
+    // Literal IPs skip the client's filtering resolver, so check them here.
+    if parsed
+        .host_str()
+        .is_some_and(|host| crate::outbound::host_is_blocked_literal_ip(host, policy))
+    {
+        return Err(OAuthError::Http(format!(
+            "{what}: {url} is a local address, refused by the address policy"
+        )));
+    }
+
+    let http = crate::outbound::hardened_client(policy);
+    let resp =
+        crate::outbound::apply_user_agent(http.get(parsed).header("Accept", "application/json"))
+            .send()
+            .await?;
+
+    if resp.status() != reqwest::StatusCode::OK {
+        return Err(OAuthError::Http(format!("{what}: HTTP {}", resp.status())));
+    }
+
     let body = crate::outbound::read_capped(resp, MAX_METADATA_BYTES)
         .await?
         .ok_or_else(|| {
@@ -285,34 +311,20 @@ async fn read_metadata<T: serde::de::DeserializeOwned>(
 
 /// Fetch the protected resource metadata from a PDS.
 ///
-/// Builds the URL `{pds_url}/.well-known/oauth-protected-resource`, sends a
-/// GET request (following no redirects), and validates the response.
+/// GETs `{pds_url}/.well-known/oauth-protected-resource` and validates the
+/// response. The PDS URL usually comes from a DID document, so it is
+/// untrusted: `policy` decides whether local and private addresses may be
+/// reached.
 pub async fn fetch_protected_resource_metadata(
     pds_url: &str,
+    policy: AddressPolicy,
 ) -> Result<ProtectedResourceMetadata, OAuthError> {
     let url = format!(
         "{}/.well-known/oauth-protected-resource",
         pds_url.trim_end_matches('/')
     );
-
-    let no_redirect = crate::outbound::no_redirect_client()
-        .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
-
-    let resp = crate::outbound::apply_user_agent(
-        no_redirect.get(&url).header("Accept", "application/json"),
-    )
-    .send()
-    .await?;
-
-    if resp.status() != reqwest::StatusCode::OK {
-        return Err(OAuthError::Http(format!(
-            "protected resource metadata: HTTP {}",
-            resp.status()
-        )));
-    }
-
     let meta: ProtectedResourceMetadata =
-        read_metadata(resp, "protected resource metadata").await?;
+        get_metadata(&url, policy, "protected resource metadata").await?;
 
     if meta.authorization_servers.is_empty() {
         return Err(OAuthError::InvalidMetadata(
@@ -325,31 +337,19 @@ pub async fn fetch_protected_resource_metadata(
 
 /// Fetch the authorization server metadata from an issuer.
 ///
-/// Builds the URL `{issuer}/.well-known/oauth-authorization-server`, sends a
-/// GET request (following no redirects), and validates the issuer matches.
-pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetadata, OAuthError> {
+/// GETs `{issuer}/.well-known/oauth-authorization-server` and validates that
+/// the issuer matches. The issuer usually comes from a PDS's metadata, so it
+/// is untrusted: `policy` decides whether local and private addresses may be
+/// reached.
+pub async fn fetch_auth_server_metadata(
+    issuer: &str,
+    policy: AddressPolicy,
+) -> Result<AuthServerMetadata, OAuthError> {
     let url = format!(
         "{}/.well-known/oauth-authorization-server",
         issuer.trim_end_matches('/')
     );
-
-    let no_redirect = crate::outbound::no_redirect_client()
-        .map_err(|e| OAuthError::Http(format!("failed to build HTTP client: {e}")))?;
-
-    let resp = crate::outbound::apply_user_agent(
-        no_redirect.get(&url).header("Accept", "application/json"),
-    )
-    .send()
-    .await?;
-
-    if resp.status() != reqwest::StatusCode::OK {
-        return Err(OAuthError::Http(format!(
-            "auth server metadata: HTTP {}",
-            resp.status()
-        )));
-    }
-
-    let meta: AuthServerMetadata = read_metadata(resp, "auth server metadata").await?;
+    let meta: AuthServerMetadata = get_metadata(&url, policy, "auth server metadata").await?;
 
     let expected_issuer = issuer.trim_end_matches('/');
     let actual_issuer = meta.issuer.trim_end_matches('/');
@@ -707,7 +707,7 @@ mod tests {
             let url = serve(body).await;
             let err = tokio::time::timeout(
                 Duration::from_secs(10),
-                fetch_protected_resource_metadata(&url),
+                fetch_protected_resource_metadata(&url, AddressPolicy::AllowLocal),
             )
             .await
             .expect("protected resource metadata must stop reading at the cap")
@@ -715,17 +715,75 @@ mod tests {
             assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
 
             let url = serve(body).await;
-            let err =
-                tokio::time::timeout(Duration::from_secs(10), fetch_auth_server_metadata(&url))
-                    .await
-                    .expect("auth server metadata must stop reading at the cap")
-                    .unwrap_err();
+            let err = tokio::time::timeout(
+                Duration::from_secs(10),
+                fetch_auth_server_metadata(&url, AddressPolicy::AllowLocal),
+            )
+            .await
+            .expect("auth server metadata must stop reading at the cap")
+            .unwrap_err();
             assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
         }
 
         // A body within the cap is parsed as before.
         let url = serve(Body::Chunked { len: 16 }).await;
-        let err = fetch_auth_server_metadata(&url).await.unwrap_err();
+        let err = fetch_auth_server_metadata(&url, AddressPolicy::AllowLocal)
+            .await
+            .unwrap_err();
         assert!(matches!(err, OAuthError::Json(_)), "{err:?}");
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[tokio::test]
+    async fn metadata_fetches_refuse_local_addresses_under_deny_local() {
+        use crate::outbound::test_server::{Body, serve};
+
+        // A live local server, so a refusal cannot be a connection error.
+        let url = serve(Body::Chunked { len: 0 }).await;
+        let port = url::Url::parse(&url).unwrap().port().unwrap();
+        for base in [
+            url.clone(),
+            format!("http://[::1]:{port}"),
+            format!("http://0x7f.1:{port}"),
+            "http://169.254.169.254".into(),
+            "http://10.0.0.1".into(),
+        ] {
+            for err in [
+                fetch_protected_resource_metadata(&base, AddressPolicy::DenyLocal)
+                    .await
+                    .unwrap_err(),
+                fetch_auth_server_metadata(&base, AddressPolicy::DenyLocal)
+                    .await
+                    .unwrap_err(),
+            ] {
+                assert!(
+                    matches!(&err, OAuthError::Http(m) if m.contains("address policy")),
+                    "{base}: {err:?}"
+                );
+            }
+        }
+
+        // A hostname that resolves to loopback is refused at connect time.
+        let base = format!("http://localhost:{port}");
+        let err = fetch_auth_server_metadata(&base, AddressPolicy::DenyLocal)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OAuthError::Http(_)), "{err:?}");
+
+        // The same server is reachable when local addresses are allowed.
+        let err = fetch_auth_server_metadata(&url, AddressPolicy::AllowLocal)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OAuthError::Json(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn metadata_fetches_reject_unparseable_urls() {
+        for base in ["", "not a url", "://missing-scheme"] {
+            let err = fetch_auth_server_metadata(base, AddressPolicy::DenyLocal)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, OAuthError::Http(_)), "{base:?}: {err:?}");
+        }
     }
 }
