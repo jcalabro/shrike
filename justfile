@@ -27,9 +27,10 @@ wasm-check:
 test-wasm:
     wasm-pack test --node wasm
 
-# Run unit and integration tests
-test:
-    cargo test --workspace --features full --lib --bins --tests
+# Run unit and integration tests (nextest does not run doctests; see test-docs)
+[positional-arguments]
+test *ARGS:
+    cargo nextest run --workspace --features full --lib --bins --tests "$@"
 
 # Run Rust documentation examples
 test-docs:

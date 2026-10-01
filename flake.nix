@@ -45,6 +45,7 @@
               rustToolchain
               cargoNightly
               cargo-fuzz
+              cargo-nextest
               git
               just
               nodejs
