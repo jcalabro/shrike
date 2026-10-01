@@ -69,11 +69,8 @@ impl IncrementalReader {
     /// of the stream. After an error the stream is invalid and the reader
     /// should be discarded.
     pub fn next_block(&mut self) -> Result<Option<Block>, CarError> {
-        if self.roots.is_none() {
-            let Some(header) = self.next_frame(check_header_len)? else {
-                return Ok(None);
-            };
-            self.roots = Some(decode_header(&self.buf[header])?);
+        if !self.read_header()? {
+            return Ok(None);
         }
         let Some(frame) = self.next_frame(check_block_len)? else {
             return Ok(None);
@@ -83,6 +80,22 @@ impl IncrementalReader {
             cid: Cid::from_bytes(&frame[..CID_LEN])?,
             data: frame[CID_LEN..].to_vec(),
         }))
+    }
+
+    /// The data length (excluding the CID) of the next block, as soon as its
+    /// length prefix has arrived and before its body has.
+    ///
+    /// Lets a caller enforce its own limits before buffering a block that
+    /// would exceed them. Returns `Ok(None)` while the prefix (or the header)
+    /// is incomplete; consumes nothing but the header.
+    pub fn next_block_data_len(&mut self) -> Result<Option<usize>, CarError> {
+        if !self.read_header()? {
+            return Ok(None);
+        }
+        let Some((len, _)) = varint_from_slice(&self.buf[self.pos..])? else {
+            return Ok(None);
+        };
+        Ok(Some(check_block_len(len)? - CID_LEN))
     }
 
     /// Check that the stream ended cleanly: the header arrived and no partial
@@ -103,6 +116,18 @@ impl IncrementalReader {
             Some(_) => "truncated block data".into(),
             None => "truncated varint".into(),
         }))
+    }
+
+    /// Decode the header if it has not been yet, returning whether it has
+    /// arrived.
+    fn read_header(&mut self) -> Result<bool, CarError> {
+        if self.roots.is_none() {
+            let Some(header) = self.next_frame(check_header_len)? else {
+                return Ok(false);
+            };
+            self.roots = Some(decode_header(&self.buf[header])?);
+        }
+        Ok(true)
     }
 
     /// Consume the next length-prefixed frame if all of it has arrived,
@@ -188,8 +213,17 @@ mod tests {
             rest = tail;
             reader.push(chunk);
             loop {
+                // The lookahead predicts the length of the block next_block
+                // yields, and must fail only where next_block would (else the
+                // outcome differs from Reader's).
+                let Ok(len) = reader.next_block_data_len() else {
+                    return (roots(&reader), blocks, true);
+                };
                 match reader.next_block() {
-                    Ok(Some(b)) => blocks.push((b.cid, b.data)),
+                    Ok(Some(b)) => {
+                        assert_eq!(len, Some(b.data.len()));
+                        blocks.push((b.cid, b.data));
+                    }
                     Ok(None) => break,
                     Err(_) => return (roots(&reader), blocks, true),
                 }
@@ -287,6 +321,37 @@ mod tests {
         reader.push(&prefix);
         assert!(matches!(
             reader.next_block(),
+            Err(CarError::InvalidBlock(_))
+        ));
+    }
+
+    #[test]
+    fn next_block_data_len_arrives_with_the_length_prefix() {
+        let (_, blocks, car) = sample_car(&[300]);
+        let (header_len, n) = varint_from_slice(&car).unwrap().unwrap();
+        let blocks_at = n + header_len as usize;
+        let mut reader = IncrementalReader::new();
+        reader.push(&car[..blocks_at]);
+        assert_eq!(reader.next_block_data_len().unwrap(), None);
+        // The 2-byte prefix of a 336-byte frame, but none of its body.
+        reader.push(&car[blocks_at..blocks_at + 1]);
+        assert_eq!(reader.next_block_data_len().unwrap(), None);
+        reader.push(&car[blocks_at + 1..blocks_at + 2]);
+        assert_eq!(reader.next_block_data_len().unwrap(), Some(300));
+        assert!(reader.next_block().unwrap().is_none());
+        // Peeking consumes nothing.
+        reader.push(&car[blocks_at + 2..]);
+        assert_eq!(reader.next_block_data_len().unwrap(), Some(300));
+        assert_eq!(reader.next_block().unwrap().unwrap().data, blocks[0].data);
+        assert_eq!(reader.next_block_data_len().unwrap(), None);
+        reader.finish().unwrap();
+
+        // An invalid length fails as soon as it arrives.
+        let mut reader = IncrementalReader::new();
+        reader.push(&car[..blocks_at]);
+        reader.push(&[CID_LEN as u8 - 1]);
+        assert!(matches!(
+            reader.next_block_data_len(),
             Err(CarError::InvalidBlock(_))
         ));
     }

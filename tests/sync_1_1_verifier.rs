@@ -1444,7 +1444,7 @@ async fn resync_streams_repo_car_in_chunks() {
 fn car_prefix_announcing_huge_block(fixture_car: &[u8]) -> Vec<u8> {
     let (roots, _) = car::read_all(fixture_car).unwrap();
     let mut prefix = car::write_all(&roots, &[]).unwrap();
-    prefix.extend_from_slice(&[0x80, 0x80, 0x80, 0x40]); // varint 128 MiB
+    prefix.extend_from_slice(&HUGE_BLOCK_PREFIX);
     prefix
 }
 
@@ -1478,6 +1478,103 @@ async fn resync_stops_reading_endless_repo_stream_at_car_byte_limit() {
     ));
     assert_eq!(pulled.load(Ordering::SeqCst), 1 + 64);
     assert_eq!(verifier.stats().oversized_commits, 1);
+}
+
+/// The varint length prefix of a maximal (128 MiB) CAR block.
+const HUGE_BLOCK_PREFIX: [u8; 4] = [0x80, 0x80, 0x80, 0x40];
+
+#[tokio::test]
+async fn resync_refuses_block_over_block_byte_limit_from_its_length_prefix() {
+    // Regression: the block byte limit applied only once a block had fully
+    // arrived and been copied out, so a source could make the verifier buffer
+    // up to 128 MiB for a single block under a far smaller limit.
+    let fixture = commit_fixture_create();
+    let prefix = car_prefix_announcing_huge_block(&fixture.raw_commit.blocks);
+    let source = StreamingRepoSource::endless(prefix, vec![0; 1024]);
+    let pulled = Arc::clone(&source.pulled);
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(source),
+        RepoLoadLimits {
+            max_block_bytes: 64 * 1024,
+            ..RepoLoadLimits::default()
+        },
+    );
+
+    let err = tokio::time::timeout(TEST_TIMEOUT, verifier.resync(&fixture.raw_commit.repo))
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(*source, VerifierError::OversizedCommit {
+                field: "repo_block_bytes",
+                bytes,
+                limit: 65_536,
+                ..
+            } if bytes == (128 << 20) - 36)
+    ));
+    assert_eq!(pulled.load(Ordering::SeqCst), 1);
+    assert_eq!(verifier.stats().oversized_commits, 1);
+}
+
+#[tokio::test]
+async fn resync_refuses_block_over_block_count_limit_from_its_length_prefix() {
+    // Regression: the block count limit applied only once the extra block had
+    // fully arrived and been copied out.
+    let fixture = commit_fixture_create();
+    let (_, blocks) = car::read_all(&fixture.raw_commit.blocks[..]).unwrap();
+    let mut prefix = fixture.raw_commit.blocks.clone();
+    prefix.extend_from_slice(&HUGE_BLOCK_PREFIX);
+    let source = StreamingRepoSource::endless(prefix, vec![0; 1024]);
+    let pulled = Arc::clone(&source.pulled);
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(source),
+        RepoLoadLimits {
+            max_blocks: blocks.len(),
+            ..RepoLoadLimits::default()
+        },
+    );
+
+    let err = tokio::time::timeout(TEST_TIMEOUT, verifier.resync(&fixture.raw_commit.repo))
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(*source, VerifierError::OversizedCommit { field: "repo_blocks", bytes, limit, .. }
+                if bytes == blocks.len() + 1 && limit == blocks.len())
+    ));
+    assert_eq!(pulled.load(Ordering::SeqCst), 1);
+    assert_eq!(verifier.stats().oversized_commits, 1);
+}
+
+#[tokio::test]
+async fn resync_accepts_repo_exactly_at_block_limits() {
+    let fixture = commit_fixture_create();
+    let (_, blocks) = car::read_all(&fixture.raw_commit.blocks[..]).unwrap();
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(StreamingRepoSource::chunked(
+            fixture.raw_commit.blocks.clone(),
+            5,
+        )),
+        RepoLoadLimits {
+            max_blocks: blocks.len(),
+            max_block_bytes: blocks.iter().map(|b| b.data.len()).sum(),
+            ..RepoLoadLimits::default()
+        },
+    );
+
+    verifier.resync(&fixture.raw_commit.repo).await.unwrap();
 }
 
 #[tokio::test]

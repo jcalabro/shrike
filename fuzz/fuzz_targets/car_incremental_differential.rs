@@ -2,7 +2,8 @@
 //! Differential oracle: the chunk-fed `IncrementalReader` (used to stream
 //! getRepo bodies) MUST agree with the blocking `Reader` on every input and
 //! every chunking: the same roots, the same blocks, and failure at the same
-//! point. The first input byte picks the chunk size.
+//! point. The first input byte picks the chunk size. `next_block_data_len`
+//! must agree with the blocks `next_block` then yields.
 
 use libfuzzer_sys::fuzz_target;
 use shrike::car::{IncrementalReader, Reader};
@@ -31,8 +32,17 @@ fn read_incremental(car: &[u8], chunk: usize) -> Outcome {
     for piece in car.chunks(chunk) {
         reader.push(piece);
         loop {
+            // The lookahead predicts the length of the block next_block yields,
+            // and must fail only where next_block would (else the outcome
+            // differs from Reader's).
+            let Ok(len) = reader.next_block_data_len() else {
+                return (reader.roots().map(<[Cid]>::to_vec), blocks, true);
+            };
             match reader.next_block() {
-                Ok(Some(b)) => blocks.push((b.cid, b.data)),
+                Ok(Some(b)) => {
+                    assert_eq!(len, Some(b.data.len()));
+                    blocks.push((b.cid, b.data));
+                }
                 Ok(None) => break,
                 Err(_) => return (reader.roots().map(<[Cid]>::to_vec), blocks, true),
             }

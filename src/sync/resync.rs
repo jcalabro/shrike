@@ -87,27 +87,39 @@ impl<'a> RepoCarLoader<'a> {
             ));
         }
         self.reader.push(chunk);
-        while let Some(block) = self.reader.next_block().map_err(|e| self.car_err(e))? {
+        loop {
+            // Check the limits against each block's length prefix, so a block
+            // that would cross one is refused before its body is buffered.
+            let Some(len) = self
+                .reader
+                .next_block_data_len()
+                .map_err(|e| self.car_err(e))?
+            else {
+                return Ok(());
+            };
+            // Duplicates count towards the limits: they cost the same to receive.
+            let block_count = self.block_count + 1;
+            if block_count > self.limits.max_blocks {
+                return Err(self.oversized("repo_blocks", block_count, self.limits.max_blocks));
+            }
+            let block_bytes = self.block_bytes.saturating_add(len);
+            if block_bytes > self.limits.max_block_bytes {
+                return Err(self.oversized(
+                    "repo_block_bytes",
+                    block_bytes,
+                    self.limits.max_block_bytes,
+                ));
+            }
+            let Some(block) = self.reader.next_block().map_err(|e| self.car_err(e))? else {
+                return Ok(());
+            };
+            self.block_count = block_count;
+            self.block_bytes = block_bytes;
             self.add_block(block)?;
         }
-        Ok(())
     }
 
     fn add_block(&mut self, block: car::Block) -> Result<(), VerifierError> {
-        // Duplicates count towards the limits: they cost the same to receive.
-        self.block_count += 1;
-        if self.block_count > self.limits.max_blocks {
-            return Err(self.oversized("repo_blocks", self.block_count, self.limits.max_blocks));
-        }
-        self.block_bytes = self.block_bytes.saturating_add(block.data.len());
-        if self.block_bytes > self.limits.max_block_bytes {
-            return Err(self.oversized(
-                "repo_block_bytes",
-                self.block_bytes,
-                self.limits.max_block_bytes,
-            ));
-        }
-
         let computed = Cid::compute(block.cid.codec(), &block.data);
         if computed != block.cid {
             return Err(self.car_err(car::CarError::InvalidBlock(format!(
