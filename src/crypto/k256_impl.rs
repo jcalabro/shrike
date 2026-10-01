@@ -122,6 +122,21 @@ impl VerifyingKey for K256VerifyingKey {
             .map_err(|e| CryptoError::InvalidSignature(e.to_string()))
     }
 
+    fn verify_malleable(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError> {
+        let digest = Sha256::digest(content);
+        let sig = K256Sig::from_bytes(sig.as_bytes().into())
+            .map_err(|e| CryptoError::InvalidSignature(e.to_string()))?;
+        // (r, s) verifies iff (r, n - s) does, so check the low-S form.
+        let sig = sig.normalize_s().unwrap_or(sig);
+        self.inner
+            .verify_prehash(&digest, &sig)
+            .map_err(|e| CryptoError::InvalidSignature(e.to_string()))
+    }
+
+    fn jwt_alg(&self) -> &'static str {
+        "ES256K"
+    }
+
     fn did_key(&self) -> String {
         let mb = self.multibase();
         format!("did:key:{}", mb)
@@ -220,5 +235,30 @@ mod tests {
                 s[0]
             );
         }
+    }
+
+    fn high_s(sig: &Signature) -> Signature {
+        let low = K256Sig::from_bytes(sig.as_bytes().into()).unwrap();
+        let high = K256Sig::from_scalars(low.r().to_bytes(), (-*low.s()).to_bytes()).unwrap();
+        Signature::from_bytes(high.to_bytes().into())
+    }
+
+    #[test]
+    fn k256_malleable_verification_accepts_high_s() {
+        let sk = K256SigningKey::generate();
+        let pk = sk.public_key();
+        assert_eq!(pk.jwt_alg(), "ES256K");
+        let low = sk.sign(b"jwt").unwrap();
+        let high = high_s(&low);
+        assert_ne!(low.as_bytes(), high.as_bytes());
+
+        pk.verify(b"jwt", &low).unwrap();
+        assert!(pk.verify(b"jwt", &high).is_err());
+        pk.verify_malleable(b"jwt", &low).unwrap();
+        pk.verify_malleable(b"jwt", &high).unwrap();
+
+        assert!(pk.verify_malleable(b"other", &high).is_err());
+        let other = K256SigningKey::generate();
+        assert!(other.public_key().verify_malleable(b"jwt", &high).is_err());
     }
 }

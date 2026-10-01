@@ -37,6 +37,7 @@
 //! | `lexicon` | Lexicon schema loading and record validation |
 //! | `xrpc` | XRPC HTTP/2 client with retry, rate limiting, and auth |
 //! | `xrpc-server` | Axum-based XRPC server framework |
+//! | `service-auth` | Inter-service auth JWT creation and verification |
 //! | `identity` | DID resolution and handle verification |
 //! | `streaming` | Firehose and Jetstream WebSocket consumers with reconnection |
 //! | `sync` | Repository sync and commit verification |
@@ -97,6 +98,9 @@ pub mod car;
 
 #[cfg(feature = "lexicon")]
 pub mod lexicon;
+
+#[cfg(feature = "service-auth")]
+pub mod service_auth;
 
 #[cfg(feature = "xrpc")]
 pub mod xrpc;

@@ -14,6 +14,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 bumpalo = "3"
 
 [dependencies.shrike]
@@ -21,6 +22,7 @@ path = ".."
 features = [
     "syntax", "cbor", "mst", "car", "repo", "crypto",
     "lexicon", "streaming", "sync", "labeling", "jetstream",
+    "service-auth", "xrpc-server",
 ]
 
 # Seed-corpus generator (a normal binary, not a fuzz target).
@@ -198,6 +200,27 @@ bench = false
 [[bin]]
 name = "jetstream_filter_wildcard"
 path = "fuzz_targets/jetstream_filter_wildcard.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xrpc_frame"
+path = "fuzz_targets/xrpc_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xrpc_params"
+path = "fuzz_targets/xrpc_params.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "service_jwt_verify"
+path = "fuzz_targets/service_jwt_verify.rs"
 test = false
 doc = false
 bench = false

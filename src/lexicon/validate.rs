@@ -85,6 +85,218 @@ pub fn validate_value(
     finalize(errors)
 }
 
+/// Validate XRPC parameters against the `parameters` of the query, procedure
+/// or subscription `nsid`, filling in declared defaults.
+///
+/// `params` holds already-decoded values (integers, booleans, strings and
+/// arrays of them). Keys not declared by the schema are left untouched. As in
+/// the reference, a missing required parameter with a default is satisfied by
+/// the default.
+pub fn validate_params(
+    catalog: &Catalog,
+    nsid: &str,
+    params: &mut serde_json::Map<String, Value>,
+) -> Result<(), ValidationError> {
+    let def = method_def(catalog, nsid)?;
+    let Some(params_def) = (match def {
+        Def::Query(q) => q.parameters.as_ref(),
+        Def::Procedure(p) => p.parameters.as_ref(),
+        Def::Subscription(s) => s.parameters.as_ref(),
+        _ => return Err(not_a_method(nsid)),
+    }) else {
+        return Ok(());
+    };
+
+    let mut errors = Vec::new();
+    // Deterministic error order regardless of HashMap iteration order.
+    let mut names: Vec<&String> = params_def.properties.keys().collect();
+    names.sort();
+    for name in names {
+        let Some(field) = params_def.properties.get(name) else {
+            continue;
+        };
+        match params.get(name.as_str()) {
+            Some(value) => {
+                validate_field(catalog, nsid, name, field, value, false, &mut errors);
+            }
+            None => {
+                if let Some(default) = field.default_value() {
+                    params.insert(name.clone(), default);
+                } else if params_def.required.contains(name) {
+                    field_err(name, ValidationErrorKind::Required, &mut errors);
+                }
+            }
+        }
+    }
+    finalize(errors)
+}
+
+/// Validate a procedure's JSON input body, filling in declared defaults.
+///
+/// Passes if the procedure declares no input schema (the reference does the
+/// same; encoding checks are the server's job).
+pub fn validate_input(
+    catalog: &Catalog,
+    nsid: &str,
+    value: &mut Value,
+) -> Result<(), ValidationError> {
+    let schema = match method_def(catalog, nsid)? {
+        Def::Procedure(p) => p.input.as_ref().and_then(|b| b.schema.as_ref()),
+        _ => return Err(not_a_method(nsid)),
+    };
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    validate_value_at(catalog, nsid, "input", schema, value)?;
+    apply_defaults(catalog, nsid, schema, value);
+    Ok(())
+}
+
+/// Validate a query's or procedure's JSON output body.
+pub fn validate_output(
+    catalog: &Catalog,
+    nsid: &str,
+    value: &Value,
+) -> Result<(), ValidationError> {
+    let schema = match method_def(catalog, nsid)? {
+        Def::Query(q) => q.output.as_ref(),
+        Def::Procedure(p) => p.output.as_ref(),
+        _ => return Err(not_a_method(nsid)),
+    }
+    .and_then(|b| b.schema.as_ref());
+    match schema {
+        Some(schema) => validate_value_at(catalog, nsid, "output", schema, value),
+        None => Ok(()),
+    }
+}
+
+/// Validate a subscription message (including its `$type`).
+pub fn validate_message(
+    catalog: &Catalog,
+    nsid: &str,
+    value: &Value,
+) -> Result<(), ValidationError> {
+    let schema = match method_def(catalog, nsid)? {
+        Def::Subscription(s) => s.message.as_ref().and_then(|m| m.schema.as_ref()),
+        _ => return Err(not_a_method(nsid)),
+    };
+    match schema {
+        Some(schema) => validate_value_at(catalog, nsid, "message", schema, value),
+        None => Ok(()),
+    }
+}
+
+fn method_def<'a>(catalog: &'a Catalog, nsid: &str) -> Result<&'a Def, ValidationError> {
+    catalog
+        .main_def(nsid)
+        .ok_or_else(|| ValidationError::Schema(format!("no lexicon for {nsid}")))
+}
+
+fn not_a_method(nsid: &str) -> ValidationError {
+    ValidationError::Schema(format!("lexicon {nsid} is not a matching XRPC method"))
+}
+
+fn validate_value_at(
+    catalog: &Catalog,
+    nsid: &str,
+    path: &str,
+    field: &FieldSchema,
+    value: &Value,
+) -> Result<(), ValidationError> {
+    let mut errors = Vec::new();
+    validate_field(catalog, nsid, path, field, value, false, &mut errors);
+    finalize(errors)
+}
+
+/// Bound on ref/union indirection while filling defaults; data depth bounds
+/// everything else.
+const MAX_DEFAULT_REF_DEPTH: usize = 64;
+
+/// Insert declared defaults for missing object properties, recursing into
+/// present nested objects, arrays, refs and unions. Call only on a value that
+/// has already validated.
+fn apply_defaults(catalog: &Catalog, nsid: &str, field: &FieldSchema, value: &mut Value) {
+    apply_defaults_inner(catalog, nsid, field, value, 0);
+}
+
+fn apply_defaults_inner(
+    catalog: &Catalog,
+    nsid: &str,
+    field: &FieldSchema,
+    value: &mut Value,
+    depth: usize,
+) {
+    if depth > MAX_DEFAULT_REF_DEPTH {
+        return;
+    }
+    match field {
+        FieldSchema::Object(obj) => apply_object_defaults(catalog, nsid, obj, value, depth),
+        FieldSchema::Array { items, .. } => {
+            if let Value::Array(elems) = value {
+                for elem in elems {
+                    apply_defaults_inner(catalog, nsid, items, elem, depth);
+                }
+            }
+        }
+        FieldSchema::Ref { reference, .. } => {
+            let (target, def_name) = split_ref(nsid, reference);
+            apply_def_defaults(catalog, &target, def_name, value, depth + 1);
+        }
+        FieldSchema::Union { refs, .. } => {
+            let Some(type_name) = value.get("$type").and_then(Value::as_str) else {
+                return;
+            };
+            let Some((target, def_name)) = refs
+                .iter()
+                .find_map(|r| union_ref_match(nsid, r, type_name))
+            else {
+                return;
+            };
+            apply_def_defaults(catalog, &target, def_name, value, depth + 1);
+        }
+        _ => {}
+    }
+}
+
+fn apply_def_defaults(
+    catalog: &Catalog,
+    nsid: &str,
+    def_name: &str,
+    value: &mut Value,
+    depth: usize,
+) {
+    match catalog.get(nsid).and_then(|s| s.defs.get(def_name)) {
+        Some(Def::Object(obj)) => apply_object_defaults(catalog, nsid, obj, value, depth),
+        Some(Def::Record(RecordDef { record, .. })) => {
+            apply_object_defaults(catalog, nsid, record, value, depth)
+        }
+        _ => {}
+    }
+}
+
+fn apply_object_defaults(
+    catalog: &Catalog,
+    nsid: &str,
+    obj: &ObjectDef,
+    value: &mut Value,
+    depth: usize,
+) {
+    let Value::Object(map) = value else {
+        return;
+    };
+    for (name, field) in &obj.properties {
+        match map.get_mut(name.as_str()) {
+            Some(Value::Null) => {}
+            Some(child) => apply_defaults_inner(catalog, nsid, field, child, depth),
+            None => {
+                if let Some(default) = field.default_value() {
+                    map.insert(name.clone(), default);
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -156,6 +368,7 @@ fn validate_field(
         FieldSchema::String {
             min_length,
             max_length,
+            min_graphemes,
             max_graphemes,
             r#enum,
             format,
@@ -167,6 +380,7 @@ fn validate_field(
             StringConstraints {
                 min_length: *min_length,
                 max_length: *max_length,
+                min_graphemes: *min_graphemes,
                 max_graphemes: *max_graphemes,
                 enum_vals: r#enum.as_deref(),
                 format: format.as_deref(),
@@ -265,6 +479,7 @@ fn validate_field(
 struct StringConstraints<'a> {
     min_length: Option<u64>,
     max_length: Option<u64>,
+    min_graphemes: Option<u64>,
     max_graphemes: Option<u64>,
     enum_vals: Option<&'a [String]>,
     format: Option<&'a str>,
@@ -337,17 +552,17 @@ fn check_string_constraints(
         );
     }
 
-    if let Some(max_g) = c.max_graphemes {
+    if c.min_graphemes.is_some() || c.max_graphemes.is_some() {
         let gc = grapheme_count(s) as u64;
-        if gc > max_g {
-            field_err(
-                path,
-                ValidationErrorKind::TooLong {
-                    max: max_g,
-                    got: gc,
-                },
-                errors,
-            );
+        if let Some(min) = c.min_graphemes
+            && gc < min
+        {
+            field_err(path, ValidationErrorKind::TooShort { min, got: gc }, errors);
+        }
+        if let Some(max) = c.max_graphemes
+            && gc > max
+        {
+            field_err(path, ValidationErrorKind::TooLong { max, got: gc }, errors);
         }
     }
 
@@ -356,10 +571,33 @@ fn check_string_constraints(
     }
 }
 
-/// Count Unicode scalar values as a proxy for grapheme clusters.
-/// Good enough for AT Protocol limits without pulling in a heavy dependency.
+/// Count extended grapheme clusters (UAX #29), as the reference does.
 fn grapheme_count(s: &str) -> usize {
-    s.chars().count()
+    use unicode_segmentation::UnicodeSegmentation;
+    s.graphemes(true).count()
+}
+
+/// The reference `isValidUri`: `/^\w+:(?:\/\/)?[^\s/][^\s]*$/`.
+fn is_valid_uri(s: &str) -> bool {
+    // JavaScript's `\s` also matches U+FEFF, which Rust does not count as
+    // whitespace.
+    let is_space = |c: char| c.is_whitespace() || c == '\u{feff}';
+    let Some((scheme, rest)) = s.split_once(':') else {
+        return false;
+    };
+    if scheme.is_empty()
+        || !scheme
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return false;
+    }
+    let rest = rest.strip_prefix("//").unwrap_or(rest);
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(c) if c != '/' && !is_space(c) => chars.all(|c| !is_space(c)),
+        _ => false,
+    }
 }
 
 fn validate_string_format(path: &str, format: &str, s: &str, errors: &mut Vec<ValidationError>) {
@@ -377,8 +615,9 @@ fn validate_string_format(path: &str, format: &str, s: &str, errors: &mut Vec<Va
         "tid" => Tid::try_from(s).is_ok(),
         "record-key" => RecordKey::try_from(s).is_ok(),
         "language" => Language::try_from(s).is_ok(),
-        // "cid" and "uri" are valid but we don't have parsers for them yet —
-        // skip for forward compatibility.
+        "cid" => crate::cbor::json::is_cid_string(s),
+        "uri" => is_valid_uri(s),
+        // Unknown formats are accepted for forward compatibility.
         _ => return,
     };
 
@@ -576,6 +815,8 @@ fn validate_cid_link(path: &str, value: &Value, errors: &mut Vec<ValidationError
         Value::Object(m) => {
             if !m.contains_key("$link") {
                 other_err(path, "cid-link object missing $link key", errors);
+            } else if !is_link(m) {
+                other_err(path, "cid-link $link is not a valid CID", errors);
             }
         }
         _ => {
@@ -589,6 +830,15 @@ fn validate_cid_link(path: &str, value: &Value, errors: &mut Vec<ValidationError
             );
         }
     }
+}
+
+/// Whether `m` is exactly `{"$link": "<cid>"}`; anything else is a plain
+/// object in the JSON data model, not a link.
+fn is_link(m: &serde_json::Map<String, Value>) -> bool {
+    m.len() == 1
+        && m.get("$link")
+            .and_then(Value::as_str)
+            .is_some_and(crate::cbor::json::is_cid_string)
 }
 
 // ---------------------------------------------------------------------------
@@ -628,6 +878,8 @@ fn validate_blob(
         Some(Value::Object(r)) => {
             if !r.get("$link").map(|v| v.is_string()).unwrap_or(false) {
                 other_err(path, "blob ref missing $link string", errors);
+            } else if !is_link(r) {
+                other_err(path, "blob ref $link is not a valid CID", errors);
             }
         }
         Some(other) => other_err(
@@ -776,9 +1028,14 @@ fn validate_object_inner(
     let nullable_set: std::collections::HashSet<&str> =
         obj.nullable.iter().map(String::as_str).collect();
 
-    // Check required fields.
+    // Check required fields. A missing field with a declared default is
+    // satisfied by that default, as in the reference.
     for req in &obj.required {
         match map.get(req.as_str()) {
+            None if obj
+                .properties
+                .get(req)
+                .is_some_and(|f| f.default_value().is_some()) => {}
             None => {
                 let field_path = child_path(path, req);
                 field_err(&field_path, ValidationErrorKind::Required, errors);
@@ -931,6 +1188,19 @@ fn validate_def(
 // Union
 // ---------------------------------------------------------------------------
 
+/// If the union ref `reference` (relative to `nsid`) names the type
+/// `type_name`, return its target NSID and def name. `nsid` and `nsid#main`
+/// are the same type on both sides.
+fn union_ref_match<'a>(
+    nsid: &str,
+    reference: &'a str,
+    type_name: &str,
+) -> Option<(String, &'a str)> {
+    let (target, def_name) = split_ref(nsid, reference);
+    let (type_nsid, type_def) = type_name.split_once('#').unwrap_or((type_name, "main"));
+    (type_nsid == target && type_def == def_name).then_some((target, def_name))
+}
+
 fn validate_union(
     catalog: &Catalog,
     nsid: &str,
@@ -970,20 +1240,20 @@ fn validate_union(
             return;
         }
     };
+    if type_name.matches('#').count() > 1 {
+        other_err(
+            path,
+            format!("union $type {type_name:?} has more than one #"),
+            errors,
+        );
+        return;
+    }
 
     // Try each ref to find a match.
     for reference in refs {
-        let (target_nsid, def_name) = split_ref(nsid, reference);
-
-        let full_ref = if def_name == "main" {
-            target_nsid.clone()
-        } else {
-            format!("{target_nsid}#{def_name}")
-        };
-
-        if type_name != full_ref {
+        let Some((target_nsid, def_name)) = union_ref_match(nsid, reference, type_name) else {
             continue;
-        }
+        };
 
         // Found a matching type — validate.
         let schema = match catalog.get(&target_nsid) {

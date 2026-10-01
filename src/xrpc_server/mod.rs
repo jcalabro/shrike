@@ -1,16 +1,33 @@
 //! Axum-based XRPC server for implementing AT Protocol services.
 //!
-//! The Server type provides a builder API for registering query and procedure
-//! handlers. Each handler receives typed input parameters and a RequestContext,
-//! and returns either a typed output or a ServerError.
+//! [`Server`] routes `/xrpc/<nsid>` requests to registered handlers and
+//! follows the reference `@atproto/xrpc-server` for request handling, error
+//! names and statuses:
 //!
-//! Query handlers are called for GET requests with query string parameters.
-//! Procedure handlers are called for POST requests with JSON bodies. Both
-//! return JSON responses or XRPC error envelopes.
+//! - Queries are `GET` (and `HEAD`), procedures `POST`, subscriptions
+//!   WebSocket upgrades. Unknown methods are 501 `MethodNotImplemented`
+//!   (or go to a [`Server::catchall`]); a known method called with the
+//!   wrong HTTP method is 400 `Incorrect HTTP method (GET) expected POST`.
+//! - Errors are `{"error": ..., "message": ...}` ([`ServerError`]); a 500
+//!   never sends its detail.
+//! - Query parameters support repeated keys for arrays ([`Params`]).
+//! - Request bodies may be gzip, deflate or brotli encoded (stacked too) and
+//!   are size-limited after decoding ([`PayloadLimits`]).
+//! - With a lexicon [`Catalog`](crate::lexicon::Catalog)
+//!   ([`Server::catalog`]), parameters, inputs, outputs and subscription
+//!   messages are validated.
+//! - Each route can authenticate requests ([`AuthVerifier`], e.g.
+//!   [`ServiceAuth`] for inter-service JWTs) and be rate limited
+//!   ([`RateLimits`]).
+//!
+//! Typed handlers take deserialized parameters or a JSON body and return a
+//! serializable output; raw handlers take the [`Input`] stream and return any
+//! [`Output`], such as a blob or a CAR file. Subscriptions return a stream of
+//! [`Frame`]s.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
-//! use shrike::xrpc_server::{RequestContext, Server, ServerError};
+//! use shrike::xrpc_server::{Output, RequestContext, Server, ServerError};
 //!
 //! #[derive(Deserialize)]
 //! struct PingParams;
@@ -38,19 +55,39 @@
 //!     .procedure("com.example.echo",
 //!         |input: EchoInput, _ctx: RequestContext| async move {
 //!             Ok(EchoOutput { text: input.text })
-//!         });
+//!         })
+//!     .route("com.example.blob")
+//!     .query_raw(|_ctx: RequestContext| async move {
+//!         Ok::<_, ServerError>(Output::bytes("application/octet-stream", vec![1, 2, 3]))
+//!     });
 //!
 //! let _app = server.into_router();
 //! // Serve with axum
 //! ```
 
+mod auth;
+mod body;
 mod context;
 mod error;
+mod output;
+mod params;
+mod rate_limit;
 mod server;
+mod stream;
 
-pub use context::RequestContext;
-pub use error::ServerError;
-pub use server::Server;
+pub use auth::{AuthVerifier, NoAuth, Optional, ServiceAuth};
+pub use axum::body::Bytes;
+pub use body::{BodyStream, DECODE_CHUNK, Input, InputBody, PayloadLimits};
+pub use context::{AuthContext, RequestContext};
+pub use error::{ResponseType, ServerError};
+pub use output::{Output, OutputStream};
+pub use params::Params;
+pub use rate_limit::{
+    MemoryStore, RateLimit, RateLimitContext, RateLimitStatus, RateLimitStore, RateLimitStoreError,
+    RateLimits, RouteRateLimit,
+};
+pub use server::{RouteBuilder, Server};
+pub use stream::{Frame, FrameError};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -138,7 +175,9 @@ mod tests {
     async fn error_returns_xrpc_envelope() {
         let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
             "com.example.fail",
-            |_params, _ctx| async move { Err(ServerError::NotFound) },
+            |_params, _ctx| async move {
+                Err(ServerError::invalid_request("Record not found").with_name("RecordNotFound"))
+            },
         );
 
         let app = server.into_router();
@@ -152,16 +191,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "NotFound");
+        assert_eq!(json["error"], "RecordNotFound");
+        assert_eq!(json["message"], "Record not found");
     }
 
     #[tokio::test]
     async fn unknown_route_returns_xrpc_envelope() {
-        // Unknown NSID must yield the XRPC {error,message} envelope, not an
-        // empty 404 body.
+        // Unknown NSID must yield the XRPC 501 {error,message} envelope, not
+        // an empty 404 body.
         let server = Server::new();
         let app = server.into_router();
         let response = app
@@ -173,10 +213,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"], "MethodNotImplemented");
+        assert_eq!(json["message"], "Method Not Implemented");
         assert!(json.get("message").is_some());
     }
 
@@ -309,6 +350,7 @@ mod tests {
         app: axum::Router,
         expected_status: StatusCode,
         expected_error: &str,
+        expected_message: &str,
     ) {
         let response = app
             .oneshot(
@@ -323,99 +365,71 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"], expected_error);
-        assert!(json["message"].is_string());
+        assert_eq!(json["message"], expected_message);
     }
 
     #[tokio::test]
-    async fn error_auth_required_is_401() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::AuthRequired) },
-        );
-        assert_error_response(
-            server.into_router(),
-            StatusCode::UNAUTHORIZED,
-            "AuthRequired",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn error_forbidden_is_403() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::Forbidden) },
-        );
-        assert_error_response(server.into_router(), StatusCode::FORBIDDEN, "Forbidden").await;
-    }
-
-    #[tokio::test]
-    async fn error_not_found_is_404() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::NotFound) },
-        );
-        assert_error_response(server.into_router(), StatusCode::NOT_FOUND, "NotFound").await;
-    }
-
-    #[tokio::test]
-    async fn error_method_not_allowed_is_405() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::MethodNotAllowed) },
-        );
-        assert_error_response(
-            server.into_router(),
-            StatusCode::METHOD_NOT_ALLOWED,
-            "MethodNotAllowed",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn error_too_large_is_413() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::TooLarge) },
-        );
-        assert_error_response(
-            server.into_router(),
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "TooLarge",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn error_rate_limited_is_429() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async {
-                Err(ServerError::RateLimited {
-                    retry_after: Some(std::time::Duration::from_secs(10)),
-                })
-            },
-        );
-        assert_error_response(
-            server.into_router(),
-            StatusCode::TOO_MANY_REQUESTS,
-            "RateLimited",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn error_internal_is_500() {
-        let server = Server::new().query::<std::collections::HashMap<String, String>, (), _, _>(
-            "com.example.err",
-            |_, _| async { Err(ServerError::Internal("oops".to_owned())) },
-        );
-        assert_error_response(
-            server.into_router(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "InternalError",
-        )
-        .await;
+    async fn error_constructors_map_to_reference_names() {
+        let cases: Vec<(ServerError, StatusCode, &str, &str)> = vec![
+            (
+                ServerError::invalid_request("bad"),
+                StatusCode::BAD_REQUEST,
+                "InvalidRequest",
+                "bad",
+            ),
+            (
+                ServerError::auth_required(""),
+                StatusCode::UNAUTHORIZED,
+                "AuthenticationRequired",
+                "Authentication Required",
+            ),
+            (
+                ServerError::forbidden("no"),
+                StatusCode::FORBIDDEN,
+                "Forbidden",
+                "no",
+            ),
+            (
+                ServerError::payload_too_large("big"),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PayloadTooLarge",
+                "big",
+            ),
+            (
+                ServerError::rate_limited(Some(std::time::Duration::from_secs(10))),
+                StatusCode::TOO_MANY_REQUESTS,
+                "RateLimitExceeded",
+                "Rate Limit Exceeded",
+            ),
+            // A 500 never leaks its detail.
+            (
+                ServerError::internal("oops: secret"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalServerError",
+                "Internal Server Error",
+            ),
+            (
+                ServerError::method_not_implemented(),
+                StatusCode::NOT_IMPLEMENTED,
+                "MethodNotImplemented",
+                "Method Not Implemented",
+            ),
+        ];
+        for (err, status, name, message) in cases {
+            let retry = err.headers().get("retry-after").cloned();
+            let server = Server::new()
+                .query::<std::collections::HashMap<String, String>, (), _, _>(
+                    "com.example.err",
+                    move |_, _| {
+                        let err = err.clone();
+                        async move { Err(err) }
+                    },
+                );
+            assert_error_response(server.into_router(), status, name, message).await;
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                assert_eq!(retry.unwrap(), "10");
+            }
+        }
     }
 
     // --- Procedure with complex JSON: nested objects and arrays ---
@@ -580,11 +594,12 @@ mod tests {
             .await
             .unwrap();
 
-        // axum rejects requests with missing content-type for JSON extractor
-        assert!(
-            response.status().is_client_error(),
-            "expected 4xx, got {}",
-            response.status()
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["message"],
+            "Request encoding (Content-Type) required but not provided"
         );
     }
 }

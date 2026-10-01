@@ -66,7 +66,7 @@ impl AuthenticatedClient {
         let rb = self
             .http
             .get(&url)
-            .query(params)
+            .query(&crate::outbound::query_pairs(params)?)
             .header("Authorization", format!("DPoP {access_token}"))
             .header("DPoP", &proof);
         let resp = crate::outbound::apply_user_agent(rb).send().await?;
@@ -118,7 +118,7 @@ impl AuthenticatedClient {
         let rb = self
             .http
             .get(url)
-            .query(params)
+            .query(&crate::outbound::query_pairs(params)?)
             .header("Authorization", format!("DPoP {access_token}"))
             .header("DPoP", &proof);
         let resp = crate::outbound::apply_user_agent(rb).send().await?;

@@ -40,6 +40,15 @@ pub trait VerifyingKey: Send + Sync {
     fn to_bytes(&self) -> [u8; 33];
     /// Verify a signature over the given content. Returns an error if invalid.
     fn verify(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError>;
+    /// Verify a signature, also accepting its high-S form.
+    ///
+    /// Only for formats that tolerate malleable signatures, such as service-auth
+    /// JWTs (the reference verifies them with `allowMalleableSig`, since
+    /// WebCrypto and JOSE libraries do not normalize S). Records and commits
+    /// require low-S; use [`VerifyingKey::verify`] for those.
+    fn verify_malleable(&self, content: &[u8], sig: &Signature) -> Result<(), CryptoError>;
+    /// The JWS `alg` for this key type: `ES256` (P-256) or `ES256K` (secp256k1).
+    fn jwt_alg(&self) -> &'static str;
     /// Return the `did:key:z...` identifier for this public key.
     fn did_key(&self) -> String;
     /// Return the z-prefixed base58btc multibase encoding of this public key.

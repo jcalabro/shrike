@@ -183,6 +183,7 @@ impl Client {
         params: &P,
     ) -> Result<O, Error> {
         let url = self.xrpc_url(nsid);
+        let query = crate::outbound::query_pairs(params)?;
         let bearer = self.bearer().await;
         let max_retries = self.retry.max_retries;
 
@@ -199,7 +200,7 @@ impl Client {
                 crate::platform::sleep(delay).await;
             }
 
-            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
+            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(&query));
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {
@@ -310,6 +311,7 @@ impl Client {
     /// endpoints like `com.atproto.sync.getRepo` that return CAR files.
     pub async fn query_raw(&self, nsid: &str, params: &impl Serialize) -> Result<Vec<u8>, Error> {
         let url = self.xrpc_url(nsid);
+        let query = crate::outbound::query_pairs(params)?;
         let bearer = self.bearer().await;
         let max_retries = self.retry.max_retries;
 
@@ -326,7 +328,7 @@ impl Client {
                 crate::platform::sleep(delay).await;
             }
 
-            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(params));
+            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(&query));
             let rb = self.apply_auth(rb, bearer.as_deref());
 
             let resp = match rb.send().await {

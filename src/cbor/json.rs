@@ -103,6 +103,13 @@ pub fn parse_cid(s: &str) -> Result<Cid, CborError> {
     parse_link(s)?.ok_or_else(|| CborError::InvalidCid(format!("malformed CID string {s:?}")))
 }
 
+/// Whether `s` is a well-formed CID string of any version, codec or hash, as
+/// `multiformats` `CID.parse` accepts it. Used for the lexicon `cid` format.
+#[cfg(feature = "lexicon")]
+pub(crate) fn is_cid_string(s: &str) -> bool {
+    !matches!(parse_link(s), Ok(None))
+}
+
 fn single(key: &str, value: String) -> Json {
     let mut map = Map::with_capacity(1);
     map.insert(key.to_owned(), Json::String(value));

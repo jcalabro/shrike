@@ -10,6 +10,58 @@ pub(crate) fn apply_user_agent(rb: reqwest::RequestBuilder) -> reqwest::RequestB
     rb
 }
 
+/// Encode XRPC query parameters: arrays become repeated keys, `null` and
+/// `None` are omitted, and booleans and numbers use their JSON spelling.
+/// `serde_urlencoded` (used by `RequestBuilder::query`) rejects sequences, so
+/// array parameters such as `app.bsky.feed.getPosts`'s `uris` need this.
+#[cfg(any(feature = "xrpc", feature = "oauth"))]
+pub(crate) fn query_pairs<P: serde::Serialize + ?Sized>(
+    params: &P,
+) -> Result<Vec<(String, String)>, serde_json::Error> {
+    use serde::ser::Error as _;
+    use serde_json::Value;
+
+    fn scalar(key: &str, value: Value) -> Result<Option<String>, serde_json::Error> {
+        match value {
+            Value::Null => Ok(None),
+            Value::Bool(b) => Ok(Some(b.to_string())),
+            Value::Number(n) => Ok(Some(n.to_string())),
+            Value::String(s) => Ok(Some(s)),
+            Value::Array(_) | Value::Object(_) => Err(serde_json::Error::custom(format!(
+                "query parameter {key:?} must be a scalar or an array of scalars"
+            ))),
+        }
+    }
+
+    let map = match serde_json::to_value(params)? {
+        Value::Object(map) => map,
+        Value::Null => return Ok(Vec::new()),
+        _ => {
+            return Err(serde_json::Error::custom(
+                "query parameters must serialize to a map",
+            ));
+        }
+    };
+    let mut pairs = Vec::new();
+    for (key, value) in map {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    if let Some(v) = scalar(&key, item)? {
+                        pairs.push((key.clone(), v));
+                    }
+                }
+            }
+            other => {
+                if let Some(v) = scalar(&key, other)? {
+                    pairs.push((key, v));
+                }
+            }
+        }
+    }
+    Ok(pairs)
+}
+
 /// Default total-request timeout for outbound fetches.
 #[cfg(all(
     any(feature = "identity", feature = "oauth"),
@@ -378,5 +430,53 @@ mod tests {
                 "localhost resolves only to loopback and must be refused"
             );
         }
+    }
+
+    #[cfg(any(feature = "xrpc", feature = "oauth"))]
+    #[test]
+    fn query_pairs_repeat_arrays_and_skip_nulls() {
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct P {
+            uris: Vec<String>,
+            limit: Option<i64>,
+            cursor: Option<String>,
+            include_pins: bool,
+            empty: Vec<String>,
+        }
+        let pairs = query_pairs(&P {
+            uris: vec!["at://a".into(), "at://b".into()],
+            limit: Some(-5),
+            cursor: None,
+            include_pins: true,
+            empty: vec![],
+        })
+        .unwrap();
+        let pairs: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("includePins", "true"),
+                ("limit", "-5"),
+                ("uris", "at://a"),
+                ("uris", "at://b"),
+            ]
+        );
+    }
+
+    #[cfg(any(feature = "xrpc", feature = "oauth"))]
+    #[test]
+    fn query_pairs_reject_nested_values() {
+        assert!(query_pairs(&serde_json::json!({"a": {"b": 1}})).is_err());
+        assert!(query_pairs(&serde_json::json!({"a": [[1]]})).is_err());
+        assert!(query_pairs(&serde_json::json!([1, 2])).is_err());
+        assert!(query_pairs(&()).unwrap().is_empty());
+        assert!(
+            query_pairs(&serde_json::json!({"a": [null, 1]})).unwrap()
+                == [("a".to_owned(), "1".to_owned())]
+        );
     }
 }

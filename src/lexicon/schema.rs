@@ -22,7 +22,7 @@ pub struct Schema {
 /// A single named definition within a schema.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-#[allow(clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names, clippy::large_enum_variant)]
 pub enum Def {
     #[serde(rename = "record")]
     Record(RecordDef),
@@ -91,6 +91,8 @@ pub enum FieldSchema {
         min_length: Option<u64>,
         #[serde(default, rename = "maxLength")]
         max_length: Option<u64>,
+        #[serde(default, rename = "minGraphemes")]
+        min_graphemes: Option<u64>,
         #[serde(default, rename = "maxGraphemes")]
         max_graphemes: Option<u64>,
         #[serde(default, rename = "knownValues")]
@@ -188,6 +190,16 @@ pub enum FieldSchema {
 }
 
 impl FieldSchema {
+    /// The declared `default` value as JSON, if any.
+    pub fn default_value(&self) -> Option<serde_json::Value> {
+        match self {
+            FieldSchema::String { default, .. } => default.clone().map(serde_json::Value::from),
+            FieldSchema::Integer { default, .. } => default.map(serde_json::Value::from),
+            FieldSchema::Boolean { default, .. } => default.map(serde_json::Value::from),
+            _ => None,
+        }
+    }
+
     /// Returns the description field if present on this schema variant.
     pub fn description(&self) -> Option<&str> {
         match self {
@@ -226,6 +238,9 @@ pub struct QueryDef {
 /// A procedure (XRPC POST) definition.
 #[derive(Debug, Deserialize)]
 pub struct ProcedureDef {
+    /// Query parameters (sent as URL query string).
+    #[serde(default)]
+    pub parameters: Option<ParamsDef>,
     /// Request body schema.
     #[serde(default)]
     pub input: Option<BodyDef>,
