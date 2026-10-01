@@ -266,6 +266,23 @@ fn numeric_ipv4_host(host: &str) -> bool {
         })
 }
 
+/// Largest metadata document accepted (1 MiB, as in atmos). Real documents
+/// are a few KiB; the cap keeps a hostile server from exhausting memory.
+const MAX_METADATA_BYTES: usize = 1 << 20;
+
+/// Read a metadata response body, capped at [`MAX_METADATA_BYTES`], as JSON.
+async fn read_metadata<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    what: &str,
+) -> Result<T, OAuthError> {
+    let body = crate::outbound::read_capped(resp, MAX_METADATA_BYTES)
+        .await?
+        .ok_or_else(|| {
+            OAuthError::InvalidMetadata(format!("{what} exceeds {MAX_METADATA_BYTES} bytes"))
+        })?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
 /// Fetch the protected resource metadata from a PDS.
 ///
 /// Builds the URL `{pds_url}/.well-known/oauth-protected-resource`, sends a
@@ -294,7 +311,8 @@ pub async fn fetch_protected_resource_metadata(
         )));
     }
 
-    let meta: ProtectedResourceMetadata = resp.json().await?;
+    let meta: ProtectedResourceMetadata =
+        read_metadata(resp, "protected resource metadata").await?;
 
     if meta.authorization_servers.is_empty() {
         return Err(OAuthError::InvalidMetadata(
@@ -331,7 +349,7 @@ pub async fn fetch_auth_server_metadata(issuer: &str) -> Result<AuthServerMetada
         )));
     }
 
-    let meta: AuthServerMetadata = resp.json().await?;
+    let meta: AuthServerMetadata = read_metadata(resp, "auth server metadata").await?;
 
     let expected_issuer = issuer.trim_end_matches('/');
     let actual_issuer = meta.issuer.trim_end_matches('/');
@@ -669,5 +687,45 @@ mod tests {
         assert!(meta.validate_client_auth().is_err());
         meta.token_endpoint_auth_signing_alg.clear();
         assert!(meta.validate_client_auth().is_ok());
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[tokio::test]
+    async fn metadata_bodies_are_capped_while_reading() {
+        // Regression: a chunked body has no Content-Length, so the cap must
+        // apply as bytes arrive. Buffering the whole body first never returns
+        // on an endless one.
+        use crate::outbound::test_server::{Body, serve};
+        use std::time::Duration;
+
+        for body in [
+            Body::Endless,
+            Body::Chunked {
+                len: MAX_METADATA_BYTES + 1,
+            },
+        ] {
+            let url = serve(body).await;
+            let err = tokio::time::timeout(
+                Duration::from_secs(10),
+                fetch_protected_resource_metadata(&url),
+            )
+            .await
+            .expect("protected resource metadata must stop reading at the cap")
+            .unwrap_err();
+            assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
+
+            let url = serve(body).await;
+            let err =
+                tokio::time::timeout(Duration::from_secs(10), fetch_auth_server_metadata(&url))
+                    .await
+                    .expect("auth server metadata must stop reading at the cap")
+                    .unwrap_err();
+            assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
+        }
+
+        // A body within the cap is parsed as before.
+        let url = serve(Body::Chunked { len: 16 }).await;
+        let err = fetch_auth_server_metadata(&url).await.unwrap_err();
+        assert!(matches!(err, OAuthError::Json(_)), "{err:?}");
     }
 }
