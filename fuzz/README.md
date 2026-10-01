@@ -3,7 +3,8 @@
 Coverage-guided fuzzing for shrike's binary parsers, identifier parsers, and the
 MST mutation/load paths, using
 [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) (libFuzzer). Requires the
-nightly toolchain.
+nightly toolchain. The nix dev shell (`just dev`) provides both: `cargo-fuzz`, and
+a pinned nightly as `cargo-nightly` (stable stays the default `cargo`).
 
 The targets favor **strong oracles** over bare no-panic checks — differential
 equivalence between code paths, round-trip / fixed-point identity, and semantic
@@ -20,11 +21,12 @@ just fuzz-seed
 just fuzz
 just fuzz 10        # 10s each
 
-# A single target, indefinitely:
-cargo +nightly fuzz run cbor_decode_differential
+# A single target, indefinitely (nix shell):
+cargo-nightly fuzz run cbor_decode_differential
 
-# Install cargo-fuzz if needed:
+# Outside nix, with rustup:
 cargo install cargo-fuzz
+cargo +nightly fuzz run cbor_decode_differential
 ```
 
 ## Targets & oracles

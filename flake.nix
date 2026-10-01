@@ -28,11 +28,23 @@
             overlays = [ (import rust-overlay) ];
           };
           rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+          # cargo-fuzz needs nightly (libFuzzer instrumentation and sanitizers).
+          # Without rustup there is no `cargo +nightly`, so `cargo-nightly` runs
+          # cargo with this toolchain first on PATH. flake.lock pins which
+          # nightly this is.
+          nightlyToolchain = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.minimal);
+          cargoNightly = pkgs.writeShellScriptBin "cargo-nightly" ''
+            export PATH=${nightlyToolchain}/bin:$PATH
+            exec cargo "$@"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
               rustToolchain
+              cargoNightly
+              cargo-fuzz
               git
               just
               nodejs

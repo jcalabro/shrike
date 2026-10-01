@@ -70,15 +70,22 @@ fuzz DURATION="30":
         echo "error: no fuzz/ directory" >&2
         exit 1
     fi
+    # The nix shell provides nightly as `cargo-nightly`; rustup users have
+    # `cargo +nightly`.
+    if command -v cargo-nightly >/dev/null; then
+        nightly=(cargo-nightly)
+    else
+        nightly=(cargo +nightly)
+    fi
     # Exclude gen_seeds (a helper binary, not a fuzz target).
-    targets=$(cargo +nightly fuzz list | grep -v '^gen_seeds$')
+    targets=$("${nightly[@]}" fuzz list | grep -v '^gen_seeds$')
     if [[ -z "$targets" ]]; then
         echo "error: no fuzz targets found" >&2
         exit 1
     fi
     for t in $targets; do
         echo "=== FUZZ $t ==="
-        cargo +nightly fuzz run "$t" -- -max_total_time={{DURATION}}
+        "${nightly[@]}" fuzz run "$t" -- -max_total_time={{DURATION}}
     done
 
 # Regenerates all API types from the cached lexicon schemas
