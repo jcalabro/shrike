@@ -134,6 +134,24 @@ impl From<serde_json::Error> for OAuthError {
     }
 }
 
+/// Largest response body accepted from a server during the OAuth flow
+/// (1 MiB, as in atmos). Metadata documents and token, PAR, and error
+/// responses are a few KiB; the cap keeps a hostile server from exhausting
+/// memory.
+const MAX_RESPONSE_BYTES: usize = 1 << 20;
+
+/// Read a response body as JSON, capped at [`MAX_RESPONSE_BYTES`] while it is
+/// read. `what` names the response in errors.
+pub(crate) async fn read_json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    what: &str,
+) -> Result<T, OAuthError> {
+    let body = crate::outbound::read_capped(resp, MAX_RESPONSE_BYTES)
+        .await?
+        .ok_or_else(|| OAuthError::Http(format!("{what} exceeds {MAX_RESPONSE_BYTES} bytes")))?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
 impl From<crate::crypto::CryptoError> for OAuthError {
     fn from(err: crate::crypto::CryptoError) -> Self {
         OAuthError::Crypto(err.to_string())

@@ -188,7 +188,7 @@ async fn post_token_request(
     }
 
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await?;
+    let resp_body: serde_json::Value = crate::oauth::read_json(resp, "token response").await?;
 
     // If use_dpop_nonce error, retry once with the updated nonce
     if is_dpop_nonce_error(status, &resp_body) {
@@ -217,7 +217,8 @@ async fn post_token_request(
         }
 
         let retry_status = retry_resp.status();
-        let retry_body: serde_json::Value = retry_resp.json().await?;
+        let retry_body: serde_json::Value =
+            crate::oauth::read_json(retry_resp, "token response").await?;
 
         if !retry_status.is_success() {
             return Err(oauth_error_from_json(&retry_body));
@@ -593,5 +594,38 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             &body
         ));
+    }
+
+    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+    #[tokio::test]
+    async fn token_response_is_capped_while_reading() {
+        // Regression: the token endpoint is named by untrusted metadata, and
+        // a chunked body has no Content-Length, so the cap must apply as
+        // bytes arrive. Buffering the whole body first never returns on an
+        // endless one.
+        use crate::outbound::test_server::{Body, serve};
+
+        let http = reqwest::Client::new();
+        let key = crate::crypto::P256SigningKey::generate();
+        let nonces = NonceStore::new();
+        for body in [
+            Body::Endless,
+            Body::Chunked {
+                len: crate::oauth::MAX_RESPONSE_BYTES + 1,
+            },
+        ] {
+            let endpoint = serve(body).await;
+            let err = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                post_token_request(&http, &endpoint, "", &[], &key, &nonces),
+            )
+            .await
+            .expect("token response must stop reading at the cap")
+            .unwrap_err();
+            assert!(
+                matches!(&err, OAuthError::Http(m) if m.contains("exceeds")),
+                "{err:?}"
+            );
+        }
     }
 }

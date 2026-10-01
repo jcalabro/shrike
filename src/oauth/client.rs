@@ -326,7 +326,7 @@ impl OAuthClient {
         }
 
         let status = resp.status();
-        let resp_body: serde_json::Value = resp.json().await?;
+        let resp_body: serde_json::Value = crate::oauth::read_json(resp, "PAR response").await?;
 
         // 14. Handle `use_dpop_nonce` retry.
         let request_uri = if status == reqwest::StatusCode::BAD_REQUEST
@@ -357,7 +357,8 @@ impl OAuthClient {
             }
 
             let retry_status = retry_resp.status();
-            let retry_body: serde_json::Value = retry_resp.json().await?;
+            let retry_body: serde_json::Value =
+                crate::oauth::read_json(retry_resp, "PAR response").await?;
 
             if !retry_status.is_success() {
                 return Err(oauth_error_from_json(&retry_body));

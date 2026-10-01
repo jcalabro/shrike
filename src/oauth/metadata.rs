@@ -267,10 +267,6 @@ fn numeric_ipv4_host(host: &str) -> bool {
         })
 }
 
-/// Largest metadata document accepted (1 MiB, as in atmos). Real documents
-/// are a few KiB; the cap keeps a hostile server from exhausting memory.
-const MAX_METADATA_BYTES: usize = 1 << 20;
-
 /// Whether `url`'s host is a literal local IP refused under `policy`. Literal
 /// IPs skip the hardened client's filtering resolver, so callers must check
 /// them before sending; hostnames are filtered at connect time.
@@ -317,7 +313,7 @@ pub(crate) fn check_auth_server_endpoints(
 
 /// GET a metadata document as JSON through the hardened client for `policy`:
 /// no redirects, bounded timeouts, local destinations refused under
-/// [`AddressPolicy::DenyLocal`], and a body capped at [`MAX_METADATA_BYTES`].
+/// [`AddressPolicy::DenyLocal`], and a capped body.
 async fn get_metadata<T: serde::de::DeserializeOwned>(
     url: &str,
     policy: AddressPolicy,
@@ -341,12 +337,7 @@ async fn get_metadata<T: serde::de::DeserializeOwned>(
         return Err(OAuthError::Http(format!("{what}: HTTP {}", resp.status())));
     }
 
-    let body = crate::outbound::read_capped(resp, MAX_METADATA_BYTES)
-        .await?
-        .ok_or_else(|| {
-            OAuthError::InvalidMetadata(format!("{what} exceeds {MAX_METADATA_BYTES} bytes"))
-        })?;
-    Ok(serde_json::from_slice(&body)?)
+    crate::oauth::read_json(resp, what).await
 }
 
 /// Fetch the protected resource metadata from a PDS.
@@ -811,7 +802,7 @@ mod tests {
         for body in [
             Body::Endless,
             Body::Chunked {
-                len: MAX_METADATA_BYTES + 1,
+                len: crate::oauth::MAX_RESPONSE_BYTES + 1,
             },
         ] {
             let url = serve(body).await;
@@ -822,7 +813,10 @@ mod tests {
             .await
             .expect("protected resource metadata must stop reading at the cap")
             .unwrap_err();
-            assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
+            assert!(
+                matches!(&err, OAuthError::Http(m) if m.contains("exceeds")),
+                "{err:?}"
+            );
 
             let url = serve(body).await;
             let err = tokio::time::timeout(
@@ -832,7 +826,10 @@ mod tests {
             .await
             .expect("auth server metadata must stop reading at the cap")
             .unwrap_err();
-            assert!(matches!(err, OAuthError::InvalidMetadata(_)), "{err:?}");
+            assert!(
+                matches!(&err, OAuthError::Http(m) if m.contains("exceeds")),
+                "{err:?}"
+            );
         }
 
         // A body within the cap is parsed as before.
