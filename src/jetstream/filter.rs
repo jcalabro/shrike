@@ -384,13 +384,17 @@ fn validate_domain_label(label: &str) -> Result<()> {
     if bytes.is_empty() || bytes.len() > 63 {
         return Err(Error::InvalidConfig("invalid label"));
     }
-    if !bytes[0].is_ascii_alphanumeric() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+    let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
+    if !first.is_ascii_alphanumeric() || !last.is_ascii_alphanumeric() {
         return Err(Error::InvalidConfig("invalid label"));
     }
-    for &b in &bytes[1..bytes.len().saturating_sub(1)] {
-        if !(b.is_ascii_alphanumeric() || b == b'-') {
-            return Err(Error::InvalidConfig("invalid label"));
-        }
+    // A one-byte label has no interior.
+    let interior = bytes.get(1..bytes.len() - 1).unwrap_or_default();
+    if !interior
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(Error::InvalidConfig("invalid label"));
     }
     Ok(())
 }
@@ -443,6 +447,12 @@ mod tests {
     #[test]
     fn two_label_wildcard_is_valid() {
         assert!(parse_collection("app.bsky.*").is_ok());
+        // Regression test (found by fuzzing): one-byte labels used to panic
+        // slicing their empty interior.
+        assert!(parse_collection("a.b.*").is_ok());
+        assert!(parse_collection("app.b.c.*").is_ok());
+        assert!(parse_collection("p.*").is_err());
+        assert!(parse_collection("a.-.*").is_err());
     }
 
     #[test]
