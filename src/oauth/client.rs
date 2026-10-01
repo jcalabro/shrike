@@ -255,6 +255,7 @@ impl OAuthClient {
         // 4. Fetch and validate AS metadata.
         let as_meta = metadata::fetch_auth_server_metadata(&issuer, self.address_policy).await?;
         metadata::validate_auth_server_metadata(&as_meta)?;
+        metadata::check_auth_server_endpoints(&as_meta, self.address_policy)?;
 
         // 5. Generate a P-256 DPoP key.
         let dpop_key = P256SigningKey::generate();

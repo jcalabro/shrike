@@ -271,6 +271,50 @@ fn numeric_ipv4_host(host: &str) -> bool {
 /// are a few KiB; the cap keeps a hostile server from exhausting memory.
 const MAX_METADATA_BYTES: usize = 1 << 20;
 
+/// Whether `url`'s host is a literal local IP refused under `policy`. Literal
+/// IPs skip the hardened client's filtering resolver, so callers must check
+/// them before sending; hostnames are filtered at connect time.
+fn is_blocked_literal_host(url: &url::Url, policy: AddressPolicy) -> bool {
+    url.host_str()
+        .is_some_and(|host| crate::outbound::host_is_blocked_literal_ip(host, policy))
+}
+
+/// Check the authorization server endpoints shrike sends requests to (PAR,
+/// token, and revocation, if advertised) before any of them is used: each
+/// must be an `http` or `https` URL, and under [`AddressPolicy::DenyLocal`]
+/// not a literal local or private IP. The metadata is untrusted, and the
+/// requests carry client credentials and authorization codes.
+///
+/// The authorization endpoint is only shown to the user's browser, so it is
+/// not checked here.
+pub(crate) fn check_auth_server_endpoints(
+    meta: &AuthServerMetadata,
+    policy: AddressPolicy,
+) -> Result<(), OAuthError> {
+    let mut endpoints = vec![
+        (
+            "pushed_authorization_request_endpoint",
+            &meta.pushed_authorization_request_endpoint,
+        ),
+        ("token_endpoint", &meta.token_endpoint),
+    ];
+    if !meta.revocation_endpoint.is_empty() {
+        endpoints.push(("revocation_endpoint", &meta.revocation_endpoint));
+    }
+    for (name, endpoint) in endpoints {
+        let invalid =
+            |reason: &str| OAuthError::InvalidMetadata(format!("{name} {endpoint:?} {reason}"));
+        let url = url::Url::parse(endpoint).map_err(|e| invalid(&format!("is invalid: {e}")))?;
+        if !matches!(url.scheme(), "https" | "http") {
+            return Err(invalid("must be an http or https URL"));
+        }
+        if is_blocked_literal_host(&url, policy) {
+            return Err(invalid("is a local address, refused by the address policy"));
+        }
+    }
+    Ok(())
+}
+
 /// GET a metadata document as JSON through the hardened client for `policy`:
 /// no redirects, bounded timeouts, local destinations refused under
 /// [`AddressPolicy::DenyLocal`], and a body capped at [`MAX_METADATA_BYTES`].
@@ -281,11 +325,7 @@ async fn get_metadata<T: serde::de::DeserializeOwned>(
 ) -> Result<T, OAuthError> {
     let parsed =
         url::Url::parse(url).map_err(|e| OAuthError::Http(format!("{what}: invalid URL: {e}")))?;
-    // Literal IPs skip the client's filtering resolver, so check them here.
-    if parsed
-        .host_str()
-        .is_some_and(|host| crate::outbound::host_is_blocked_literal_ip(host, policy))
-    {
+    if is_blocked_literal_host(&parsed, policy) {
         return Err(OAuthError::Http(format!(
             "{what}: {url} is a local address, refused by the address policy"
         )));
@@ -444,6 +484,76 @@ mod tests {
 
     fn valid_as_metadata() -> AuthServerMetadata {
         serde_json::from_value(valid_as_metadata_json()).unwrap()
+    }
+
+    #[test]
+    fn auth_server_endpoints_accept_public_and_hostname_urls() {
+        let meta = valid_as_metadata();
+        check_auth_server_endpoints(&meta, AddressPolicy::DenyLocal).unwrap();
+        check_auth_server_endpoints(&meta, AddressPolicy::AllowLocal).unwrap();
+
+        // Hostnames are left to the client's connect-time filter, and the
+        // revocation endpoint is optional.
+        let mut meta = valid_as_metadata();
+        meta.token_endpoint = "http://localhost:2583/oauth/token".into();
+        meta.revocation_endpoint.clear();
+        check_auth_server_endpoints(&meta, AddressPolicy::DenyLocal).unwrap();
+    }
+
+    #[test]
+    fn auth_server_endpoints_refuse_local_literal_ips_under_deny_local() {
+        type Field = fn(&mut AuthServerMetadata) -> &mut String;
+        let fields: [(&str, Field); 3] = [
+            ("pushed_authorization_request_endpoint", |m| {
+                &mut m.pushed_authorization_request_endpoint
+            }),
+            ("token_endpoint", |m| &mut m.token_endpoint),
+            ("revocation_endpoint", |m| &mut m.revocation_endpoint),
+        ];
+        for (name, field) in fields {
+            for endpoint in [
+                "http://127.0.0.1:2583/oauth",
+                "https://[::1]/oauth",
+                "http://0x7f.1/oauth",
+                "http://169.254.169.254/latest/meta-data",
+                "https://10.0.0.1/oauth",
+                "https://192.168.1.1/oauth",
+            ] {
+                let mut meta = valid_as_metadata();
+                *field(&mut meta) = endpoint.into();
+                let err = check_auth_server_endpoints(&meta, AddressPolicy::DenyLocal).unwrap_err();
+                assert!(
+                    matches!(&err, OAuthError::InvalidMetadata(m)
+                        if m.contains(name) && m.contains("address policy")),
+                    "{name} = {endpoint}: {err:?}"
+                );
+                check_auth_server_endpoints(&meta, AddressPolicy::AllowLocal)
+                    .unwrap_or_else(|e| panic!("{name} = {endpoint} under AllowLocal: {e:?}"));
+            }
+        }
+    }
+
+    #[test]
+    fn auth_server_endpoints_must_be_http_urls() {
+        for endpoint in [
+            "",
+            "not a url",
+            "/oauth/token",
+            "ftp://bsky.social/token",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/plain,hi",
+        ] {
+            for policy in [AddressPolicy::DenyLocal, AddressPolicy::AllowLocal] {
+                let mut meta = valid_as_metadata();
+                meta.token_endpoint = endpoint.into();
+                let err = check_auth_server_endpoints(&meta, policy).unwrap_err();
+                assert!(
+                    matches!(&err, OAuthError::InvalidMetadata(m) if m.contains("token_endpoint")),
+                    "{endpoint:?} under {policy:?}: {err:?}"
+                );
+            }
+        }
     }
 
     #[test]
