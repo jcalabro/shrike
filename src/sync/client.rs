@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use futures::StreamExt;
+
 use crate::syntax::Did;
 
-use crate::sync::{DownloadedRepo, RepoEntry, SyncError};
+use crate::sync::{
+    DEFAULT_MAX_REPO_CAR_BYTES, DownloadedRepo, RepoCarStream, RepoEntry, SyncError,
+};
 
 /// A client for the `com.atproto.sync.*` XRPC namespace.
 pub struct SyncClient {
@@ -31,15 +35,34 @@ impl SyncClient {
 
     /// Download an entire repository as a CAR file and parse the commit and blocks.
     ///
-    /// Calls `com.atproto.sync.getRepo` with the given DID, then parses the
-    /// binary CAR response.
+    /// Calls `com.atproto.sync.getRepo` with the given DID and decodes the CAR
+    /// as it streams in. Bodies over [`DEFAULT_MAX_REPO_CAR_BYTES`] are
+    /// rejected.
     pub async fn get_repo(&self, did: &Did) -> Result<DownloadedRepo, SyncError> {
-        let car_bytes = self.get_repo_car(did).await?;
+        let mut car = self.get_repo_car_stream(did).await?;
+        let mut reader = crate::car::IncrementalReader::new();
+        let mut blocks = Vec::new();
+        let mut size = 0;
+        while let Some(chunk) = car.next().await {
+            let chunk = chunk?;
+            size += chunk.len();
+            if size > DEFAULT_MAX_REPO_CAR_BYTES {
+                return Err(crate::xrpc::Error::ResponseTooLarge {
+                    size: size as u64,
+                    limit: DEFAULT_MAX_REPO_CAR_BYTES as u64,
+                }
+                .into());
+            }
+            reader.push(&chunk);
+            while let Some(block) = reader.next_block()? {
+                blocks.push(block);
+            }
+        }
+        reader.finish()?;
 
-        let (roots, blocks) = crate::car::read_all(&car_bytes[..])?;
-
-        let root_cid = roots
-            .first()
+        let root_cid = reader
+            .roots()
+            .and_then(|roots| roots.first())
             .ok_or_else(|| SyncError::Sync("CAR has no roots".into()))?;
 
         let root_block = blocks
@@ -56,13 +79,30 @@ impl SyncClient {
         })
     }
 
-    /// Download an entire repository as raw CAR bytes.
+    /// Download an entire repository as raw CAR bytes, up to 512 MB.
     pub async fn get_repo_car(&self, did: &Did) -> Result<Vec<u8>, SyncError> {
         let params = serde_json::json!({ "did": did.as_str() });
         Ok(self
             .xrpc
             .query_raw("com.atproto.sync.getRepo", &params)
             .await?)
+    }
+
+    /// Stream an entire repository's raw CAR bytes as they arrive.
+    ///
+    /// No size limit applies; the caller must bound how much it reads. Feed the
+    /// chunks to a [`car::IncrementalReader`](crate::car::IncrementalReader) to
+    /// decode blocks without buffering the whole repo.
+    pub async fn get_repo_car_stream(&self, did: &Did) -> Result<RepoCarStream, SyncError> {
+        let params = serde_json::json!({ "did": did.as_str() });
+        let resp = self
+            .xrpc
+            .query_response("com.atproto.sync.getRepo", &params)
+            .await?;
+        Ok(resp
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(|e| crate::xrpc::Error::Network(e).into()))
+            .boxed())
     }
 
     /// List repositories available on a PDS or relay, with cursor-based pagination.
@@ -211,5 +251,95 @@ mod tests {
 
         assert_eq!(entry.did.as_str(), "did:plc:test123456789abcdefghij");
         assert_eq!(entry.head, head);
+    }
+
+    // --- getRepo over HTTP ---
+
+    /// A CAR holding a signed commit (the root) and one record block.
+    fn repo_car() -> (crate::repo::Commit, Vec<u8>) {
+        let commit = make_test_commit();
+        let commit_bytes = commit.to_cbor().unwrap();
+        let root = Cid::compute(Codec::Drisl, &commit_bytes);
+        let record = b"\xa1\x61a\x01".to_vec();
+        let blocks = [
+            crate::car::Block {
+                cid: root,
+                data: commit_bytes,
+            },
+            crate::car::Block {
+                cid: Cid::compute(Codec::Drisl, &record),
+                data: record,
+            },
+        ];
+        (commit, crate::car::write_all(&[root], &blocks).unwrap())
+    }
+
+    /// Serve `car` from getRepo as a chunked body of `chunk`-byte pieces.
+    async fn serve_repo(car: Vec<u8>, chunk: usize) -> String {
+        use axum::{Router, body::Body, routing::get};
+        let app = Router::new().route(
+            "/xrpc/com.atproto.sync.getRepo",
+            get(move || {
+                let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = car
+                    .chunks(chunk)
+                    .map(|c| Ok(bytes::Bytes::copy_from_slice(c)))
+                    .collect();
+                async move { Body::from_stream(futures::stream::iter(chunks)) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    fn did() -> Did {
+        Did::try_from("did:plc:test123456789abcdefghij").unwrap()
+    }
+
+    #[tokio::test]
+    async fn get_repo_decodes_chunked_car() {
+        let (commit, car) = repo_car();
+        let client = SyncClient::new(crate::xrpc::Client::new(&serve_repo(car, 5).await));
+        let repo = client.get_repo(&did()).await.unwrap();
+        assert_eq!(repo.did, did());
+        assert_eq!(repo.commit.rev, commit.rev);
+        assert_eq!(repo.commit.data, commit.data);
+        assert_eq!(repo.blocks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn get_repo_car_stream_yields_the_body() {
+        let (_, car) = repo_car();
+        let client = SyncClient::new(crate::xrpc::Client::new(&serve_repo(car.clone(), 3).await));
+        let mut stream = client.get_repo_car_stream(&did()).await.unwrap();
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(body, car);
+        assert_eq!(client.get_repo_car(&did()).await.unwrap(), car);
+    }
+
+    #[tokio::test]
+    async fn get_repo_rejects_truncated_car() {
+        let (_, mut car) = repo_car();
+        car.pop();
+        let client = SyncClient::new(crate::xrpc::Client::new(&serve_repo(car, 64).await));
+        let err = client.get_repo(&did()).await.err().unwrap();
+        assert!(
+            matches!(err, SyncError::Car(crate::car::CarError::InvalidBlock(ref m)) if m == "truncated block data"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_repo_rejects_car_missing_root_block() {
+        let (_, car) = repo_car();
+        let (roots, blocks) = crate::car::read_all(&car[..]).unwrap();
+        let car = crate::car::write_all(&roots, &blocks[1..]).unwrap();
+        let client = SyncClient::new(crate::xrpc::Client::new(&serve_repo(car, 64).await));
+        let err = client.get_repo(&did()).await.err().unwrap();
+        assert!(matches!(err, SyncError::Sync(ref m) if m == "root block not found in CAR"));
     }
 }

@@ -1,7 +1,8 @@
 //! AT Protocol repository sync and commit verification.
 //!
-//! [`SyncClient`] downloads full repositories via `com.atproto.sync.getRepo`
-//! and [`verify_blocks`] checks that every block's CID matches its data.
+//! [`SyncClient`] downloads full repositories via `com.atproto.sync.getRepo`,
+//! decoding the CAR as it streams in, and [`verify_blocks`] checks that every
+//! block's CID matches its data.
 
 pub mod client;
 pub mod error;
@@ -29,7 +30,7 @@ pub use state::{
 pub use verifier::{
     DEFAULT_FUTURE_REV_TOLERANCE, DEFAULT_RESYNC_BURST, DEFAULT_RESYNC_LIMIT_PER_SECOND,
     DEFAULT_RESYNC_LIMITER_CAPACITY, HostingPolicy, IdentityResolver, LegacyCommitPolicy,
-    MAX_COMMIT_BLOCKS_BYTES, MAX_COMMIT_OPS, ResyncRateLimit, SyncRepoSource,
+    MAX_COMMIT_BLOCKS_BYTES, MAX_COMMIT_OPS, RepoCarStream, ResyncRateLimit, SyncRepoSource,
     VERIFIER_LOCK_STRIPES, Verifier, VerifierOp, VerifierOptions, VerifierPolicy, VerifierStats,
 };
 pub use verify::verify_blocks;

@@ -49,94 +49,126 @@ pub struct ResyncEvent {
     pub ops: Vec<VerifierOp>,
 }
 
-pub(crate) fn load_repo_from_car(
-    did: &Did,
-    car_bytes: &[u8],
+/// Builds a repo from its CAR as the bytes arrive, enforcing `limits` and
+/// verifying each block's CID along the way, so a hostile or broken source is
+/// cut off as soon as it crosses a limit rather than after the whole body has
+/// been buffered.
+pub(crate) struct RepoCarLoader<'a> {
+    did: &'a Did,
     limits: RepoLoadLimits,
-) -> Result<LoadedRepo, VerifierError> {
-    if car_bytes.len() > limits.max_car_bytes {
-        return Err(VerifierError::OversizedCommit {
-            did: did.clone(),
-            rev: None,
-            field: "repo_car_bytes",
-            bytes: car_bytes.len(),
-            limit: limits.max_car_bytes,
-        });
+    reader: car::IncrementalReader,
+    car_bytes: usize,
+    block_count: usize,
+    block_bytes: usize,
+    blocks: HashMap<Cid, Vec<u8>>,
+}
+
+impl<'a> RepoCarLoader<'a> {
+    pub(crate) fn new(did: &'a Did, limits: RepoLoadLimits) -> Self {
+        Self {
+            did,
+            limits,
+            reader: car::IncrementalReader::new(),
+            car_bytes: 0,
+            block_count: 0,
+            block_bytes: 0,
+            blocks: HashMap::new(),
+        }
     }
 
-    let (roots, blocks) = car::read_all(car_bytes).map_err(|source| VerifierError::Car {
-        did: Some(did.clone()),
-        rev: None,
-        source,
-    })?;
-    if blocks.len() > limits.max_blocks {
-        return Err(VerifierError::OversizedCommit {
-            did: did.clone(),
-            rev: None,
-            field: "repo_blocks",
-            bytes: blocks.len(),
-            limit: limits.max_blocks,
-        });
+    /// Consume the next chunk of the CAR.
+    pub(crate) fn push(&mut self, chunk: &[u8]) -> Result<(), VerifierError> {
+        self.car_bytes = self.car_bytes.saturating_add(chunk.len());
+        if self.car_bytes > self.limits.max_car_bytes {
+            return Err(self.oversized(
+                "repo_car_bytes",
+                self.car_bytes,
+                self.limits.max_car_bytes,
+            ));
+        }
+        self.reader.push(chunk);
+        while let Some(block) = self.reader.next_block().map_err(|e| self.car_err(e))? {
+            self.add_block(block)?;
+        }
+        Ok(())
     }
 
-    let block_bytes = blocks
-        .iter()
-        .try_fold(0usize, |sum, block| sum.checked_add(block.data.len()))
-        .ok_or_else(|| VerifierError::OversizedCommit {
-            did: did.clone(),
-            rev: None,
-            field: "repo_block_bytes",
-            bytes: usize::MAX,
-            limit: limits.max_block_bytes,
-        })?;
-    if block_bytes > limits.max_block_bytes {
-        return Err(VerifierError::OversizedCommit {
-            did: did.clone(),
-            rev: None,
-            field: "repo_block_bytes",
-            bytes: block_bytes,
-            limit: limits.max_block_bytes,
-        });
-    }
+    fn add_block(&mut self, block: car::Block) -> Result<(), VerifierError> {
+        // Duplicates count towards the limits: they cost the same to receive.
+        self.block_count += 1;
+        if self.block_count > self.limits.max_blocks {
+            return Err(self.oversized("repo_blocks", self.block_count, self.limits.max_blocks));
+        }
+        self.block_bytes = self.block_bytes.saturating_add(block.data.len());
+        if self.block_bytes > self.limits.max_block_bytes {
+            return Err(self.oversized(
+                "repo_block_bytes",
+                self.block_bytes,
+                self.limits.max_block_bytes,
+            ));
+        }
 
-    let commit_cid = roots
-        .first()
-        .copied()
-        .ok_or_else(|| VerifierError::Inversion {
-            did: did.clone(),
-            rev: "<unknown>".to_owned(),
-            message: "CAR has no roots".to_owned(),
-        })?;
-
-    let mut block_map = HashMap::with_capacity(blocks.len());
-    for block in blocks {
         let computed = Cid::compute(block.cid.codec(), &block.data);
         if computed != block.cid {
-            return Err(VerifierError::Car {
-                did: Some(did.clone()),
-                rev: None,
-                source: car::CarError::InvalidBlock(format!(
-                    "CID mismatch for block: stored {}, computed {}",
-                    block.cid, computed
-                )),
-            });
+            return Err(self.car_err(car::CarError::InvalidBlock(format!(
+                "CID mismatch for block: stored {}, computed {}",
+                block.cid, computed
+            ))));
         }
-        if let Some(existing) = block_map.get(&block.cid) {
+        if let Some(existing) = self.blocks.get(&block.cid) {
             if existing != &block.data {
-                return Err(VerifierError::Car {
-                    did: Some(did.clone()),
-                    rev: None,
-                    source: car::CarError::InvalidBlock(format!(
-                        "duplicate block with different bytes: {}",
-                        block.cid
-                    )),
-                });
+                return Err(self.car_err(car::CarError::InvalidBlock(format!(
+                    "duplicate block with different bytes: {}",
+                    block.cid
+                ))));
             }
-            continue;
+            return Ok(());
         }
-        block_map.insert(block.cid, block.data);
+        self.blocks.insert(block.cid, block.data);
+        Ok(())
     }
 
+    /// Finish the CAR and decode the repo it holds.
+    pub(crate) fn finish(self) -> Result<LoadedRepo, VerifierError> {
+        let did = self.did;
+        self.reader.finish().map_err(|e| self.car_err(e))?;
+        let commit_cid = self
+            .reader
+            .roots()
+            .and_then(|roots| roots.first().copied())
+            .ok_or_else(|| VerifierError::Inversion {
+                did: did.clone(),
+                rev: "<unknown>".to_owned(),
+                message: "CAR has no roots".to_owned(),
+            })?;
+        load_repo(did, commit_cid, self.blocks, self.limits)
+    }
+
+    fn oversized(&self, field: &'static str, bytes: usize, limit: usize) -> VerifierError {
+        VerifierError::OversizedCommit {
+            did: self.did.clone(),
+            rev: None,
+            field,
+            bytes,
+            limit,
+        }
+    }
+
+    fn car_err(&self, source: car::CarError) -> VerifierError {
+        VerifierError::Car {
+            did: Some(self.did.clone()),
+            rev: None,
+            source,
+        }
+    }
+}
+
+fn load_repo(
+    did: &Did,
+    commit_cid: Cid,
+    block_map: HashMap<Cid, Vec<u8>>,
+    limits: RepoLoadLimits,
+) -> Result<LoadedRepo, VerifierError> {
     let store = CarBlockStore::new(block_map);
     let commit_block = store
         .get(&commit_cid)

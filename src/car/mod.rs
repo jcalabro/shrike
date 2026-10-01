@@ -4,15 +4,18 @@
 //! transmitting AT Protocol repositories. Each CAR contains a header with
 //! root CIDs followed by a sequence of content-addressed blocks.
 //!
-//! Reader and Writer provide streaming access. Use read_all and write_all
-//! for one-shot operations. The verify function checks that all block CIDs
+//! Reader and Writer provide streaming access, and IncrementalReader decodes
+//! a CAR whose bytes arrive in chunks (e.g. an HTTP body) without blocking
+//! I/O. Use read_all and write_all for one-shot operations. The verify function checks that all block CIDs
 //! match their content.
 
 use crate::cbor::Cid;
 
+pub mod incremental;
 pub mod reader;
 pub mod writer;
 
+pub use incremental::IncrementalReader;
 pub use reader::Reader;
 pub use writer::Writer;
 

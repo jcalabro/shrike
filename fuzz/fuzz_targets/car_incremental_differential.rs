@@ -1,0 +1,51 @@
+#![no_main]
+//! Differential oracle: the chunk-fed `IncrementalReader` (used to stream
+//! getRepo bodies) MUST agree with the blocking `Reader` on every input and
+//! every chunking: the same roots, the same blocks, and failure at the same
+//! point. The first input byte picks the chunk size.
+
+use libfuzzer_sys::fuzz_target;
+use shrike::car::{IncrementalReader, Reader};
+use shrike::cbor::Cid;
+
+type Outcome = (Option<Vec<Cid>>, Vec<(Cid, Vec<u8>)>, bool);
+
+fn read_sync(car: &[u8]) -> Outcome {
+    let Ok(mut reader) = Reader::new(car) else {
+        return (None, Vec::new(), true);
+    };
+    let roots = Some(reader.roots().to_vec());
+    let mut blocks = Vec::new();
+    loop {
+        match reader.next_block() {
+            Ok(Some(b)) => blocks.push((b.cid, b.data)),
+            Ok(None) => return (roots, blocks, false),
+            Err(_) => return (roots, blocks, true),
+        }
+    }
+}
+
+fn read_incremental(car: &[u8], chunk: usize) -> Outcome {
+    let mut reader = IncrementalReader::new();
+    let mut blocks = Vec::new();
+    for piece in car.chunks(chunk) {
+        reader.push(piece);
+        loop {
+            match reader.next_block() {
+                Ok(Some(b)) => blocks.push((b.cid, b.data)),
+                Ok(None) => break,
+                Err(_) => return (reader.roots().map(<[Cid]>::to_vec), blocks, true),
+            }
+        }
+    }
+    let failed = reader.finish().is_err();
+    (reader.roots().map(<[Cid]>::to_vec), blocks, failed)
+}
+
+fuzz_target!(|data: &[u8]| {
+    let Some((&chunk, car)) = data.split_first() else {
+        return;
+    };
+    let chunk = usize::from(chunk).max(1);
+    assert_eq!(read_incremental(car, chunk), read_sync(car));
+});

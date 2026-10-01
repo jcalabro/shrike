@@ -288,7 +288,7 @@ impl reqwest::dns::Resolve for LocalFilteringResolver {
 /// is enforced on the bytes as they arrive, so a chunked or lying server
 /// cannot exhaust memory. This holds in browsers too, where the body streams
 /// from the `fetch` response.
-#[cfg(feature = "identity")]
+#[cfg(any(feature = "identity", feature = "xrpc"))]
 pub(crate) async fn read_capped(
     resp: reqwest::Response,
     limit: usize,
@@ -313,7 +313,7 @@ pub(crate) async fn read_capped(
 /// A one-shot HTTP server for testing body caps.
 #[cfg(all(
     test,
-    feature = "identity",
+    any(feature = "identity", feature = "xrpc"),
     not(all(target_family = "wasm", target_os = "unknown"))
 ))]
 #[allow(clippy::unwrap_used)]

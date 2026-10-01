@@ -182,6 +182,23 @@ impl Client {
         nsid: &str,
         params: &P,
     ) -> Result<O, Error> {
+        let resp = self.query_response(nsid, params).await?;
+        Self::check_response_size(&resp, MAX_RESPONSE_BODY).await?;
+        resp.json::<O>().await.map_err(Error::Network)
+    }
+
+    /// Execute an XRPC query and return the successful HTTP response with its
+    /// body unread.
+    ///
+    /// Retries and error handling match `query`, but no size limit applies:
+    /// the caller reads the body (e.g. via `bytes_stream`) and must bound how
+    /// much of it they accept. Useful for streaming large binary outputs, such
+    /// as `com.atproto.sync.getRepo` CAR files, without buffering them whole.
+    pub async fn query_response<P: Serialize + ?Sized>(
+        &self,
+        nsid: &str,
+        params: &P,
+    ) -> Result<reqwest::Response, Error> {
         let url = self.xrpc_url(nsid);
         let query = crate::outbound::query_pairs(params)?;
         let bearer = self.bearer().await;
@@ -215,8 +232,7 @@ impl Client {
             let status = resp.status();
 
             if status.is_success() {
-                Self::check_response_size(&resp, MAX_RESPONSE_BODY).await?;
-                return resp.json::<O>().await.map_err(Error::Network);
+                return Ok(resp);
             }
 
             let status_u16 = status.as_u16();
@@ -308,71 +324,24 @@ impl Client {
     ///
     /// Same as `query` but returns the response body as `Vec<u8>` instead of
     /// deserializing JSON. Response bodies are limited to 512 MB. Useful for
-    /// endpoints like `com.atproto.sync.getRepo` that return CAR files.
+    /// endpoints like `com.atproto.sync.getRepo` that return CAR files; use
+    /// `query_response` to stream large bodies instead of buffering them.
     pub async fn query_raw(&self, nsid: &str, params: &impl Serialize) -> Result<Vec<u8>, Error> {
-        let url = self.xrpc_url(nsid);
-        let query = crate::outbound::query_pairs(params)?;
-        let bearer = self.bearer().await;
-        let max_retries = self.retry.max_retries;
+        let resp = self.query_response(nsid, params).await?;
+        Self::read_body(resp, MAX_RAW_RESPONSE_BODY).await
+    }
 
-        let mut last_err: Option<Error> = None;
-        for attempt in 0..=max_retries {
-            if attempt > 0 {
-                // Honor a server-supplied Retry-After (from the previous 429/503)
-                // as a floor over the exponential backoff, with jitter.
-                let retry_after = match &last_err {
-                    Some(Error::RateLimited { retry_after }) => *retry_after,
-                    _ => None,
-                };
-                let delay = self.retry.delay_with_hint(attempt - 1, retry_after);
-                crate::platform::sleep(delay).await;
-            }
-
-            let rb = crate::outbound::apply_user_agent(self.http.get(&url).query(&query));
-            let rb = self.apply_auth(rb, bearer.as_deref());
-
-            let resp = match rb.send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    last_err = Some(Error::Network(e));
-                    continue;
-                }
-            };
-
-            self.record_rate_limit(&resp).await;
-            let status = resp.status();
-
-            if status.is_success() {
-                if let Some(len) = resp.content_length()
-                    && len > MAX_RAW_RESPONSE_BODY
-                {
-                    return Err(Error::ResponseTooLarge {
-                        size: len,
-                        limit: MAX_RAW_RESPONSE_BODY,
-                    });
-                }
-                return resp
-                    .bytes()
-                    .await
-                    .map(|b| b.to_vec())
-                    .map_err(Error::Network);
-            }
-
-            let status_u16 = status.as_u16();
-            if Self::is_retryable(status_u16) && attempt < max_retries {
-                let retry_after = Self::parse_retry_after(&resp);
-                last_err = Some(Error::RateLimited { retry_after });
-                continue;
-            }
-
-            return Err(Self::parse_error_response(resp).await);
-        }
-
-        Err(last_err.unwrap_or_else(|| Error::Xrpc {
-            status: 0,
-            error: String::from("Unknown"),
-            message: String::from("max retries exceeded"),
-        }))
+    /// Read a response body, failing as soon as it exceeds `limit` bytes.
+    async fn read_body(resp: reqwest::Response, limit: u64) -> Result<Vec<u8>, Error> {
+        Self::check_response_size(&resp, limit).await?;
+        crate::outbound::read_capped(resp, limit as usize)
+            .await?
+            // A chunked body's full size is unknown; report the first byte
+            // over the limit.
+            .ok_or(Error::ResponseTooLarge {
+                size: limit + 1,
+                limit,
+            })
     }
 
     /// Execute an XRPC procedure with a raw binary body (POST).
@@ -963,5 +932,84 @@ mod tests {
             .unwrap();
         assert_eq!(result["received"]["alpha"], "hello");
         assert_eq!(result["received"]["beta"], "42");
+    }
+
+    // --- Body caps and streaming ---
+
+    #[tokio::test]
+    async fn read_body_caps_endless_chunked_body() {
+        // Regression: query_raw checked Content-Length, then buffered the whole
+        // body, so a chunked response was unbounded. This never returned.
+        use crate::outbound::test_server::{Body, serve};
+        let resp = reqwest::get(serve(Body::Endless).await).await.unwrap();
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            Client::read_body(resp, 1 << 20),
+        )
+        .await
+        .expect("cap must apply while reading")
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ResponseTooLarge {
+                size: 1_048_577,
+                limit: 1_048_576
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_body_reports_declared_oversized_length() {
+        use crate::outbound::test_server::{Body, serve};
+        let body = Body::Length {
+            declared: 2000,
+            len: 2000,
+        };
+        let resp = reqwest::get(serve(body).await).await.unwrap();
+        let err = Client::read_body(resp, 1000).await.unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ResponseTooLarge {
+                size: 2000,
+                limit: 1000
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_body_accepts_chunked_body_at_limit() {
+        use crate::outbound::test_server::{Body, serve};
+        let resp = reqwest::get(serve(Body::Chunked { len: 40_000 }).await)
+            .await
+            .unwrap();
+        let body = Client::read_body(resp, 40_000).await.unwrap();
+        assert_eq!(body, vec![b'x'; 40_000]);
+    }
+
+    #[tokio::test]
+    async fn query_response_streams_body_and_maps_errors() {
+        use futures::StreamExt;
+        let url = start_mock().await;
+        let client = Client::new(&url);
+
+        let resp = client
+            .query_response("com.example.largeresponse", &json!({}))
+            .await
+            .unwrap();
+        let mut stream = std::pin::pin!(resp.bytes_stream());
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["items"].as_array().unwrap().len(), 10_000);
+
+        let err = client
+            .query_response("com.example.fail", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Xrpc { status: 400, ref error, .. } if error == "InvalidRequest")
+        );
     }
 }

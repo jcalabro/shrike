@@ -107,6 +107,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "car_incremental_differential"
+path = "fuzz_targets/car_incremental_differential.rs"
+test = false
+doc = false
+bench = false
+
 # --- Syntax identifiers ---
 [[bin]]
 name = "syntax_parsers"

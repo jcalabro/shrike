@@ -11,16 +11,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use shrike::car;
 use shrike::cbor::{Cid, Codec};
 use shrike::crypto::{P256VerifyingKey, SigningKey, VerifyingKey};
 use shrike::identity::{Identity, IdentityError};
 use shrike::sync::{
     ChainState, HostingPolicy, HostingState, IdentityResolver, LegacyCommitPolicy,
-    MAX_COMMIT_BLOCKS_BYTES, MAX_COMMIT_OPS, MemStateStore, RepoLoadLimits, StateStore,
-    StateStoreError, StateStoreOperation, SyncError, SyncRepoSource, Verifier, VerifierError,
-    VerifierOptions, VerifierPolicy, VerifierStats, check_op_cids, decode_commit_car,
-    invert_commit,
+    MAX_COMMIT_BLOCKS_BYTES, MAX_COMMIT_OPS, MemStateStore, RepoCarStream, RepoLoadLimits,
+    StateStore, StateStoreError, StateStoreOperation, SyncError, SyncRepoSource, Verifier,
+    VerifierError, VerifierOptions, VerifierPolicy, VerifierStats, check_op_cids,
+    decode_commit_car, invert_commit,
 };
 use shrike::syntax::{Did, Tid};
 
@@ -1407,6 +1408,162 @@ async fn resync_rejects_too_many_repo_records() {
 }
 
 #[tokio::test]
+async fn resync_streams_repo_car_in_chunks() {
+    let fixture = commit_fixture_create();
+    let source = StreamingRepoSource::chunked(fixture.raw_commit.blocks.clone(), 7);
+    let pulled = Arc::clone(&source.pulled);
+    let (verifier, store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(source),
+        RepoLoadLimits::default(),
+    );
+
+    let ops = verifier.resync(&fixture.raw_commit.repo).await.unwrap();
+
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].action, "resync");
+    assert_eq!(
+        pulled.load(Ordering::SeqCst),
+        fixture.raw_commit.blocks.len().div_ceil(7)
+    );
+    assert_eq!(verifier.stats().resyncs, 1);
+    assert_eq!(
+        store
+            .load_chain(&fixture.raw_commit.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .rev,
+        fixture.raw_commit.rev.to_string()
+    );
+}
+
+/// A CAR header plus the length prefix of a maximal (128 MiB) block, whose body
+/// never finishes arriving.
+fn car_prefix_announcing_huge_block(fixture_car: &[u8]) -> Vec<u8> {
+    let (roots, _) = car::read_all(fixture_car).unwrap();
+    let mut prefix = car::write_all(&roots, &[]).unwrap();
+    prefix.extend_from_slice(&[0x80, 0x80, 0x80, 0x40]); // varint 128 MiB
+    prefix
+}
+
+#[tokio::test]
+async fn resync_stops_reading_endless_repo_stream_at_car_byte_limit() {
+    // Regression: getRepo bodies used to be buffered whole (up to 512 MiB)
+    // before any limit applied. The limit must cut the stream off as it is read.
+    let fixture = commit_fixture_create();
+    let prefix = car_prefix_announcing_huge_block(&fixture.raw_commit.blocks);
+    let source = StreamingRepoSource::endless(prefix, vec![0; 1024]);
+    let pulled = Arc::clone(&source.pulled);
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(source),
+        RepoLoadLimits {
+            max_car_bytes: 64 * 1024,
+            ..RepoLoadLimits::default()
+        },
+    );
+
+    let err = tokio::time::timeout(TEST_TIMEOUT, verifier.resync(&fixture.raw_commit.repo))
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(*source, VerifierError::OversizedCommit { field: "repo_car_bytes", .. })
+    ));
+    assert_eq!(pulled.load(Ordering::SeqCst), 1 + 64);
+    assert_eq!(verifier.stats().oversized_commits, 1);
+}
+
+#[tokio::test]
+async fn resync_rejects_cid_mismatch_without_reading_rest_of_stream() {
+    let fixture = commit_fixture_create();
+    let (roots, mut blocks) = car::read_all(&fixture.raw_commit.blocks[..]).unwrap();
+    blocks[0].data.push(0);
+    let bad = car::write_all(&roots, &blocks).unwrap();
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(StreamingRepoSource::endless(bad, vec![0; 1024])),
+        RepoLoadLimits::default(),
+    );
+
+    let err = tokio::time::timeout(TEST_TIMEOUT, verifier.resync(&fixture.raw_commit.repo))
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(&*source, VerifierError::Car { source, .. }
+                if source.to_string().contains("CID mismatch"))
+    ));
+}
+
+#[tokio::test]
+async fn resync_rejects_truncated_repo_stream() {
+    let fixture = commit_fixture_create();
+    let car = &fixture.raw_commit.blocks;
+    let (verifier, _store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(StreamingRepoSource::chunked(
+            car[..car.len() - 1].to_vec(),
+            16,
+        )),
+        RepoLoadLimits::default(),
+    );
+
+    let err = verifier.resync(&fixture.raw_commit.repo).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(&*source, VerifierError::Car { source, .. }
+                if source.to_string().contains("truncated block data"))
+    ));
+}
+
+#[tokio::test]
+async fn resync_reports_mid_stream_fetch_failure_as_resync_required() {
+    let fixture = commit_fixture_create();
+    let car = fixture.raw_commit.blocks.clone();
+    let source = StreamingRepoSource::new(move || {
+        let head = Ok(car[..car.len() / 2].to_vec().into());
+        let fail = Err(SyncError::Sync("connection reset".to_owned()));
+        futures::stream::iter([head, fail]).boxed()
+    });
+    let (verifier, store, _resolver) = verifier_for_keys_repo_source_and_limits(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        Arc::new(source),
+        RepoLoadLimits::default(),
+    );
+
+    let err = verifier.resync(&fixture.raw_commit.repo).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        VerifierError::ResyncFailed { source, .. }
+            if matches!(&*source, VerifierError::ResyncRequired { reason, .. }
+                if reason.contains("connection reset"))
+    ));
+    assert!(
+        store
+            .load_chain(&fixture.raw_commit.repo)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn policy_resync_queues_chain_break_and_emits_resync_event() {
     let fixture = commit_fixture_create();
     let repo_source = Arc::new(FakeRepoSource::with_car(fixture.raw_commit.blocks.clone()));
@@ -2108,6 +2265,57 @@ impl SyncRepoSource for FakeRepoSource {
     }
 }
 
+/// Serves getRepo only as a stream: `get_repo_car` fails, so the verifier must
+/// take the streaming path. Counts the chunks the verifier pulls.
+struct StreamingRepoSource {
+    make: Box<dyn Fn() -> RepoCarStream + Send + Sync>,
+    pulled: Arc<AtomicUsize>,
+}
+
+impl StreamingRepoSource {
+    fn new(make: impl Fn() -> RepoCarStream + Send + Sync + 'static) -> Self {
+        Self {
+            make: Box::new(make),
+            pulled: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn chunked(car: Vec<u8>, size: usize) -> Self {
+        Self::new(move || {
+            let chunks: Vec<_> = car.chunks(size).map(|c| Ok(c.to_vec().into())).collect();
+            futures::stream::iter(chunks).boxed()
+        })
+    }
+
+    /// `head`, then `tail` repeated forever.
+    fn endless(head: Vec<u8>, tail: Vec<u8>) -> Self {
+        Self::new(move || {
+            let head = futures::stream::once(futures::future::ready(Ok(head.clone().into())));
+            let tail = futures::stream::repeat_with({
+                let tail = tail.clone();
+                move || Ok(tail.clone().into())
+            });
+            head.chain(tail).boxed()
+        })
+    }
+}
+
+#[async_trait]
+impl SyncRepoSource for StreamingRepoSource {
+    async fn get_repo_car(&self, _did: &Did) -> Result<Vec<u8>, SyncError> {
+        Err(SyncError::Sync("only streaming is supported".to_owned()))
+    }
+
+    async fn get_repo_car_stream(&self, _did: &Did) -> Result<RepoCarStream, SyncError> {
+        let pulled = Arc::clone(&self.pulled);
+        Ok((self.make)()
+            .inspect(move |_| {
+                pulled.fetch_add(1, Ordering::SeqCst);
+            })
+            .boxed())
+    }
+}
+
 struct BlockingRepoSource {
     car: Vec<u8>,
     release_rx: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
@@ -2220,7 +2428,7 @@ fn verifier_for_keys_and_repo_source(
 fn verifier_for_keys_repo_source_and_limits(
     did: Did,
     keys: Vec<[u8; 33]>,
-    repo_source: Arc<FakeRepoSource>,
+    repo_source: Arc<dyn SyncRepoSource>,
     limits: RepoLoadLimits,
 ) -> (Verifier, Arc<MemStateStore>, Arc<FakeIdentityResolver>) {
     let store = Arc::new(MemStateStore::new());
@@ -2230,7 +2438,7 @@ fn verifier_for_keys_repo_source_and_limits(
         Arc::clone(&resolver) as Arc<dyn IdentityResolver>,
     )
     .with_verifier_policy(VerifierPolicy::Error)
-    .with_repo_source(repo_source as Arc<dyn SyncRepoSource>)
+    .with_repo_source(repo_source)
     .with_repo_load_limits(limits);
     (Verifier::new(options), store, resolver)
 }

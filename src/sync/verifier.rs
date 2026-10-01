@@ -10,12 +10,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::cbor::Cid;
 use crate::identity::{Directory, Identity, IdentityError};
-use crate::sync::resync::{LoadedRepo, RepoLoadLimits, ResyncEvent, load_repo_from_car};
+use crate::sync::resync::{LoadedRepo, RepoCarLoader, RepoLoadLimits, ResyncEvent};
 use crate::sync::{
     ChainState, HostingState, RawAccount, RawCommit, RawSync, StateStore, SyncClient, SyncError,
     VerifierError, check_op_cids, decode_commit_car, decode_sync_commit, find_duplicate_path,
@@ -141,9 +143,23 @@ pub trait IdentityResolver: Send + Sync {
     async fn purge(&self, did: &Did) -> Result<(), IdentityError>;
 }
 
+/// A repo CAR body arriving in chunks.
+pub type RepoCarStream = BoxStream<'static, Result<bytes::Bytes, SyncError>>;
+
+/// Where the verifier fetches full repos (`com.atproto.sync.getRepo`) when it
+/// needs to resync.
 #[async_trait]
 pub trait SyncRepoSource: Send + Sync {
     async fn get_repo_car(&self, did: &Did) -> Result<Vec<u8>, SyncError>;
+
+    /// Fetch the repo CAR as a stream of chunks. The verifier decodes and
+    /// verifies the chunks as they arrive, enforcing its [`RepoLoadLimits`],
+    /// so a streaming source never has to buffer the whole repo. The default
+    /// yields the output of [`get_repo_car`](Self::get_repo_car) as one chunk.
+    async fn get_repo_car_stream(&self, did: &Did) -> Result<RepoCarStream, SyncError> {
+        let car = self.get_repo_car(did).await?;
+        Ok(futures::stream::once(async move { Ok(bytes::Bytes::from(car)) }).boxed())
+    }
 }
 
 #[async_trait]
@@ -162,6 +178,10 @@ impl IdentityResolver for Directory {
 impl SyncRepoSource for SyncClient {
     async fn get_repo_car(&self, did: &Did) -> Result<Vec<u8>, SyncError> {
         SyncClient::get_repo_car(self, did).await
+    }
+
+    async fn get_repo_car_stream(&self, did: &Did) -> Result<RepoCarStream, SyncError> {
+        SyncClient::get_repo_car_stream(self, did).await
     }
 }
 
@@ -1221,14 +1241,19 @@ impl Verifier {
                     did: did.clone(),
                     reason: "no sync repo source configured".to_owned(),
                 })?;
-        let car = source
-            .get_repo_car(did)
+        let fetch_failed = |err: SyncError| VerifierError::ResyncRequired {
+            did: did.clone(),
+            reason: err.to_string(),
+        };
+        let mut car = source
+            .get_repo_car_stream(did)
             .await
-            .map_err(|err| VerifierError::ResyncRequired {
-                did: did.clone(),
-                reason: err.to_string(),
-            })?;
-        let loaded = load_repo_from_car(did, &car, self.options.repo_load_limits)?;
+            .map_err(fetch_failed)?;
+        let mut loader = RepoCarLoader::new(did, self.options.repo_load_limits);
+        while let Some(chunk) = car.next().await {
+            loader.push(&chunk.map_err(fetch_failed)?)?;
+        }
+        let loaded = loader.finish()?;
         self.verify_loaded_repo(did, &loaded).await?;
 
         let _guard = self.lock_for(did).lock().await;
