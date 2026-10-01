@@ -27,7 +27,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `sync` | [`shrike::sync`](https://docs.rs/shrike/latest/shrike/sync/) | repository download and verification |
 | `backfill` | [`shrike::backfill`](https://docs.rs/shrike/latest/shrike/backfill/) | concurrent bulk repo downloading |
 | `labeling` | [`shrike::labeling`](https://docs.rs/shrike/latest/shrike/labeling/) | label signing and verification |
-| `oauth` | [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth/) | OAuth 2.0 client with PKCE and DPoP |
+| `oauth` | [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth/) | OAuth 2.0 client with PKCE and DPoP, and permission scope parsing and evaluation |
 | `api` | [`shrike::api`](https://docs.rs/shrike/latest/shrike/api/) | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
 | `wasm` | browser-safe subset | client-side features for `wasm32-unknown-unknown` (everything except `xrpc-server`, `sync`, and `backfill`) |
 

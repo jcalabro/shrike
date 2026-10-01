@@ -280,6 +280,14 @@ name = "oauth_integration"
 required-features = ["oauth"]
 
 [[test]]
+name = "oauth_scopes_interop"
+required-features = ["oauth"]
+
+[[test]]
+name = "oauth_scopes_property_tests"
+required-features = ["oauth"]
+
+[[test]]
 name = "identity_integration"
 required-features = ["identity"]
 

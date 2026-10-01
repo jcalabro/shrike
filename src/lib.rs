@@ -43,7 +43,7 @@
 //! | `sync` | Repository sync and commit verification |
 //! | `backfill` | Concurrent bulk repo downloading (engine scaffolding; download loop WIP) |
 //! | `labeling` | Label creation, signing, and verification |
-//! | `oauth` | OAuth2 authorization client (DPoP, PKCE, session management) |
+//! | `oauth` | OAuth2 authorization client (DPoP, PKCE, session management) and permission scopes |
 //! | `api` | Generated types for all Bluesky and AT Protocol lexicons |
 //! | `wasm` | Browser-safe client subset (excludes server, sync, and backfill) |
 //! | `full` | Everything above |

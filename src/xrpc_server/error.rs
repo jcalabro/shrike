@@ -308,6 +308,15 @@ impl From<crate::service_auth::ServiceAuthError> for ServerError {
     }
 }
 
+/// A request beyond the token's OAuth scope is a 403 `ScopeMissingError`, as
+/// in the reference PDS.
+#[cfg(feature = "oauth")]
+impl From<crate::oauth::scopes::ScopeMissingError> for ServerError {
+    fn from(err: crate::oauth::scopes::ScopeMissingError) -> Self {
+        ServerError::new(StatusCode::FORBIDDEN, "ScopeMissingError", err.to_string())
+    }
+}
+
 /// Upstream XRPC errors pass through with their status, name and message,
 /// except that an upstream 500 becomes a 502 (keeping its name and message).
 /// As in the reference `lex-client`, an unusable response is a 502
@@ -797,6 +806,24 @@ mod tests {
         assert_eq!(
             err.body(),
             json!({"error": "NotEnoughResources", "message": "busy"})
+        );
+    }
+
+    #[cfg(feature = "oauth")]
+    #[test]
+    fn scope_missing_is_forbidden() {
+        use crate::oauth::scopes::{RepoAction, ScopePermissions};
+        let missing = ScopePermissions::new("atproto")
+            .assert_repo("app.bsky.feed.post", RepoAction::Create)
+            .unwrap_err();
+        let err = ServerError::from(missing);
+        assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            err.body(),
+            json!({
+                "error": "ScopeMissingError",
+                "message": "Missing required scope \"repo:app.bsky.feed.post?action=create\"",
+            })
         );
     }
 }

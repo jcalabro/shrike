@@ -197,5 +197,25 @@ fn main() {
         write_seed("syntax_parsers", name, s.as_bytes());
     }
 
+    // --- OAuth scopes (oauth_scopes) ---
+    for (name, s) in [
+        ("static", "atproto transition:generic transition:email transition:chat.bsky"),
+        ("repo", "repo:app.bsky.feed.post?action=create repo?collection=*&action=delete"),
+        ("rpc", "rpc:app.bsky.feed.getFeed?aud=did:web:api.bsky.app%23bsky_appview rpc?lxm=a.b.c&lxm=*&aud=did:plc:aaaaaaaaaaaaaaaaaaaaaaaa%23x"),
+        ("blob", "blob:image/* blob?accept=image/png&accept=image/svg%2Bxml"),
+        ("account", "account:email?action=manage account?attr=status identity:handle identity:*"),
+        ("localhost", "rpc:a.b.c?aud=did:web:localhost%253A3000%23svc include:a.b.c?aud=did:web:x.com#y"),
+        (
+            "include",
+            "include:com.example.calendar.auth?aud=did:web:example.com%23svc\n\
+             {\"type\":\"permission-set\",\"permissions\":[\
+             {\"type\":\"permission\",\"resource\":\"repo\",\"collection\":[\"com.example.calendar.event\"],\"action\":[\"create\"]},\
+             {\"type\":\"permission\",\"resource\":\"rpc\",\"inheritAud\":true,\"lxm\":[\"com.example.calendar.list\"]},\
+             {\"type\":\"permission\",\"resource\":\"rpc\",\"aud\":\"*\",\"lxm\":[\"com.example.calendar.get\"]}]}",
+        ),
+    ] {
+        write_seed("oauth_scopes", name, s.as_bytes());
+    }
+
     println!("done.");
 }

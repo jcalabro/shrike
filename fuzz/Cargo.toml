@@ -22,7 +22,7 @@ path = ".."
 features = [
     "syntax", "cbor", "mst", "car", "repo", "crypto",
     "lexicon", "streaming", "sync", "labeling", "jetstream",
-    "service-auth", "xrpc-server",
+    "service-auth", "xrpc-server", "oauth",
 ]
 
 # Seed-corpus generator (a normal binary, not a fuzz target).
@@ -111,6 +111,14 @@ bench = false
 [[bin]]
 name = "syntax_parsers"
 path = "fuzz_targets/syntax_parsers.rs"
+test = false
+doc = false
+bench = false
+
+# --- OAuth scopes ---
+[[bin]]
+name = "oauth_scopes"
+path = "fuzz_targets/oauth_scopes.rs"
 test = false
 doc = false
 bench = false

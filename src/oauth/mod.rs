@@ -15,6 +15,9 @@
 //! Use MemorySessionStore for development or implement SessionStore for
 //! persistent storage.
 //!
+//! The [`scopes`] module parses atproto permission scopes and checks what a
+//! granted scope allows, for clients and servers alike.
+//!
 //! ```no_run
 //! use shrike::oauth::{OAuthClient, OAuthClientConfig, AuthorizeOptions};
 //! use shrike::oauth::session::{MemorySessionStore, MemoryStateStore};
@@ -52,6 +55,7 @@ pub mod dpop;
 pub mod jwk;
 pub mod metadata;
 pub mod pkce;
+pub mod scopes;
 pub mod session;
 pub mod token;
 pub mod transport;
