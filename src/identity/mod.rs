@@ -83,7 +83,7 @@ pub enum IdentityError {
 /// Maximum DID-document response body we will buffer (1 MiB). A DID document is
 /// a small JSON object; anything larger is malformed or hostile. Matches the
 /// atmos resolver's `io.LimitReader` cap.
-const MAX_DID_DOC_BYTES: u64 = 1 << 20;
+const MAX_DID_DOC_BYTES: usize = 1 << 20;
 
 /// Read, size-cap, deserialize, and verify a DID-document HTTP response.
 ///
@@ -98,27 +98,14 @@ pub(crate) async fn fetch_did_document(
     resp: reqwest::Response,
     expected: &crate::syntax::Did,
 ) -> Result<DidDocument, IdentityError> {
-    // Reject obviously-oversized bodies up front via Content-Length, then cap
-    // the actual read so a server that lies about (or omits) Content-Length
-    // still can't exhaust memory.
-    if let Some(len) = resp.content_length()
-        && len > MAX_DID_DOC_BYTES
-    {
-        return Err(IdentityError::InvalidDocument(format!(
-            "DID document too large: {len} bytes"
-        )));
-    }
-
-    let full = resp
-        .bytes()
+    let full = crate::outbound::read_capped(resp, MAX_DID_DOC_BYTES)
         .await
-        .map_err(|e| IdentityError::Network(e.to_string()))?;
-    if full.len() as u64 > MAX_DID_DOC_BYTES {
-        return Err(IdentityError::InvalidDocument(format!(
-            "DID document too large: {} bytes",
-            full.len()
-        )));
-    }
+        .map_err(|e| IdentityError::Network(e.to_string()))?
+        .ok_or_else(|| {
+            IdentityError::InvalidDocument(format!(
+                "DID document exceeds {MAX_DID_DOC_BYTES} bytes"
+            ))
+        })?;
 
     let doc: DidDocument =
         serde_json::from_slice(&full).map_err(|e| IdentityError::InvalidDocument(e.to_string()))?;
@@ -243,7 +230,7 @@ mod tests {
     async fn rejects_oversized_body() {
         // A body far over the 1 MiB cap must be rejected, not buffered whole.
         let requested = Did::try_from("did:plc:z72i7hdynmk6r22z27h6tvur").unwrap();
-        let big = "x".repeat((MAX_DID_DOC_BYTES as usize) + 1024);
+        let big = "x".repeat(MAX_DID_DOC_BYTES + 1024);
         let body = format!(r#"{{"id":"did:plc:z72i7hdynmk6r22z27h6tvur","pad":"{big}"}}"#);
         let url = serve_once(body).await;
         let resp = reqwest::get(&url).await.unwrap();
@@ -252,5 +239,22 @@ mod tests {
             matches!(err, IdentityError::InvalidDocument(_)),
             "oversized body must be rejected, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_endless_chunked_body() {
+        // Regression: without a Content-Length, the cap must apply while
+        // reading. Buffering the whole body first never returns here.
+        use crate::outbound::test_server::{Body, serve};
+        let requested = Did::try_from("did:plc:z72i7hdynmk6r22z27h6tvur").unwrap();
+        let resp = reqwest::get(serve(Body::Endless).await).await.unwrap();
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            fetch_did_document(resp, &requested),
+        )
+        .await
+        .expect("fetch_did_document must stop reading at the cap")
+        .unwrap_err();
+        assert!(matches!(err, IdentityError::InvalidDocument(_)), "{err:?}");
     }
 }

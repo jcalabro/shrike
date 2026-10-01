@@ -18,7 +18,7 @@ use crate::identity::IdentityError;
 /// Maximum size of a `.well-known/atproto-did` response body. The body is just
 /// a DID string; anything larger is malformed or hostile. Matches indigo's
 /// 2 KiB cap.
-const MAX_WELL_KNOWN_BYTES: u64 = 2048;
+const MAX_WELL_KNOWN_BYTES: usize = 2048;
 
 /// Resolve a handle to a DID, trying DNS first, then the HTTPS well-known
 /// endpoint. Returns [`IdentityError::NotFound`] if neither mechanism yields a
@@ -103,24 +103,13 @@ pub async fn resolve_handle_well_known(
         )));
     }
 
-    // Reject oversized bodies (a DID string is tiny). Check Content-Length, then
-    // cap the actual read.
-    if let Some(len) = resp.content_length()
-        && len > MAX_WELL_KNOWN_BYTES
-    {
-        return Err(IdentityError::InvalidDocument(format!(
-            "well-known atproto-did body too large: {len} bytes"
-        )));
-    }
-    let bytes = resp
-        .bytes()
+    // A DID string is tiny; refuse anything larger.
+    let bytes = crate::outbound::read_capped(resp, MAX_WELL_KNOWN_BYTES)
         .await
-        .map_err(|e| IdentityError::Network(e.to_string()))?;
-    if bytes.len() as u64 > MAX_WELL_KNOWN_BYTES {
-        return Err(IdentityError::InvalidDocument(
-            "well-known atproto-did body too large".into(),
-        ));
-    }
+        .map_err(|e| IdentityError::Network(e.to_string()))?
+        .ok_or_else(|| {
+            IdentityError::InvalidDocument("well-known atproto-did body too large".into())
+        })?;
 
     let body = std::str::from_utf8(&bytes)
         .map_err(|_| IdentityError::InvalidDocument("well-known atproto-did not UTF-8".into()))?;

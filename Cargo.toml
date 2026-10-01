@@ -96,7 +96,7 @@ xrpc = ["syntax", "dep:reqwest", "dep:tokio", "dep:gloo-timers"]
 # Layer 2 (depend on lower layers)
 service-auth = ["syntax", "crypto"]
 repo = ["syntax", "cbor", "crypto", "mst", "car"]
-identity = ["syntax", "crypto", "dep:reqwest", "dep:tokio", "dep:hickory-resolver", "dep:async-trait"]
+identity = ["syntax", "crypto", "dep:reqwest", "dep:tokio", "dep:hickory-resolver", "dep:async-trait", "dep:futures"]
 labeling = ["syntax", "cbor", "crypto"]
 streaming = ["syntax", "cbor", "car", "dep:tokio", "dep:tokio-tungstenite", "dep:futures", "dep:url", "dep:rand", "dep:gloo-net", "dep:gloo-timers", "dep:getrandom-03"]
 api = ["syntax", "cbor", "xrpc"]

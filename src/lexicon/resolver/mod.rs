@@ -348,10 +348,11 @@ impl LexiconResolver {
 
         let status = resp.status();
         if !status.is_success() {
-            let (error, message) = match read_capped(resp, MAX_ERROR_BODY_BYTES).await {
-                Ok(Some(body)) => xrpc_error(&body),
-                _ => (None, None),
-            };
+            let (error, message) =
+                match crate::outbound::read_capped(resp, MAX_ERROR_BODY_BYTES).await {
+                    Ok(Some(body)) => xrpc_error(&body),
+                    _ => (None, None),
+                };
             if error.as_deref() == Some("RecordNotFound") {
                 return Err(LexiconResolveError::RecordNotFound { uri: uri.clone() });
             }
@@ -363,7 +364,7 @@ impl LexiconResolver {
             });
         }
 
-        let car = read_capped(resp, self.max_proof_bytes)
+        let car = crate::outbound::read_capped(resp, self.max_proof_bytes)
             .await
             .map_err(http_err)?
             .ok_or_else(|| LexiconResolveError::TooLarge {
@@ -468,25 +469,6 @@ fn validate(
         json,
         record,
     })
-}
-
-/// Read a response body of at most `limit` bytes. Returns `Ok(None)` if the
-/// body is larger, without buffering more than `limit` bytes of it.
-async fn read_capped(
-    mut resp: reqwest::Response,
-    limit: usize,
-) -> Result<Option<Vec<u8>>, reqwest::Error> {
-    if resp.content_length().is_some_and(|len| len > limit as u64) {
-        return Ok(None);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await? {
-        if body.len() + chunk.len() > limit {
-            return Ok(None);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(Some(body))
 }
 
 /// The `error` and `message` of an XRPC error body, if it is one.

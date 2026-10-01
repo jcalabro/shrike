@@ -296,6 +296,102 @@ impl reqwest::dns::Resolve for LocalFilteringResolver {
     }
 }
 
+/// Read a response body of at most `limit` bytes. Returns `Ok(None)` if it is
+/// larger, having buffered no more than `limit` bytes of it.
+///
+/// `Content-Length` only short-circuits an honest oversized response; the cap
+/// is enforced on the bytes as they arrive, so a chunked or lying server
+/// cannot exhaust memory. This holds in browsers too, where the body streams
+/// from the `fetch` response.
+#[cfg(feature = "identity")]
+pub(crate) async fn read_capped(
+    resp: reqwest::Response,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    use futures::StreamExt;
+
+    if resp.content_length().is_some_and(|len| len > limit as u64) {
+        return Ok(None);
+    }
+    let mut stream = std::pin::pin!(resp.bytes_stream());
+    let mut body = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len() + chunk.len() > limit {
+            return Ok(None);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Some(body))
+}
+
+/// A one-shot HTTP server for testing body caps.
+#[cfg(all(
+    test,
+    feature = "identity",
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
+#[allow(clippy::unwrap_used)]
+pub(crate) mod test_server {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// How the served body is framed.
+    #[derive(Clone, Copy)]
+    pub(crate) enum Body {
+        /// `Content-Length: <declared>`, followed by `len` bytes.
+        Length { declared: usize, len: usize },
+        /// Chunked encoding, `len` bytes in total.
+        Chunked { len: usize },
+        /// Chunked encoding that never ends.
+        Endless,
+    }
+
+    /// Serve one `200 OK` response with a body of `x` bytes, then return the
+    /// URL to GET. Writing stops early if the client hangs up.
+    pub(crate) async fn serve(body: Body) -> String {
+        const CHUNK: usize = 16 * 1024;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let (head, len, chunked) = match body {
+                Body::Length { declared, len } => {
+                    (format!("Content-Length: {declared}"), Some(len), false)
+                }
+                Body::Chunked { len } => ("Transfer-Encoding: chunked".into(), Some(len), true),
+                Body::Endless => ("Transfer-Encoding: chunked".into(), None, true),
+            };
+            let head = format!("HTTP/1.1 200 OK\r\n{head}\r\nConnection: close\r\n\r\n");
+            if sock.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut left = len;
+            while left != Some(0) {
+                let n = left.map_or(CHUNK, |l| l.min(CHUNK));
+                let mut frame = Vec::with_capacity(n + 16);
+                if chunked {
+                    frame.extend_from_slice(format!("{n:x}\r\n").as_bytes());
+                }
+                frame.resize(frame.len() + n, b'x');
+                if chunked {
+                    frame.extend_from_slice(b"\r\n");
+                }
+                if sock.write_all(&frame).await.is_err() {
+                    return;
+                }
+                left = left.map(|l| l - n);
+            }
+            if chunked {
+                let _ = sock.write_all(b"0\r\n\r\n").await;
+            }
+            let _ = sock.shutdown().await;
+        });
+        format!("http://{addr}/")
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -440,6 +536,58 @@ mod tests {
                 result.is_err(),
                 "localhost resolves only to loopback and must be refused"
             );
+        }
+    }
+
+    #[cfg(all(
+        feature = "identity",
+        not(all(target_family = "wasm", target_os = "unknown"))
+    ))]
+    #[allow(clippy::expect_used)]
+    mod read_capped {
+        use super::super::test_server::{Body, serve};
+        use super::super::*;
+
+        const LIMIT: usize = 64 * 1024;
+
+        async fn read(body: Body) -> Option<Vec<u8>> {
+            let resp = reqwest::get(serve(body).await).await.unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(10), read_capped(resp, LIMIT))
+                .await
+                .expect("read_capped must stop at the cap, not drain the body")
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn accepts_bodies_up_to_the_limit() {
+            for len in [0, 1, LIMIT - 1, LIMIT] {
+                let body = read(Body::Chunked { len }).await.unwrap();
+                assert_eq!(body, vec![b'x'; len]);
+                let body = read(Body::Length { declared: len, len }).await.unwrap();
+                assert_eq!(body, vec![b'x'; len]);
+            }
+        }
+
+        #[tokio::test]
+        async fn rejects_chunked_bodies_over_the_limit() {
+            assert_eq!(read(Body::Chunked { len: LIMIT + 1 }).await, None);
+            assert_eq!(read(Body::Chunked { len: 4 * LIMIT }).await, None);
+        }
+
+        #[tokio::test]
+        async fn rejects_endless_chunked_body() {
+            // Regression: buffering the whole body before checking its size
+            // never returns here.
+            assert_eq!(read(Body::Endless).await, None);
+        }
+
+        #[tokio::test]
+        async fn rejects_oversized_content_length_without_reading() {
+            let body = Body::Length {
+                declared: LIMIT + 1,
+                len: 0,
+            };
+            assert_eq!(read(body).await, None);
         }
     }
 
