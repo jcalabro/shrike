@@ -155,7 +155,7 @@ impl DetachedTree {
                 persisted: &mut self.persisted,
             };
             for key in keys {
-                visit_key_path(&mut ld, root, key, &mut missing)?;
+                visit_key_path(&mut ld, root, key, true, &mut missing)?;
             }
         }
         missing.sort_unstable();
@@ -290,6 +290,64 @@ impl DetachedTree {
         Ok(())
     }
 
+    /// Walk the entries reachable through blocks `src` has, in sorted order,
+    /// skipping every subtree whose node is unavailable. The root must be
+    /// available. This is how a partial tree, such as a proof, is listed.
+    pub fn walk_reachable<F>(&mut self, src: &dyn BlockSource, mut f: F) -> Result<(), MstError>
+    where
+        F: FnMut(&str, Cid) -> Result<(), MstError>,
+    {
+        self.check_usable()?;
+        if let Some(root) = self.root.as_deref_mut() {
+            let mut ld = Loader {
+                src,
+                persisted: &mut self.persisted,
+            };
+            ld.ensure_loaded(root)?;
+            walk_reachable_node(&mut ld, root, &mut f)?;
+        }
+        Ok(())
+    }
+
+    /// Return the CIDs of the nodes in the covering proofs for `keys`: for
+    /// each key, the nodes that prove its value and its neighbours on
+    /// either side. They are what a consumer needs to undo an insert or
+    /// remove of those keys with no other blocks, as
+    /// `com.atproto.sync.subscribeRepos` commits require. This is the union
+    /// of the reference implementation's `getCoveringProof` for each key,
+    /// node for node. The result is sorted.
+    ///
+    /// The tree must have no changes since its last [`flush`](Self::flush).
+    pub fn covering_proof<'k>(
+        &mut self,
+        src: &dyn BlockSource,
+        keys: impl IntoIterator<Item = &'k str>,
+    ) -> Result<Vec<Cid>, MstError> {
+        self.check_usable()?;
+        let mut keys: Vec<&str> = keys.into_iter().collect();
+        keys.sort_unstable();
+        keys.dedup();
+        let mut out = Vec::new();
+        if keys.is_empty() {
+            return Ok(out);
+        }
+        match self.root.as_deref_mut() {
+            None => out.push(empty_node_block()?.0),
+            Some(root) => {
+                let mut ld = Loader {
+                    src,
+                    persisted: &mut self.persisted,
+                };
+                for step in [key_step, left_sib_step, right_sib_step] {
+                    proof_pass(&mut ld, root, &keys, step, &mut out)?;
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
+
     /// Load every node an insert or remove of `key` touches, and return the
     /// key's current value.
     fn load_key_path(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
@@ -301,7 +359,7 @@ impl DetachedTree {
             persisted: &mut self.persisted,
         };
         let mut missing = Vec::new();
-        visit_key_path(&mut ld, root, key, &mut missing)?;
+        visit_key_path(&mut ld, root, key, true, &mut missing)?;
         if let Some(cid) = missing.first() {
             return Err(MstError::BlockNotFound(cid.to_string()));
         }
@@ -370,17 +428,20 @@ fn require_loaded(n: &Node) -> Result<(), MstError> {
 }
 
 /// Load the nodes below `n` that a get, insert, or remove of `key`
-/// touches, collecting the CIDs of stubs the source cannot supply.
+/// touches, collecting the CIDs of stubs the source cannot supply. `top`
+/// is set for the root.
 ///
 /// That is the key's search path, continued into both subtrees next to an
-/// entry equal to `key`. A remove merges those two subtrees along their
-/// facing edges, which is exactly where `key` sorts within each. A new
-/// key's split follows the search path, and the emptied root chain that
-/// `trim_top` collapses consists of nodes whose only child is on the path.
+/// entry equal to `key` when both exist. A remove merges those two subtrees
+/// along their facing edges, which is exactly where `key` sorts within
+/// each; a lone neighbour is re-linked without being read. A new key's
+/// split follows the search path. Removing the root's only entry leaves a
+/// chain of emptied nodes for `trim_top` to collapse, which this loads.
 fn visit_key_path(
     ld: &mut Loader<'_>,
     n: &mut Node,
     key: &str,
+    top: bool,
     missing: &mut Vec<Cid>,
 ) -> Result<(), MstError> {
     if let Some(cid) = ld.load(n)? {
@@ -389,20 +450,56 @@ fn visit_key_path(
     }
     match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
         Ok(i) => {
-            if let Some(child) = child_before(n, i) {
-                visit_key_path(ld, child, key, missing)?;
-            }
-            if let Some(child) = n.entries[i].right.as_deref_mut() {
-                visit_key_path(ld, child, key, missing)?;
+            let only = top && n.entries.len() == 1;
+            match neighbours(n, i) {
+                (Some(left), Some(right)) => {
+                    visit_key_path(ld, left, key, false, missing)?;
+                    visit_key_path(ld, right, key, false, missing)?;
+                }
+                (Some(child), None) | (None, Some(child)) if only => {
+                    visit_root_chain(ld, child, missing)?;
+                }
+                _ => {}
             }
         }
         Err(i) => {
             if let Some(child) = child_before(n, i) {
-                visit_key_path(ld, child, key, missing)?;
+                visit_key_path(ld, child, key, false, missing)?;
             }
         }
     }
     Ok(())
+}
+
+/// Load the nodes `trim_top` inspects when `n` is left as the root's only
+/// subtree: down through nodes with no entries to the first with some.
+fn visit_root_chain(
+    ld: &mut Loader<'_>,
+    n: &mut Node,
+    missing: &mut Vec<Cid>,
+) -> Result<(), MstError> {
+    if let Some(cid) = ld.load(n)? {
+        // trim_top accepts an unread height-0 node as the root.
+        if n.height > 0 {
+            missing.push(cid);
+        }
+        return Ok(());
+    }
+    match n.left.as_deref_mut() {
+        Some(left) if n.entries.is_empty() => visit_root_chain(ld, left, missing),
+        _ => Ok(()),
+    }
+}
+
+/// The subtrees on either side of `entries[i]`.
+fn neighbours(n: &mut Node, i: usize) -> (Option<&mut Node>, Option<&mut Node>) {
+    let (before, rest) = n.entries.split_at_mut(i);
+    let left = match before.last_mut() {
+        Some(e) => e.right.as_deref_mut(),
+        None => n.left.as_deref_mut(),
+    };
+    let right = rest.first_mut().and_then(|e| e.right.as_deref_mut());
+    (left, right)
 }
 
 /// The subtree between `entries[i - 1]` and `entries[i]` (`left` when
@@ -885,6 +982,150 @@ where
     Ok(())
 }
 
+fn walk_reachable_node<F>(ld: &mut Loader<'_>, n: &mut Node, f: &mut F) -> Result<(), MstError>
+where
+    F: FnMut(&str, Cid) -> Result<(), MstError>,
+{
+    if let Some(left) = &mut n.left
+        && ld.load(left)?.is_none()
+    {
+        walk_reachable_node(ld, left, f)?;
+    }
+    for entry in &mut n.entries {
+        f(&entry.key, entry.val)?;
+        if let Some(right) = &mut entry.right
+            && ld.load(right)?.is_none()
+        {
+            walk_reachable_node(ld, right, f)?;
+        }
+    }
+    Ok(())
+}
+
+/// A position in a node, in the reference implementation's flattened view
+/// of it: the left subtree, then each entry followed by its right subtree.
+/// Absent subtrees take no position.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Left,
+    Leaf(usize),
+    Right(usize),
+}
+
+/// The subtree at `slot`, or `None` if it holds an entry.
+fn slot_subtree(n: &mut Node, slot: Slot) -> Option<&mut Node> {
+    match slot {
+        Slot::Left => n.left.as_deref_mut(),
+        Slot::Right(i) => n.entries.get_mut(i)?.right.as_deref_mut(),
+        Slot::Leaf(_) => None,
+    }
+}
+
+/// Index of the first entry whose key is at least `key`, or the entry
+/// count if there is none. Its slot is `findGtOrEqualLeafIndex`.
+fn gte_entry(n: &Node, key: &str) -> usize {
+    n.entries.partition_point(|e| e.key.as_str() < key)
+}
+
+/// The slot just before entry `i`, or the last slot when `i` is the entry
+/// count.
+fn slot_before(n: &Node, i: usize) -> Option<Slot> {
+    match i.checked_sub(1) {
+        None => n.left.is_some().then_some(Slot::Left),
+        Some(j) if n.entries.get(j)?.right.is_some() => Some(Slot::Right(j)),
+        Some(j) => Some(Slot::Leaf(j)),
+    }
+}
+
+/// The slot just after entry `i`.
+fn slot_after(n: &Node, i: usize) -> Option<Slot> {
+    if n.entries.get(i)?.right.is_some() {
+        Some(Slot::Right(i))
+    } else {
+        (i + 1 < n.entries.len()).then_some(Slot::Leaf(i + 1))
+    }
+}
+
+/// One covering-proof rule at a loaded node, for one key: whether the node
+/// is in the proof, and the slot the rule continues into. The rule only
+/// descends if that slot is a subtree.
+type ProofStep = fn(&Node, &str) -> (bool, Option<Slot>);
+
+/// `proofForKey`: the search path down to `key`, omitting the nodes below
+/// the last one that could hold it.
+fn key_step(n: &Node, key: &str) -> (bool, Option<Slot>) {
+    let i = gte_entry(n, key);
+    if n.entries.get(i).is_some_and(|e| e.key == key) {
+        return (true, None);
+    }
+    let next = slot_before(n, i);
+    (matches!(next, Some(Slot::Left | Slot::Right(_))), next)
+}
+
+/// `proofForLeftSib`: the path down the subtree just left of `key`.
+fn left_sib_step(n: &Node, key: &str) -> (bool, Option<Slot>) {
+    (true, slot_before(n, gte_entry(n, key)))
+}
+
+/// `proofForRightSib`: the path down to the entry just right of `key`.
+fn right_sib_step(n: &Node, key: &str) -> (bool, Option<Slot>) {
+    let i = gte_entry(n, key);
+    let found = if i < n.entries.len() {
+        Some(Slot::Leaf(i))
+    } else {
+        slot_before(n, i)
+    };
+    let next = match found {
+        Some(Slot::Leaf(j)) if n.entries[j].key == key => slot_after(n, j),
+        Some(Slot::Leaf(_)) => slot_before(n, i),
+        subtree => subtree,
+    };
+    (true, next)
+}
+
+/// Apply `step` for every key in `keys` (sorted) from `n` down, adding the
+/// nodes it selects to `out`. Each node is visited once: the slot a step
+/// picks never moves left as the key grows, so keys that continue into the
+/// same subtree form a run.
+fn proof_pass(
+    ld: &mut Loader<'_>,
+    n: &mut Node,
+    keys: &[&str],
+    step: ProofStep,
+    out: &mut Vec<Cid>,
+) -> Result<(), MstError> {
+    ld.ensure_loaded(n)?;
+    let mut included = false;
+    let mut runs: Vec<(Slot, usize, usize)> = Vec::new();
+    for (k, key) in keys.iter().enumerate() {
+        let (include, next) = step(n, key);
+        included |= include;
+        match (next, runs.last_mut()) {
+            (Some(slot @ (Slot::Left | Slot::Right(_))), Some((last, _, end))) if *last == slot => {
+                *end = k + 1;
+            }
+            (Some(slot @ (Slot::Left | Slot::Right(_))), _) => runs.push((slot, k, k + 1)),
+            _ => {}
+        }
+    }
+    if included {
+        match n.cid {
+            Some(cid) if !n.dirty => out.push(cid),
+            _ => {
+                return Err(MstError::Internal(
+                    "covering proof needs a flushed tree".into(),
+                ));
+            }
+        }
+    }
+    for (slot, start, end) in runs {
+        if let Some(child) = slot_subtree(n, slot) {
+            proof_pass(ld, child, &keys[start..end], step, out)?;
+        }
+    }
+    Ok(())
+}
+
 /// AT Protocol Merkle Search Tree backed by a [`BlockStore`].
 ///
 /// A wrapper around [`DetachedTree`] for synchronous stores: nodes load
@@ -991,6 +1232,12 @@ impl BlockSource for StoreSource<'_> {
 /// with `None` and silently drop every record below the removed key.
 fn trim_top(mut n: Option<Box<Node>>) -> Result<Option<Box<Node>>, MstError> {
     while let Some(node) = n {
+        // A height-0 node has no subtrees, so it can only appear as a child
+        // if it has entries: it is the root as it stands. Accepting it
+        // unread lets a partial tree, such as a commit proof, be inverted.
+        if !node.loaded && node.height == 0 {
+            return Ok(Some(node));
+        }
         require_loaded(&node)?;
         if !node.entries.is_empty() {
             return Ok(Some(node));
@@ -2143,5 +2390,126 @@ mod tests {
         assert_eq!(second.root, first.root);
         assert!(second.new_blocks.is_empty());
         assert!(second.retired.is_empty());
+    }
+
+    /// The first `n` record keys after `after` (by index) at `height`.
+    fn keys_at(height: u8, after: usize, n: usize) -> Vec<(usize, String)> {
+        (after + 1..)
+            .map(|i| (i, record_key(i)))
+            .filter(|(_, k)| height_for_key(k) == height)
+            .take(n)
+            .collect()
+    }
+
+    fn write_of(keys: &[String]) -> TreeWrite {
+        let val = Cid::compute(Codec::Drisl, b"v");
+        canonical_write(&keys.iter().map(|k| (k.clone(), val)).collect())
+    }
+
+    /// The root of a tree of `keys` and a store holding its blocks.
+    fn partial(keys: &[String]) -> (Cid, HidingStore) {
+        let write = write_of(keys);
+        let store = HidingStore {
+            blocks: write.new_blocks.into_iter().collect(),
+            ..Default::default()
+        };
+        (write.root, store)
+    }
+
+    fn canonical_root(keys: &[String]) -> Cid {
+        write_of(keys).root
+    }
+
+    /// The CID of the subtree right of `key` in the node `cid`.
+    fn right_of(store: &HidingStore, cid: Cid, key: &str) -> Cid {
+        let nd = decode_node_data(&store.blocks[&cid]).unwrap();
+        let mut prev = Vec::new();
+        for e in &nd.entries {
+            prev.truncate(e.prefix_len);
+            prev.extend_from_slice(&e.key_suffix);
+            if prev == key.as_bytes() {
+                return e.right.unwrap();
+            }
+        }
+        panic!("{key} not in node");
+    }
+
+    #[test]
+    fn removing_root_entry_promotes_unread_height_zero_subtree() {
+        // Root [a] at height 1 over an unread height-0 node [b, c]: removing
+        // a makes that node the root without reading it, as a commit proof
+        // that omits it requires.
+        let (ia, a) = keys_at(1, 0, 1).remove(0);
+        let low: Vec<String> = keys_at(0, ia, 2).into_iter().map(|(_, k)| k).collect();
+        let (root, store) = partial(&[a.clone(), low[0].clone(), low[1].clone()]);
+        let child = right_of(&store, root, &a);
+        store.hidden.borrow_mut().insert(child);
+
+        let mut tree = DetachedTree::load(root);
+        assert_eq!(tree.missing_blocks(&store, [a.as_str()]).unwrap(), []);
+        assert!(tree.remove(&store, &a).unwrap().is_some());
+        let write = tree.flush().unwrap();
+        assert_eq!(write.root, child);
+        assert_eq!(write.root, canonical_root(&low));
+        assert!(write.new_blocks.is_empty());
+    }
+
+    #[test]
+    fn removing_root_entry_reads_higher_subtrees() {
+        // Root [a] at height 2 over a height-1 filler over [b, c]. The filler
+        // must be read: only its block shows it has no entries of its own.
+        let (ia, a) = keys_at(2, 0, 1).remove(0);
+        let low: Vec<String> = keys_at(0, ia, 2).into_iter().map(|(_, k)| k).collect();
+        let (root, store) = partial(&[a.clone(), low[0].clone(), low[1].clone()]);
+        let filler = right_of(&store, root, &a);
+
+        store.hidden.borrow_mut().insert(filler);
+        let mut tree = DetachedTree::load(root);
+        assert_eq!(tree.missing_blocks(&store, [a.as_str()]).unwrap(), [filler]);
+        assert!(matches!(
+            tree.remove(&store, &a),
+            Err(MstError::BlockNotFound(_))
+        ));
+        assert_eq!(tree.flush().unwrap().root, root);
+
+        // With the filler readable, the height-0 node below it may stay
+        // unread.
+        store.hidden.borrow_mut().clear();
+        let leaf_node = {
+            let nd = decode_node_data(&store.blocks[&filler]).unwrap();
+            assert!(nd.entries.is_empty());
+            nd.left.unwrap()
+        };
+        store.hidden.borrow_mut().insert(leaf_node);
+        let mut tree = DetachedTree::load(root);
+        assert!(tree.remove(&store, &a).unwrap().is_some());
+        assert_eq!(tree.flush().unwrap().root, canonical_root(&low));
+    }
+
+    #[test]
+    fn lone_neighbour_of_removed_key_is_not_read() {
+        // Removing a non-root key with a subtree on only one side re-links
+        // that subtree as is.
+        for height in [1, 2] {
+            let (ia, a) = keys_at(height, 0, 1).remove(0);
+            let (ib, b) = keys_at(height, ia, 1).remove(0);
+            let low: Vec<String> = keys_at(0, ib, 3).into_iter().map(|(_, k)| k).collect();
+            let mut keys = vec![a.clone(), b.clone()];
+            keys.extend(low.iter().cloned());
+            let (root, store) = partial(&keys);
+            // b's right subtree holds the low keys; a has no subtrees.
+            let sub = right_of(&store, root, &b);
+            store.hidden.borrow_mut().insert(sub);
+
+            let mut tree = DetachedTree::load(root);
+            assert!(tree.remove(&store, &b).unwrap().is_some());
+            let mut rest = vec![a.clone()];
+            rest.extend(low.iter().cloned());
+            assert_eq!(
+                tree.flush().unwrap().root,
+                canonical_root(&rest),
+                "height {height}"
+            );
+        }
     }
 }

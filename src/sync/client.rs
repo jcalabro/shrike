@@ -140,7 +140,7 @@ mod tests {
         let col = Nsid::try_from("app.bsky.feed.post").unwrap();
         repo.create(&col, &RecordKey::try_from("a").unwrap(), b"\xa0")
             .unwrap();
-        repo.commit(&sk).unwrap()
+        repo.commit(&sk).unwrap().commit
     }
 
     #[test]

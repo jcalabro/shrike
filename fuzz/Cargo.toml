@@ -145,6 +145,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "repo_proofs"
+path = "fuzz_targets/repo_proofs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "repo_load_car"
+path = "fuzz_targets/repo_load_car.rs"
+test = false
+doc = false
+bench = false
+
 # --- Firehose / sync frames ---
 [[bin]]
 name = "firehose_frame"

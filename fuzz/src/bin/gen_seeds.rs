@@ -206,6 +206,16 @@ fn main() {
                     write_seed("repo_record_proof", &format!("{rkey}_{filler}"), &car);
                 }
             }
+            let paths: Vec<_> = ["com.example.present", "com.example.absent", "com.example.f0003"]
+                .into_iter()
+                .map(|k| (col.clone(), rk(k)))
+                .collect();
+            if let Ok(car) = repo.records_proof(&paths) {
+                write_seed("repo_proofs", &format!("multi_{filler}"), &car);
+            }
+            if let Ok(car) = repo.export_car() {
+                write_seed("repo_load_car", &format!("repo_{filler}"), &car);
+            }
         }
     }
 

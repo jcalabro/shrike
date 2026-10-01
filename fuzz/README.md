@@ -39,6 +39,8 @@ cargo +nightly fuzz run cbor_decode_differential
 | `cid_parse` | CID parse never panics; bytes/string forms are **fixed points** (no non-canonical aliases) |
 | `car_read_all` | CAR v1 reader never panics on malformed framing |
 | `repo_record_proof` | record proof verifier never panics, and never accepts a record the fixed signing key did not commit to |
+| `repo_proofs` | multi-record proof verifiers (`verify_proofs`, `verify_records`) never panic, and never verify a claim or record the fixed signing key did not commit to |
+| `repo_load_car` | `Repo::load_car` never panics; an accepted CAR exports and reloads **identically** and stays writable |
 | `mst_decode_node_data` | node decoder never panics |
 | `mst_decode_node_data_roundtrip` | accepted node blocks decode→encode→decode **stably** |
 | `mst_load_and_walk` | `Tree::load` + traverse (the prefix-reslice / key-order path; H2/H3/H4) never panics |

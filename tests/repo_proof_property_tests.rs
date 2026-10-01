@@ -24,9 +24,9 @@ fn col() -> Nsid {
     Nsid::try_from("com.example.records").unwrap()
 }
 
-/// DRISL text string (keys are under 24 bytes): the record value for `rkey`.
+/// DRISL `{"k": rkey}` (keys are under 24 bytes): the record for `rkey`.
 fn record(rkey: &str) -> Vec<u8> {
-    let mut v = vec![0x60 | rkey.len() as u8];
+    let mut v = vec![0xa1, 0x61, b'k', 0x60 | rkey.len() as u8];
     v.extend_from_slice(rkey.as_bytes());
     v
 }

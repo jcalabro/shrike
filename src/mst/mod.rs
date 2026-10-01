@@ -47,4 +47,7 @@ pub enum MstError {
     /// An unexpected internal error.
     #[error("internal error: {0}")]
     Internal(String),
+    /// The backing storage failed to read a block.
+    #[error("storage error: {0}")]
+    Storage(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

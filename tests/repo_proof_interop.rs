@@ -108,7 +108,7 @@ fn generated_proofs_match_reference() {
             )
             .unwrap();
         }
-        let commit = repo.commit(&key).unwrap();
+        let commit = repo.commit(&key).unwrap().commit;
         assert_eq!(
             commit.data.to_string(),
             case.data_cid,

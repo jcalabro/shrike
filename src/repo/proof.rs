@@ -1,22 +1,21 @@
 //! Record proofs, as served by `com.atproto.sync.getRecord`.
 //!
 //! A record proof is a CAR file whose single root is a signed commit. It
-//! carries the MST nodes on the search path for one record key, and the
-//! record block itself when the record exists. Verifying it proves that the
-//! repository's signing key committed to that record (or to its absence)
-//! without trusting the server that sent it.
+//! carries the MST nodes on the search path for one or more record keys,
+//! and the record blocks for those that exist. Verifying it proves that the
+//! repository's signing key committed to those records (or to their
+//! absence) without trusting the server that sent it.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::car::{Block, CarError, Reader};
-use crate::cbor::{Cid, Codec};
+use crate::cbor::{Cid, Codec, Value};
 use crate::crypto::VerifyingKey;
 use crate::mst::{BlockSource, DetachedTree, MstError};
 use crate::repo::RepoError;
 use crate::repo::commit::Commit;
-use crate::repo::repo::mst_key;
+use crate::repo::repo::{Recorder, mst_key};
 use crate::syntax::{Did, Nsid, RecordKey};
 
 /// Errors from building or verifying a record proof.
@@ -40,6 +39,10 @@ pub enum ProofError {
     Mst(#[from] MstError),
     #[error("block {0} is not DRISL")]
     NotDrisl(Cid),
+    #[error("block {0} is not a record")]
+    NotRecord(Cid),
+    #[error("MST key {0:?} is not a record path")]
+    InvalidPath(String),
     #[error("repository has no commit")]
     NoCommit,
 }
@@ -56,6 +59,38 @@ pub struct RecordProof {
     pub record: Option<(Cid, Vec<u8>)>,
 }
 
+/// A claim about a record at a commit: that it has the given CID, or with
+/// `cid: None`, that it does not exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordClaim {
+    pub collection: Nsid,
+    pub rkey: RecordKey,
+    pub cid: Option<Cid>,
+}
+
+/// The result of [`verify_proofs`].
+#[derive(Debug, Clone)]
+pub struct ProofVerdict {
+    /// The signed commit at the proof's root.
+    pub commit: Commit,
+    /// CID of the commit block.
+    pub commit_cid: Cid,
+    /// Claims the proof shows to be true.
+    pub verified: Vec<RecordClaim>,
+    /// Claims the proof shows to be false.
+    pub unverified: Vec<RecordClaim>,
+}
+
+/// A record found in a proof by [`verify_records`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedRecord {
+    pub collection: Nsid,
+    pub rkey: RecordKey,
+    pub cid: Cid,
+    /// The record's DRISL bytes.
+    pub record: Vec<u8>,
+}
+
 /// Verify a record proof CAR for `collection/rkey` in `did`'s repository.
 ///
 /// Every block is hashed against its CID, the root commit must belong to
@@ -69,6 +104,165 @@ pub fn verify_record_proof(
     collection: &Nsid,
     rkey: &RecordKey,
 ) -> Result<RecordProof, ProofError> {
+    let OpenProof {
+        blocks,
+        commit_cid,
+        commit,
+    } = open_proof(car, did, key)?;
+    let mut tree = DetachedTree::load(commit.data);
+    let record = match tree.get(&blocks, &mst_key(collection, rkey))? {
+        None => None,
+        Some(cid) => Some((cid, record_block(&blocks, &cid)?.to_vec())),
+    };
+    Ok(RecordProof {
+        commit,
+        commit_cid,
+        record,
+    })
+}
+
+/// Check claims about several records against one proof CAR, such as
+/// [`record_proofs_car`] builds (`verifyProofs` in the reference
+/// implementation).
+///
+/// The proof itself is checked as [`verify_record_proof`] checks it, and
+/// fails the same way if it lacks a block that a claim's lookup needs. Each
+/// claim is then verified if the proven CID (or absence) matches it.
+pub fn verify_proofs(
+    car: &[u8],
+    did: &Did,
+    key: &dyn VerifyingKey,
+    claims: &[RecordClaim],
+) -> Result<ProofVerdict, ProofError> {
+    let OpenProof {
+        blocks,
+        commit_cid,
+        commit,
+    } = open_proof(car, did, key)?;
+    let mut tree = DetachedTree::load(commit.data);
+    let mut verified = Vec::new();
+    let mut unverified = Vec::new();
+    for claim in claims {
+        let found = tree.get(&blocks, &mst_key(&claim.collection, &claim.rkey))?;
+        if let Some(cid) = &found {
+            record_block(&blocks, cid)?;
+        }
+        if found == claim.cid {
+            verified.push(claim.clone());
+        } else {
+            unverified.push(claim.clone());
+        }
+    }
+    Ok(ProofVerdict {
+        commit,
+        commit_cid,
+        verified,
+        unverified,
+    })
+}
+
+/// List every record a proof CAR shows, in path order (`verifyRecords` in
+/// the reference implementation).
+///
+/// The proof is checked as [`verify_record_proof`] checks it. The MST is
+/// then walked as far as the proof's nodes reach, and each entry whose
+/// record block is present and holds a DRISL map is returned. An entry
+/// whose key is not a valid record path fails the whole proof.
+pub fn verify_records(
+    car: &[u8],
+    did: &Did,
+    key: &dyn VerifyingKey,
+) -> Result<Vec<VerifiedRecord>, ProofError> {
+    let OpenProof { blocks, commit, .. } = open_proof(car, did, key)?;
+    let mut entries = Vec::new();
+    DetachedTree::load(commit.data).walk_reachable(&blocks, |key, cid| {
+        entries.push((key.to_owned(), cid));
+        Ok(())
+    })?;
+
+    let mut records = Vec::new();
+    for (key, cid) in entries {
+        let (collection, rkey) = key
+            .split_once('/')
+            .and_then(|(c, r)| Some((Nsid::try_from(c).ok()?, RecordKey::try_from(r).ok()?)))
+            .ok_or_else(|| ProofError::InvalidPath(key.clone()))?;
+        if let Ok(record) = record_block(&blocks, &cid) {
+            records.push(VerifiedRecord {
+                collection,
+                rkey,
+                cid,
+                record: record.to_vec(),
+            });
+        }
+    }
+    Ok(records)
+}
+
+/// Build the record proof CAR for `collection/rkey` at the commit
+/// `commit_cid`, reading blocks from `src`.
+///
+/// The CAR holds the commit, the MST nodes on the key's search path, and the
+/// record block if the record exists, which is what the reference PDS serves
+/// from `com.atproto.sync.getRecord`. A proof for an absent key shows its
+/// absence.
+pub fn record_proof_car(
+    src: &dyn BlockSource,
+    commit_cid: &Cid,
+    collection: &Nsid,
+    rkey: &RecordKey,
+) -> Result<Vec<u8>, ProofError> {
+    record_proofs_car(src, commit_cid, &[(collection.clone(), rkey.clone())])
+}
+
+/// Build one proof CAR for several records at the commit `commit_cid`
+/// (`getRecords` in the reference implementation): the commit, the union of
+/// the records' MST search paths, and the blocks of those that exist.
+pub fn record_proofs_car(
+    src: &dyn BlockSource,
+    commit_cid: &Cid,
+    paths: &[(Nsid, RecordKey)],
+) -> Result<Vec<u8>, ProofError> {
+    let read = |cid: &Cid| -> Result<Vec<u8>, ProofError> {
+        src.read_block(cid)?
+            .map(Cow::into_owned)
+            .ok_or(ProofError::MissingBlock(*cid))
+    };
+
+    let commit_bytes = read(commit_cid)?;
+    let commit = Commit::from_cbor(&commit_bytes).map_err(ProofError::InvalidCommit)?;
+
+    let recorder = Recorder::new(src);
+    let mut tree = DetachedTree::load(commit.data);
+    let mut found = Vec::new();
+    for (collection, rkey) in paths {
+        found.extend(tree.get(&recorder, &mst_key(collection, rkey))?);
+    }
+
+    // The commit first, then each block once in the order first needed.
+    let mut blocks = vec![Block {
+        cid: *commit_cid,
+        data: commit_bytes,
+    }];
+    let mut seen = HashSet::from([*commit_cid]);
+    for (cid, data) in recorder.seen.into_inner() {
+        if seen.insert(cid) {
+            blocks.push(Block { cid, data });
+        }
+    }
+    for cid in found {
+        if seen.insert(cid) {
+            blocks.push(Block {
+                data: read(&cid)?,
+                cid,
+            });
+        }
+    }
+    Ok(crate::car::write_all(&[*commit_cid], &blocks)?)
+}
+
+/// Read a proof CAR, check every block against its CID, and check that its
+/// root is a commit by `did` signed by `key`.
+fn open_proof(car: &[u8], did: &Did, key: &dyn VerifyingKey) -> Result<OpenProof, ProofError> {
     let mut reader = Reader::new(car)?;
     let commit_cid = match reader.roots() {
         [root] => *root,
@@ -86,8 +280,8 @@ pub fn verify_record_proof(
             .or_insert_with(|| std::mem::take(&mut block.data));
     }
 
-    let commit_bytes = drisl_block(&blocks, &commit_cid)?;
-    let commit = Commit::from_cbor(commit_bytes).map_err(ProofError::InvalidCommit)?;
+    let commit =
+        Commit::from_cbor(drisl_block(&blocks, &commit_cid)?).map_err(ProofError::InvalidCommit)?;
     if commit.did != *did {
         return Err(ProofError::DidMismatch {
             expected: did.clone(),
@@ -95,67 +289,18 @@ pub fn verify_record_proof(
         });
     }
     commit.verify(key).map_err(ProofError::InvalidSignature)?;
-
-    let mut tree = DetachedTree::load(commit.data);
-    let record = match tree.get(&blocks, &mst_key(collection, rkey))? {
-        None => None,
-        Some(cid) => Some((cid, drisl_block(&blocks, &cid)?.to_vec())),
-    };
-
-    Ok(RecordProof {
-        commit,
+    Ok(OpenProof {
+        blocks,
         commit_cid,
-        record,
+        commit,
     })
 }
 
-/// Build the record proof CAR for `collection/rkey` at the commit
-/// `commit_cid`, reading blocks from `src`.
-///
-/// The CAR holds the commit, the MST nodes on the key's search path, and the
-/// record block if the record exists, which is what the reference PDS serves
-/// from `com.atproto.sync.getRecord`. A proof for an absent key shows its
-/// absence.
-pub fn record_proof_car(
-    src: &dyn BlockSource,
-    commit_cid: &Cid,
-    collection: &Nsid,
-    rkey: &RecordKey,
-) -> Result<Vec<u8>, ProofError> {
-    let read = |cid: &Cid| -> Result<Vec<u8>, ProofError> {
-        src.read_block(cid)?
-            .map(Cow::into_owned)
-            .ok_or(ProofError::MissingBlock(*cid))
-    };
-
-    let commit_bytes = read(commit_cid)?;
-    let commit = Commit::from_cbor(&commit_bytes).map_err(ProofError::InvalidCommit)?;
-
-    let recorder = Recorder {
-        src,
-        seen: RefCell::new(Vec::new()),
-    };
-    let mut tree = DetachedTree::load(commit.data);
-    let found = tree.get(&recorder, &mst_key(collection, rkey))?;
-
-    let mut blocks = vec![Block {
-        cid: *commit_cid,
-        data: commit_bytes,
-    }];
-    blocks.extend(
-        recorder
-            .seen
-            .into_inner()
-            .into_iter()
-            .map(|(cid, data)| Block { cid, data }),
-    );
-    if let Some(cid) = found {
-        blocks.push(Block {
-            data: read(&cid)?,
-            cid,
-        });
-    }
-    Ok(crate::car::write_all(&[*commit_cid], &blocks)?)
+/// A proof CAR whose blocks and commit [`open_proof`] has checked.
+struct OpenProof {
+    blocks: HashMap<Cid, Vec<u8>>,
+    commit_cid: Cid,
+    commit: Commit,
 }
 
 /// Look up a block that must be present and DRISL-encoded.
@@ -169,20 +314,12 @@ fn drisl_block<'a>(blocks: &'a HashMap<Cid, Vec<u8>>, cid: &Cid) -> Result<&'a [
         .ok_or(ProofError::MissingBlock(*cid))
 }
 
-/// A [`BlockSource`] that remembers every block it hands out, in order.
-struct Recorder<'a> {
-    src: &'a dyn BlockSource,
-    seen: RefCell<Vec<(Cid, Vec<u8>)>>,
-}
-
-impl BlockSource for Recorder<'_> {
-    fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
-        let Some(data) = self.src.read_block(cid)? else {
-            return Ok(None);
-        };
-        let data = data.into_owned();
-        self.seen.borrow_mut().push((*cid, data.clone()));
-        Ok(Some(Cow::Owned(data)))
+/// Look up a record block: present, DRISL, and a map.
+fn record_block<'a>(blocks: &'a HashMap<Cid, Vec<u8>>, cid: &Cid) -> Result<&'a [u8], ProofError> {
+    let data = drisl_block(blocks, cid)?;
+    match crate::cbor::decode(data) {
+        Ok(Value::Map(_)) => Ok(data),
+        _ => Err(ProofError::NotRecord(*cid)),
     }
 }
 

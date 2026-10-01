@@ -16,7 +16,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `cbor` | [`shrike::cbor`](https://docs.rs/shrike/latest/shrike/cbor/) | DAG-CBOR encoding and decoding |
 | `crypto` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | P-256 and secp256k1 signing, verification, and did:key encoding |
 | `mst` | [`shrike::mst`](https://docs.rs/shrike/latest/shrike/mst/) | Merkle Search Tree implementation |
-| `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits and record proofs |
+| `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits, pluggable storage, and record proofs |
 | `car` | [`shrike::car`](https://docs.rs/shrike/latest/shrike/car/) | CAR v1 archive reading and writing |
 | `lexicon` | [`shrike::lexicon`](https://docs.rs/shrike/latest/shrike/lexicon/) | Lexicon schema loading and record validation |
 | `lexicon-resolver` | [`shrike::lexicon::resolver`](https://docs.rs/shrike/latest/shrike/lexicon/resolver/) | network Lexicon resolution with verified record proofs (native only) |

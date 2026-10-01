@@ -205,6 +205,13 @@ impl TidClock {
         })
     }
 
+    /// Advance the clock so that every TID it returns from now on sorts after
+    /// `tid`.
+    pub fn observe(&self, tid: Tid) {
+        self.last
+            .fetch_max(tid.timestamp_micros(), Ordering::SeqCst);
+    }
+
     /// Return the next TID, guaranteed to be strictly greater than the previous
     /// until the 53-bit timestamp ceiling (around the year 2255) is reached, at
     /// which point it saturates at [`MAX_TID_MICROS`] rather than overflowing.

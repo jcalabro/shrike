@@ -270,6 +270,14 @@ name = "repo_proof_interop"
 required-features = ["repo"]
 
 [[test]]
+name = "repo_commit_interop"
+required-features = ["repo"]
+
+[[test]]
+name = "repo_property_tests"
+required-features = ["repo"]
+
+[[test]]
 name = "repo_proof_property_tests"
 required-features = ["repo"]
 

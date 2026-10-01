@@ -1,31 +1,49 @@
-//! In-memory AT Protocol repository with signed commits.
+//! AT Protocol repositories with signed commits.
 //!
 //! A repository stores records organized by collection (NSID) and record key.
 //! Records are stored in a Merkle Search Tree that provides deterministic
-//! ordering and content addressing. Each mutation (create, update, delete)
-//! updates the MST but does not persist changes until commit is called.
+//! ordering and content addressing. Writes (create, update, delete, or an
+//! atomic batch with [`Repo::apply_writes`]) are staged in memory until a
+//! commit signs them and persists them.
 //!
-//! Commits are signed with a private key and include the MST root CID, a
-//! timestamp-based revision ID (TID), and an optional reference to the
-//! previous commit. Commits form a linear history chain.
+//! Commits are signed with a private key and include the MST root CID and a
+//! timestamp-based revision ID (TID). Each commit returns a [`CommitData`]
+//! with everything it changed: the blocks to store, the blocks to delete,
+//! the record ops, and the blocks a `com.atproto.sync.subscribeRepos`
+//! consumer needs to verify it.
+//!
+//! Storage is pluggable through the three-method [`RepoStore`] trait;
+//! [`MemRepoStore`] keeps everything in memory and is the model for
+//! persistent implementations. Repositories can be loaded from and exported
+//! to CAR files, and [`proof`] builds and verifies record proofs.
 //!
 //! ```
-//! use shrike::repo::Repo;
+//! use shrike::repo::{Repo, WriteOp};
 //! use shrike::syntax::{Did, Nsid, RecordKey, TidClock};
 //! use shrike::crypto::P256SigningKey;
 //!
 //! let did = Did::try_from("did:plc:test123456789abcdefghij")?;
 //! let clock = TidClock::new(0)?;
 //! let mut repo = Repo::new(did, clock);
+//! let key = P256SigningKey::generate();
 //!
 //! let collection = Nsid::try_from("app.bsky.feed.post")?;
 //! let rkey = RecordKey::try_from("abc123")?;
 //! let record = b"\xa1\x64text\x65hello"; // DRISL bytes: {"text": "hello"}
 //!
 //! repo.create(&collection, &rkey, record)?;
+//! let first = repo.commit(&key)?;
 //!
-//! let key = P256SigningKey::generate();
-//! let _commit = repo.commit(&key)?;
+//! let commit = repo.apply_writes(
+//!     &[WriteOp::Delete { collection: collection.clone(), rkey: rkey.clone() }],
+//!     &key,
+//! )?;
+//! assert_eq!(commit.since, Some(first.rev()));
+//! assert!(repo.get(&collection, &rkey)?.is_none());
+//!
+//! // Load an independent copy from the exported CAR.
+//! let copy = Repo::load_car(&repo.export_car()?)?;
+//! assert_eq!(copy.head_cid(), repo.head_cid());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -33,12 +51,19 @@ pub mod commit;
 pub mod proof;
 #[allow(clippy::module_inception)]
 pub mod repo;
+pub mod store;
 
 pub use commit::{Commit, SignedCommit};
-pub use proof::{ProofError, RecordProof, record_proof_car, verify_record_proof};
+pub use proof::{
+    ProofError, ProofVerdict, RecordClaim, RecordProof, VerifiedRecord, record_proof_car,
+    record_proofs_car, verify_proofs, verify_record_proof, verify_records,
+};
 pub use repo::Repo;
+pub use store::{CommitData, MemRepoStore, RecordAction, RecordOp, RepoStore, WriteOp};
 
 use thiserror::Error;
+
+use crate::cbor::Cid;
 
 #[derive(Debug, Error)]
 pub enum RepoError {
@@ -48,12 +73,35 @@ pub enum RepoError {
     RecordNotFound(String),
     #[error("commit error: {0}")]
     Commit(String),
+    #[error("repository has no commit")]
+    NoCommit,
+    #[error("store already holds a repository")]
+    StoreNotEmpty,
+    #[error("block {0} missing from repository")]
+    MissingBlock(Cid),
+    #[error("block {0} does not match its CID")]
+    CidMismatch(Cid),
+    #[error("repository CAR must have exactly one root, found {0}")]
+    RootCount(usize),
+    #[error("malformed CAR: {0}")]
+    Car(#[from] crate::car::CarError),
+    #[error("storage error: {0}")]
+    Storage(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("MST error: {0}")]
-    Mst(#[from] crate::mst::MstError),
+    Mst(crate::mst::MstError),
     #[error("CBOR error: {0}")]
     Cbor(#[from] crate::cbor::CborError),
     #[error("crypto error: {0}")]
     Crypto(#[from] crate::crypto::CryptoError),
+}
+
+impl From<crate::mst::MstError> for RepoError {
+    fn from(e: crate::mst::MstError) -> Self {
+        match e {
+            crate::mst::MstError::Storage(e) => RepoError::Storage(e),
+            e => RepoError::Mst(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +212,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let commit = repo.commit(&sk).unwrap();
+        let commit = repo.commit(&sk).unwrap().commit;
         commit.verify(sk.public_key()).unwrap();
     }
 
@@ -175,7 +223,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let commit = repo.commit(&sk1).unwrap();
+        let commit = repo.commit(&sk1).unwrap().commit;
         assert!(commit.verify(sk2.public_key()).is_err());
     }
 
@@ -185,7 +233,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let commit = repo.commit(&sk).unwrap();
+        let commit = repo.commit(&sk).unwrap().commit;
         let encoded = commit.to_cbor().unwrap();
         let decoded = Commit::from_cbor(&encoded).unwrap();
         assert_eq!(commit.did, decoded.did);
@@ -375,7 +423,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let mut commit = repo.commit(&sk).unwrap();
+        let mut commit = repo.commit(&sk).unwrap().commit;
 
         // Tamper the DID.
         commit.did = Did::try_from("did:plc:tampered9876543210aaaaa").unwrap();
@@ -391,7 +439,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let mut commit = repo.commit(&sk).unwrap();
+        let mut commit = repo.commit(&sk).unwrap().commit;
 
         // Tamper the version.
         commit.version = 2;
@@ -407,7 +455,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let mut commit = repo.commit(&sk).unwrap();
+        let mut commit = repo.commit(&sk).unwrap().commit;
 
         // Tamper the rev.
         let orig_ts = commit.rev.timestamp_micros();
@@ -424,7 +472,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let mut commit = repo.commit(&sk).unwrap();
+        let mut commit = repo.commit(&sk).unwrap().commit;
 
         // Tamper the data CID.
         commit.data = Cid::compute(Codec::Drisl, b"different mst root");
@@ -440,7 +488,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let mut commit = repo.commit(&sk).unwrap();
+        let mut commit = repo.commit(&sk).unwrap().commit;
 
         // Tamper the prev field (was None, now set to some CID).
         commit.prev = Some(Cid::compute(Codec::Drisl, b"injected prev"));
@@ -502,13 +550,16 @@ mod tests {
     }
 
     #[test]
-    fn repo_delete_nonexistent_is_idempotent() {
+    fn repo_delete_nonexistent_fails() {
+        // As in the reference implementation, deleting a missing record is
+        // an error rather than a no-op.
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
-
-        // MST's remove() returns Ok(None) for missing keys, so delete
-        // on a nonexistent record succeeds silently (idempotent).
-        repo.delete(&c, &rk("nonexistent")).unwrap();
+        assert!(matches!(
+            repo.delete(&c, &rk("nonexistent")),
+            Err(crate::repo::RepoError::RecordNotFound(_))
+        ));
+        assert!(!repo.has_staged_writes());
     }
 
     #[test]
@@ -576,10 +627,10 @@ mod tests {
 
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("r1"), EMPTY_MAP).unwrap();
-        let commit1 = repo.commit(&sk).unwrap();
+        let commit1 = repo.commit(&sk).unwrap().commit;
 
         repo.create(&c, &rk("r2"), EMPTY_MAP).unwrap();
-        let commit2 = repo.commit(&sk).unwrap();
+        let commit2 = repo.commit(&sk).unwrap().commit;
 
         assert_ne!(
             commit1.rev, commit2.rev,
@@ -665,7 +716,7 @@ mod tests {
             .unwrap();
 
         // Produce a signed commit.
-        let commit = repo.commit(&sk).unwrap();
+        let commit = repo.commit(&sk).unwrap().commit;
 
         // Commit should verify immediately.
         commit.verify(sk.public_key()).unwrap();
@@ -699,7 +750,7 @@ mod tests {
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
 
-        let commit = repo.commit(&sk).unwrap();
+        let commit = repo.commit(&sk).unwrap().commit;
         commit.verify(sk.public_key()).unwrap();
 
         let cbor_bytes = commit.to_cbor().unwrap();
@@ -737,18 +788,18 @@ mod tests {
 
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("first"), EMPTY_MAP).unwrap();
-        let commit1 = repo.commit(&sk).unwrap();
+        let commit1 = repo.commit(&sk).unwrap().commit;
         assert!(commit1.prev.is_none(), "first commit must have null prev");
 
         repo.create(&c, &rk("second"), EMPTY_MAP).unwrap();
-        let commit2 = repo.commit(&sk).unwrap();
+        let commit2 = repo.commit(&sk).unwrap().commit;
         assert!(
             commit2.prev.is_none(),
             "second commit must also have null prev (v3 spec)"
         );
 
         repo.create(&c, &rk("third"), EMPTY_MAP).unwrap();
-        let commit3 = repo.commit(&sk).unwrap();
+        let commit3 = repo.commit(&sk).unwrap().commit;
         assert!(commit3.prev.is_none(), "third commit must have null prev");
 
         // All commits must verify individually and survive a CBOR roundtrip.
@@ -766,7 +817,7 @@ mod tests {
         let mut repo = make_repo("did:plc:test123456789abcdefghij");
         let c = col("app.bsky.feed.post");
         repo.create(&c, &rk("a"), EMPTY_MAP).unwrap();
-        let commit = repo.commit(&sk).unwrap();
+        let commit = repo.commit(&sk).unwrap().commit;
         commit.verify(sk.public_key()).unwrap();
     }
 
