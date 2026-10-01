@@ -2923,6 +2923,144 @@ mod subscriptions {
         }
         assert_eq!(count, 3);
     }
+
+    // Deviation: the reference applies no rate limits to subscriptions; we
+    // charge global, shared and route limits once per connection.
+    mod rate_limits {
+        use super::*;
+        use shrike::xrpc_server::{RateLimit, RateLimits, RouteRateLimit};
+
+        const FIVE_MINUTES: Duration = Duration::from_secs(300);
+
+        async fn ticks<C>(
+            _: Value,
+            _ctx: RequestContext<C>,
+        ) -> Result<impl futures::Stream<Item = Result<Frame, ServerError>>, ServerError> {
+            Ok(futures::stream::iter(
+                (0..3).map(|_| Ok(Frame::message("#tick", Vec::from([0xa0])))),
+            ))
+        }
+
+        async fn server(global_points: u64) -> String {
+            let limits = RateLimits::memory().global(RateLimit::new(
+                "global-ip",
+                FIVE_MINUTES,
+                global_points,
+            ));
+            let server = Server::new()
+                .rate_limits(limits)
+                .subscription("io.example.unlimited", ticks)
+                .route("io.example.limited")
+                .rate_limit(RouteRateLimit::new(FIVE_MINUTES, 2))
+                .subscription(ticks)
+                .route("io.example.perUser")
+                .auth(basic_auth("admin", "password"))
+                .rate_limit(
+                    RouteRateLimit::new(FIVE_MINUTES, 1)
+                        .calc_key(|ctx| Some(ctx.auth::<BasicCredentials>()?.username.clone())),
+                )
+                .subscription(ticks)
+                .route("io.example.reset")
+                .rate_limit(RouteRateLimit::new(FIVE_MINUTES, 1))
+                .subscription(|p: Value, ctx: RequestContext| async move {
+                    ctx.reset_route_rate_limits().await;
+                    ticks(p, ctx).await
+                });
+            serve(server).await
+        }
+
+        async fn expect_streamed(req: impl IntoClientRequest + Unpin, nsid: &str) {
+            let (frames, close) = collect(req, nsid).await;
+            assert_eq!(frames.len(), 3, "{frames:?}");
+            assert_eq!(close, Some((CloseCode::Normal, String::new())));
+        }
+
+        async fn expect_limited(req: impl IntoClientRequest + Unpin, nsid: &str) {
+            let (frames, close) = collect(req, nsid).await;
+            assert_eq!(
+                frames,
+                [(
+                    None,
+                    json!({"error": "RateLimitExceeded", "message": "Rate Limit Exceeded"})
+                )]
+            );
+            assert_eq!(
+                close,
+                Some((CloseCode::Policy, "RateLimitExceeded".to_owned()))
+            );
+        }
+
+        /// Regression: route limits on a subscription were silently dropped,
+        /// and no limit was charged for subscriptions.
+        #[tokio::test]
+        async fn charges_route_limits_once_per_connection() {
+            let base = server(100).await;
+            let url = ws_url(&base, "io.example.limited");
+            // Three frames per connection, but one point.
+            expect_streamed(url.as_str(), "io.example.limited").await;
+            expect_streamed(url.as_str(), "io.example.limited").await;
+            expect_limited(url.as_str(), "io.example.limited").await;
+        }
+
+        #[tokio::test]
+        async fn charges_global_limits() {
+            let base = server(2).await;
+            let url = ws_url(&base, "io.example.unlimited");
+            expect_streamed(url.as_str(), "io.example.unlimited").await;
+            expect_streamed(url.as_str(), "io.example.unlimited").await;
+            expect_limited(url.as_str(), "io.example.unlimited").await;
+        }
+
+        #[tokio::test]
+        async fn limits_see_credentials() {
+            let base = server(100).await;
+            let req = || {
+                let mut req = ws_url(&base, "io.example.perUser")
+                    .into_client_request()
+                    .unwrap();
+                req.headers_mut().insert(
+                    "authorization",
+                    basic_header("admin", "password").parse().unwrap(),
+                );
+                req
+            };
+            // Keyed by username, so without credentials the limit would not
+            // apply at all.
+            expect_streamed(req(), "io.example.perUser").await;
+            expect_limited(req(), "io.example.perUser").await;
+        }
+
+        #[tokio::test]
+        async fn handlers_can_reset_limits() {
+            let base = server(100).await;
+            let url = ws_url(&base, "io.example.reset");
+            for _ in 0..3 {
+                expect_streamed(url.as_str(), "io.example.reset").await;
+            }
+        }
+
+        #[tokio::test]
+        async fn route_limits_require_server_limits() {
+            let server = Server::new()
+                .route("io.example.limited")
+                .rate_limit(RouteRateLimit::new(FIVE_MINUTES, 1))
+                .subscription(ticks);
+            let base = serve(server).await;
+            let (frames, close) =
+                collect(ws_url(&base, "io.example.limited"), "io.example.limited").await;
+            assert_eq!(
+                frames,
+                [(
+                    None,
+                    json!({"error": "InternalServerError", "message": "Internal Server Error"})
+                )]
+            );
+            assert_eq!(
+                close,
+                Some((CloseCode::Policy, "InternalServerError".to_owned()))
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

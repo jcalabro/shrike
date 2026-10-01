@@ -60,6 +60,9 @@ Further deviations, found while porting the tests:
   limit) rather than unlimited; `PayloadLimits { blob: None, .. }` opts out.
 - A rate limit keyed by client IP (the default) rejects a request with a 500
   when there is no IP (no connect info), instead of not applying.
+- Subscriptions are rate limited: global, shared and route limits are
+  charged once per connection, after authentication, and exceeding one is a
+  `RateLimitExceeded` error frame. TS applies no limits to subscriptions.
 - A signature check that fails because the cached key's type does not match
   the token `alg` also refreshes the key, so a rotation to another curve is
   picked up.

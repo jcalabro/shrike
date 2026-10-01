@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 
 use axum::Router;
@@ -353,12 +353,14 @@ impl<V: AuthVerifier> RouteBuilder<V> {
     /// A subscription handler.
     ///
     /// The handler gets the deserialized parameters and returns the message
-    /// stream. Parameter, authentication and handler errors, and any `Err`
-    /// item, are sent as an error frame after the upgrade, and the socket is
-    /// then closed with code 1008 and the error name as the reason. A
-    /// [`Frame::Error`] item closes the stream the same way. The end of the
-    /// stream closes with 1000. Each frame is sent before the next is
-    /// polled, and the stream is dropped when the client disconnects.
+    /// stream. Rate limits are charged once per connection, after
+    /// authentication. Parameter, authentication, rate-limit and handler
+    /// errors, and any `Err` item, are sent as an error frame after the
+    /// upgrade, and the socket is then closed with code 1008 and the error
+    /// name as the reason. A [`Frame::Error`] item closes the stream the
+    /// same way. The end of the stream closes with 1000. Each frame is sent
+    /// before the next is polled, and the stream is dropped when the client
+    /// disconnects.
     pub fn subscription<P, S, F, Fut>(self, handler: F) -> Server
     where
         P: DeserializeOwned + Send + 'static,
@@ -369,6 +371,7 @@ impl<V: AuthVerifier> RouteBuilder<V> {
         let route = SubscriptionRoute {
             nsid: self.nsid.clone(),
             auth: self.auth,
+            rate_limits: RouteLimits::new(self.rate_limits),
             handler: move |params: Params,
                            ctx|
                   -> BoxFuture<'static, Result<FrameStream, ServerError>> {
@@ -392,8 +395,7 @@ impl<V: AuthVerifier> RouteBuilder<V> {
             kind,
             auth: self.auth,
             limits: self.limits,
-            rate_limits: self.rate_limits,
-            limiters: OnceLock::new(),
+            rate_limits: RouteLimits::new(self.rate_limits),
             handler,
         };
         let mut server = self.server;
@@ -681,13 +683,63 @@ where
     }
 }
 
+/// A route's rate limits, resolved against the server's on first use.
+struct RouteLimits {
+    limits: Vec<RouteRateLimit>,
+    limiters: OnceLock<Result<Vec<Limiter>, String>>,
+}
+
+impl RouteLimits {
+    fn new(limits: Vec<RouteRateLimit>) -> Self {
+        Self {
+            limits,
+            limiters: OnceLock::new(),
+        }
+    }
+
+    /// Plan the global, shared and route limits that apply to a request;
+    /// charge them with [`charge_rate_limits`]. Planning is synchronous
+    /// because the context is not `Send`.
+    fn plan<'a>(
+        &self,
+        shared: &'a Shared,
+        ctx: &RateLimitContext<'_>,
+    ) -> Result<Option<(&'a RateLimits, rate_limit::Plan)>, ServerError> {
+        let Some(limits) = &shared.rate_limits else {
+            if self.limits.is_empty() {
+                return Ok(None);
+            }
+            return Err(ServerError::internal(
+                "route rate limits require Server::rate_limits",
+            ));
+        };
+        let limiters = self
+            .limiters
+            .get_or_init(|| limits.for_route(ctx.nsid, &self.limits))
+            .as_ref()
+            .map_err(ServerError::internal)?;
+        Ok(Some((limits, rate_limit::plan(limits, limiters, ctx)?)))
+    }
+}
+
+/// Charge a plan from [`RouteLimits::plan`]. Returns the headers to add to
+/// the response and the handle for [`RequestContext::reset_route_rate_limits`].
+async fn charge_rate_limits(
+    planned: Option<(&RateLimits, rate_limit::Plan)>,
+) -> Result<(HeaderMap, Option<RouteLimiter>), ServerError> {
+    let Some((limits, plan)) = planned else {
+        return Ok((HeaderMap::new(), None));
+    };
+    let (headers, handle) = rate_limit::charge(limits, plan).await?;
+    Ok((headers, Some(handle)))
+}
+
 struct MethodRoute<V, H> {
     nsid: String,
     kind: Kind,
     auth: V,
     limits: Option<PayloadLimits>,
-    rate_limits: Vec<RouteRateLimit>,
-    limiters: OnceLock<Result<Vec<Limiter>, String>>,
+    rate_limits: RouteLimits,
     handler: H,
 }
 
@@ -788,37 +840,22 @@ where
             }
         };
 
-        let mut limiter = None;
-        if let Some(limits) = &shared.rate_limits {
-            let limiters = self
-                .limiters
-                .get_or_init(|| limits.for_route(&self.nsid, &self.rate_limits))
-                .as_ref()
-                .map_err(ServerError::internal)?;
-            let plan = rate_limit::plan(
-                limits,
-                limiters,
-                &RateLimitContext {
-                    nsid: &self.nsid,
-                    headers: &parts.headers,
-                    ip,
-                    params: &params,
-                    input: input.as_ref().and_then(|i| match &i.body {
-                        InputBody::Json(v) => Some(v),
-                        _ => None,
-                    }),
-                    auth: Some(&auth),
-                },
-            )?;
-            let (headers, handle): (HeaderMap, RouteLimiter) =
-                rate_limit::charge(limits, plan).await?;
-            *extra = headers;
-            limiter = Some(handle);
-        } else if !self.rate_limits.is_empty() {
-            return Err(ServerError::internal(
-                "route rate limits require Server::rate_limits",
-            ));
-        }
+        let planned = self.rate_limits.plan(
+            shared,
+            &RateLimitContext {
+                nsid: &self.nsid,
+                headers: &parts.headers,
+                ip,
+                params: &params,
+                input: input.as_ref().and_then(|i| match &i.body {
+                    InputBody::Json(v) => Some(v),
+                    _ => None,
+                }),
+                auth: Some(&auth),
+            },
+        )?;
+        let (headers, limiter) = charge_rate_limits(planned).await?;
+        *extra = headers;
 
         let ctx = RequestContext {
             auth,
@@ -967,6 +1004,7 @@ type FrameStream = BoxStream<'static, Result<Frame, ServerError>>;
 struct SubscriptionRoute<V, H> {
     nsid: String,
     auth: V,
+    rate_limits: RouteLimits,
     handler: H,
 }
 
@@ -987,9 +1025,10 @@ where
         req: Request<Body>,
     ) -> BoxFuture<'static, Response> {
         Box::pin(async move {
+            let ip = rate_limit::client_ip(&req);
             let (mut parts, _body) = req.into_parts();
             match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-                Ok(ws) => ws.on_upgrade(move |socket| self.run(shared, parts, socket)),
+                Ok(ws) => ws.on_upgrade(move |socket| self.run(shared, parts, ip, socket)),
                 Err(rejection) => shared.error_response(
                     &self.nsid,
                     ServerError::invalid_request(format!(
@@ -1017,7 +1056,12 @@ where
         + Sync
         + 'static,
 {
-    async fn open(&self, shared: &Shared, parts: Parts) -> Result<FrameStream, ServerError> {
+    async fn open(
+        &self,
+        shared: &Shared,
+        parts: Parts,
+        ip: Option<IpAddr>,
+    ) -> Result<FrameStream, ServerError> {
         let def = shared
             .def(&self.nsid)
             .filter(|(_, def)| matches!(def, Def::Subscription(_)));
@@ -1030,18 +1074,38 @@ where
             params,
         };
         let auth = self.auth.verify(&auth_ctx).await?;
+        // Charged once per connection. The upgrade response has already been
+        // sent, so the rate-limit headers are not.
+        let planned = self.rate_limits.plan(
+            shared,
+            &RateLimitContext {
+                nsid: &self.nsid,
+                headers: &auth_ctx.headers,
+                ip,
+                params: &auth_ctx.params,
+                input: None,
+                auth: Some(&auth),
+            },
+        )?;
+        let (_, limiter) = charge_rate_limits(planned).await?;
         let ctx = RequestContext {
             auth,
             nsid: self.nsid.clone(),
             params: auth_ctx.params.clone(),
             headers: auth_ctx.headers,
-            limiter: None,
+            limiter,
         };
         (self.handler)(auth_ctx.params, ctx).await
     }
 
-    async fn run(self: Arc<Self>, shared: Arc<Shared>, parts: Parts, mut socket: WebSocket) {
-        let mut frames = match self.open(&shared, parts).await {
+    async fn run(
+        self: Arc<Self>,
+        shared: Arc<Shared>,
+        parts: Parts,
+        ip: Option<IpAddr>,
+        mut socket: WebSocket,
+    ) {
+        let mut frames = match self.open(&shared, parts, ip).await {
             Ok(frames) => frames,
             Err(err) => return self.close_with_error(&shared, &mut socket, err).await,
         };
