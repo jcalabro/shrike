@@ -1759,6 +1759,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "secp256k1"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f404a8dab7a7a5a631e741d8699aa9c8e1d689fc26ccf897c7187565490b69"
+dependencies = [
+ "rand",
+ "secp256k1-sys",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b2992d4a3cd244539a7d5d0966aadbe5ca7fb868a5d7e38c29499b9e709bbd"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1913,6 +1932,7 @@ dependencies = [
  "rand_core 0.6.4",
  "reqwest",
  "ruzstd",
+ "secp256k1",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1936,9 +1956,11 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "bumpalo",
+ "k256",
  "libfuzzer-sys",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "shrike",
 ]
 

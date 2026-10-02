@@ -89,6 +89,9 @@ cbor = ["dep:simdutf8", "dep:bumpalo"]
 crypto = ["dep:p256", "dep:k256", "dep:bs58", "dep:rand_core", "dep:zeroize", "dep:getrandom-02"]
 
 # Layer 1 (depend on foundation)
+# Verify K-256 signatures with libsecp256k1 (vendored C) instead of the
+# pure-Rust `k256`. Native only, so it is left out of `wasm`.
+secp256k1 = ["crypto", "dep:secp256k1"]
 car = ["cbor"]
 mst = ["cbor"]
 lexicon = ["syntax", "cbor", "dep:unicode-segmentation"]
@@ -127,7 +130,7 @@ jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff",
 
 # Everything
 full = [
-    "syntax", "cbor", "crypto", "mst", "repo", "car",
+    "syntax", "cbor", "crypto", "secp256k1", "mst", "repo", "car",
     "lexicon", "lexicon-resolver", "xrpc", "xrpc-server", "service-auth", "identity", "streaming",
     "sync", "backfill", "labeling", "oauth", "api", "jetstream",
 ]
@@ -159,6 +162,8 @@ k256 = { workspace = true, optional = true }
 bs58 = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 zeroize = { version = "1", optional = true }
+# secp256k1: `std` gives each thread its own context; `rand` stays off.
+secp256k1 = { version = "0.33", default-features = false, features = ["std"], optional = true }
 
 # xrpc, identity, oauth
 reqwest = { workspace = true, optional = true }

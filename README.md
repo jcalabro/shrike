@@ -15,6 +15,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `syntax` | [`shrike::syntax`](https://docs.rs/shrike/latest/shrike/syntax/) | core identifier types (DID, Handle, NSID, AT-URI, TID, RecordKey) |
 | `cbor` | [`shrike::cbor`](https://docs.rs/shrike/latest/shrike/cbor/) | DAG-CBOR encoding and decoding |
 | `crypto` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | P-256 and secp256k1 signing, verification, and did:key encoding |
+| `secp256k1` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | faster secp256k1 verification with libsecp256k1 (C) instead of the pure-Rust `k256` (native only) |
 | `mst` | [`shrike::mst`](https://docs.rs/shrike/latest/shrike/mst/) | Merkle Search Tree implementation |
 | `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits, pluggable storage, and record proofs |
 | `car` | [`shrike::car`](https://docs.rs/shrike/latest/shrike/car/) | CAR v1 archive reading and writing |
@@ -30,7 +31,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `labeling` | [`shrike::labeling`](https://docs.rs/shrike/latest/shrike/labeling/) | label signing and verification |
 | `oauth` | [`shrike::oauth`](https://docs.rs/shrike/latest/shrike/oauth/) | OAuth 2.0 client with PKCE and DPoP, and permission scope parsing and evaluation |
 | `api` | [`shrike::api`](https://docs.rs/shrike/latest/shrike/api/) | generated types and functions for the `com.atproto.*`, `app.bsky.*`, etc. lexicons |
-| `wasm` | browser-safe subset | client-side features for `wasm32-unknown-unknown` (everything except `xrpc-server`, `sync`, `backfill`, and `lexicon-resolver`) |
+| `wasm` | browser-safe subset | client-side features for `wasm32-unknown-unknown` (everything except `xrpc-server`, `sync`, `backfill`, `lexicon-resolver`, and `secp256k1`) |
 
 ## License
 

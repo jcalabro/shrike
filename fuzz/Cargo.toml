@@ -16,13 +16,16 @@ arbitrary = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 bumpalo = "3"
+# The pure-Rust oracle for `k256_backends_differential` (already in the tree).
+k256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = { version = "0.11", default-features = false }
 
 [dependencies.shrike]
 path = ".."
 features = [
     "syntax", "cbor", "mst", "car", "repo", "crypto",
     "lexicon", "streaming", "sync", "labeling", "jetstream",
-    "service-auth", "xrpc-server", "oauth",
+    "service-auth", "xrpc-server", "oauth", "secp256k1",
 ]
 
 # Seed-corpus generator (a normal binary, not a fuzz target).
@@ -264,6 +267,14 @@ bench = false
 [[bin]]
 name = "service_jwt_verify"
 path = "fuzz_targets/service_jwt_verify.rs"
+test = false
+doc = false
+bench = false
+
+# --- Crypto ---
+[[bin]]
+name = "k256_backends_differential"
+path = "fuzz_targets/k256_backends_differential.rs"
 test = false
 doc = false
 bench = false

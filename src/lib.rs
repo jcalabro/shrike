@@ -31,6 +31,7 @@
 //! | `syntax` | Core identifier types ([`Did`], [`Handle`], [`Nsid`], [`AtUri`], [`Tid`], [`RecordKey`]) |
 //! | `cbor` | DAG-CBOR encoding, decoding, and content-addressed hashing ([`cbor::Cid`]) |
 //! | `crypto` | P-256 and secp256k1 signing and verification |
+//! | `secp256k1` | Faster secp256k1 verification with libsecp256k1 (C) instead of the pure-Rust `k256`; native only |
 //! | `mst` | Merkle Search Tree for record storage |
 //! | `repo` | In-memory AT Protocol repository with signed commits and record proofs |
 //! | `car` | Content Addressable aRchive (CAR v1) reading and writing |

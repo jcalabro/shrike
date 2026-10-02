@@ -51,6 +51,7 @@ cargo +nightly fuzz run cbor_decode_differential
 | `repo_commit_from_cbor` | commit decode never panics; signed commits round-trip |
 | `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic |
 | `label_decode` | label decode never panics; accepted labels encode/decode **stably**; unsigned bytes deterministic |
+| `k256_backends_differential` | K-256 keys, verifying with libsecp256k1 under the `secp256k1` feature, **must agree** with pure-Rust `k256`: key parsing and encoding, signatures, and strict and malleable verification of valid, high-S, mutated and arbitrary signatures |
 | `lexicon_validate` | record validation against a kitchen-sink schema never panics on arbitrary JSON |
 
 ## Notes
