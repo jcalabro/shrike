@@ -112,10 +112,10 @@ impl AtUri {
             return Err(err("too long"));
         }
 
-        // Everything after the first '#' is the fragment. A plain byte scan
-        // beats `str::find` on strings this short.
-        let find = |s: &str, c| s.bytes().position(|b| b == c);
-        let uri = match find(raw, b'#') {
+        // Everything after the first '#' is the fragment. Usually there is
+        // none, so this scans the whole URI, where `str::find`'s
+        // word-at-a-time search beats a byte scan.
+        let uri = match raw.find('#') {
             Some(hash) => {
                 validate_fragment(&raw[hash + 1..])
                     .map_err(|m| err(&format!("invalid fragment: {m}")))?;
@@ -134,6 +134,10 @@ impl AtUri {
         if rest.is_empty() {
             return Err(err("empty authority"));
         }
+
+        // The separators are near the start of what is searched, where a
+        // plain byte scan beats `str::find`.
+        let find = |s: &str, c| s.bytes().position(|b| b == c);
 
         // Split authority from the path on the first '/'.
         let (authority, has_path) = match find(rest, b'/') {
