@@ -1,7 +1,9 @@
 use crate::cbor::CborError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+use std::collections::hash_map::RandomState;
 use std::fmt;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::str::FromStr;
 
 /// Multicodec identifier for CID content encoding.
@@ -14,11 +16,85 @@ pub enum Codec {
 }
 
 /// Stack-allocated CIDv1 (SHA-256 only). No heap allocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cid {
     codec: Codec,
     hash: [u8; 32],
 }
+
+impl Hash for Cid {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // The digest is uniformly distributed, so eight bytes of it tell CIDs
+        // apart as well as all 32 do, at a quarter of the hashing. The codec
+        // separates the raw and DRISL CIDs of the same bytes.
+        let mut prefix = [0; 8];
+        prefix.copy_from_slice(&self.hash[..8]);
+        state.write_u64(u64::from_le_bytes(prefix) ^ self.codec as u64);
+    }
+}
+
+/// A [`BuildHasher`] for maps and sets keyed by [`Cid`]: one keyed multiply
+/// per lookup instead of SipHash.
+///
+/// The key is random per instance, so blocks an attacker chooses cannot be
+/// aimed at one bucket.
+#[derive(Clone)]
+pub(crate) struct CidHashState {
+    seed: u64,
+    multiplier: u64,
+}
+
+impl Default for CidHashState {
+    fn default() -> Self {
+        let random = RandomState::new();
+        CidHashState {
+            seed: random.hash_one(0u64),
+            multiplier: random.hash_one(1u64) | 1,
+        }
+    }
+}
+
+impl BuildHasher for CidHashState {
+    type Hasher = CidHasher;
+
+    fn build_hasher(&self) -> CidHasher {
+        CidHasher {
+            state: self.seed,
+            multiplier: self.multiplier,
+        }
+    }
+}
+
+pub(crate) struct CidHasher {
+    state: u64,
+    multiplier: u64,
+}
+
+impl Hasher for CidHasher {
+    #[inline]
+    fn write_u64(&mut self, n: u64) {
+        // A folded 64x64->128 multiply spreads every input bit over the
+        // whole output, so the low (bucket) bits depend on the key too.
+        let product = u128::from(self.state ^ n) * u128::from(self.multiplier);
+        self.state = (product as u64) ^ ((product >> 64) as u64);
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.state
+    }
+}
+
+/// A `HashMap` keyed by [`Cid`] with [`CidHashState`].
+pub(crate) type CidMap<V> = std::collections::HashMap<Cid, V, CidHashState>;
 
 impl Cid {
     /// Create a CID with all-zero hash. Not valid for content addressing —
@@ -250,6 +326,37 @@ mod tests {
         let mut bytes = Cid::compute(Codec::Drisl, b"test").to_bytes();
         bytes[2] = 0x13; // not SHA-256
         assert!(Cid::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn hash_separates_codecs_and_digests() {
+        let state = CidHashState::default();
+        let raw = Cid::compute(Codec::Raw, b"same");
+        let drisl = Cid::compute(Codec::Drisl, b"same");
+        assert_eq!(raw.hash(), drisl.hash());
+        assert_ne!(state.hash_one(raw), state.hash_one(drisl));
+        assert_eq!(state.hash_one(raw), state.hash_one(raw));
+
+        // Two instances key the hash differently.
+        let other = CidHashState::default();
+        let differ = (0..32u8)
+            .map(|i| Cid::compute(Codec::Drisl, &[i]))
+            .filter(|c| state.hash_one(c) != other.hash_one(c))
+            .count();
+        assert!(differ > 30);
+    }
+
+    #[test]
+    fn cid_map_holds_many_cids() {
+        let mut map = CidMap::default();
+        for i in 0..10_000u32 {
+            map.insert(Cid::compute(Codec::Drisl, &i.to_be_bytes()), i);
+        }
+        assert_eq!(map.len(), 10_000);
+        for i in 0..10_000u32 {
+            assert_eq!(map[&Cid::compute(Codec::Drisl, &i.to_be_bytes())], i);
+        }
+        assert!(!map.contains_key(&Cid::compute(Codec::Raw, &0u32.to_be_bytes())));
     }
 
     #[test]
