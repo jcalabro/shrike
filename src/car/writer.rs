@@ -2,7 +2,7 @@ use std::io::Write;
 
 use crate::cbor::{Cid, Encoder, encode_text_map};
 
-use crate::car::{Block, CarError};
+use crate::car::{Block, BlockRef, CarError};
 
 /// Encode a varint into a stack buffer. Returns the number of bytes written.
 #[inline]
@@ -63,6 +63,15 @@ impl<W: Write> Writer<W> {
     /// Write a single block.
     #[inline]
     pub fn write_block(&mut self, block: &Block) -> Result<(), CarError> {
+        self.write_block_ref(BlockRef {
+            cid: block.cid,
+            data: &block.data,
+        })
+    }
+
+    /// Write a single block whose data is borrowed.
+    #[inline]
+    pub fn write_block_ref(&mut self, block: BlockRef<'_>) -> Result<(), CarError> {
         let cid_bytes = block.cid.to_bytes();
         let block_len = cid_bytes.len() + block.data.len();
 
@@ -73,7 +82,7 @@ impl<W: Write> Writer<W> {
 
         // Write CID + data
         self.writer.write_all(&cid_bytes)?;
-        self.writer.write_all(&block.data)?;
+        self.writer.write_all(block.data)?;
 
         Ok(())
     }

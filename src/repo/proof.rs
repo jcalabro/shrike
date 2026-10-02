@@ -9,8 +9,8 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use crate::car::{Block, CarError, SliceReader};
-use crate::cbor::cid::CidMap;
+use crate::car::{BlockRef, CarError, SliceReader, Writer};
+use crate::cbor::cid::{CidMap, FastHashState};
 use crate::cbor::{Cid, Codec, Value};
 use crate::crypto::VerifyingKey;
 use crate::mst::{BlockSource, DetachedTree, MstError};
@@ -223,42 +223,51 @@ pub fn record_proofs_car(
     commit_cid: &Cid,
     paths: &[(Nsid, RecordKey)],
 ) -> Result<Vec<u8>, ProofError> {
-    let read = |cid: &Cid| -> Result<Vec<u8>, ProofError> {
-        src.read_block(cid)?
-            .map(Cow::into_owned)
-            .ok_or(ProofError::MissingBlock(*cid))
-    };
-
-    let commit_bytes = read(commit_cid)?;
+    let commit_bytes = src
+        .read_block(commit_cid)?
+        .ok_or(ProofError::MissingBlock(*commit_cid))?;
     let commit = Commit::from_cbor(&commit_bytes).map_err(ProofError::InvalidCommit)?;
+    let tree = DetachedTree::load(commit.data);
+    proof_car(src, &tree, commit_cid, &commit_bytes, paths)
+}
 
+/// The proof CAR for `paths` in `tree`, the tree of the commit
+/// `commit_cid`.
+pub(crate) fn proof_car(
+    src: &dyn BlockSource,
+    tree: &DetachedTree,
+    commit_cid: &Cid,
+    commit_bytes: &[u8],
+    paths: &[(Nsid, RecordKey)],
+) -> Result<Vec<u8>, ProofError> {
+    // Nodes the tree reads to find the paths are kept for the CAR.
     let recorder = Recorder::new(src);
-    let mut tree = DetachedTree::load(commit.data);
+    let mut nodes = Vec::new();
     let mut found = Vec::new();
     for (collection, rkey) in paths {
-        found.extend(tree.get(&recorder, &mst_key(collection, rkey))?);
+        found.extend(tree.search_path(&recorder, &mst_key(collection, rkey), &mut nodes)?);
     }
+    let read: CidMap<Vec<u8>> = recorder.seen.into_inner().into_iter().collect();
 
     // The commit first, then each block once in the order first needed.
-    let mut blocks = vec![Block {
+    let mut car = Vec::with_capacity(commit_bytes.len() + 2048 * nodes.len());
+    let mut writer = Writer::new(&mut car, &[*commit_cid])?;
+    writer.write_block_ref(BlockRef {
         cid: *commit_cid,
         data: commit_bytes,
-    }];
-    let mut seen = HashSet::from([*commit_cid]);
-    for (cid, data) in recorder.seen.into_inner() {
-        if seen.insert(cid) {
-            blocks.push(Block { cid, data });
+    })?;
+    let mut seen: HashSet<Cid, FastHashState> = HashSet::from_iter([*commit_cid]);
+    for cid in nodes.into_iter().chain(found) {
+        if !seen.insert(cid) {
+            continue;
         }
+        let data = match read.get(&cid) {
+            Some(data) => Cow::Borrowed(data.as_slice()),
+            None => src.read_block(&cid)?.ok_or(ProofError::MissingBlock(cid))?,
+        };
+        writer.write_block_ref(BlockRef { cid, data: &data })?;
     }
-    for cid in found {
-        if seen.insert(cid) {
-            blocks.push(Block {
-                data: read(&cid)?,
-                cid,
-            });
-        }
-    }
-    Ok(crate::car::write_all(&[*commit_cid], &blocks)?)
+    Ok(car)
 }
 
 /// Read a proof CAR, check every block against its CID, and check that its
@@ -330,7 +339,7 @@ fn record_block<'a>(blocks: &CidMap<&'a [u8]>, cid: &Cid) -> Result<&'a [u8], Pr
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::car::{read_all, write_all};
+    use crate::car::{Block, read_all, write_all};
     use crate::cbor::Codec;
     use crate::crypto::{K256SigningKey, P256SigningKey, SigningKey};
     use crate::repo::Repo;

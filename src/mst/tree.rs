@@ -343,6 +343,56 @@ impl DetachedTree {
         })
     }
 
+    /// The root's CID, or `None` if the root has changes since the tree was
+    /// loaded or last flushed.
+    pub(crate) fn root_cid(&self) -> Option<Cid> {
+        match &self.root {
+            Some(root) => root.cid,
+            None => self.empty_root,
+        }
+    }
+
+    /// Append the CIDs of the nodes on `key`'s search path to `path`, root
+    /// first, and return the key's value. These are the nodes a record proof
+    /// for `key` carries.
+    ///
+    /// Nodes the tree has not loaded are read from `src` and decoded without
+    /// being kept, so a proof needs only shared access. Fails if the path
+    /// runs through a node changed since the tree was loaded or last
+    /// flushed, which has no CID yet.
+    pub fn search_path(
+        &self,
+        src: &dyn BlockSource,
+        key: &str,
+        path: &mut Vec<Cid>,
+    ) -> Result<Option<Cid>, MstError> {
+        self.check_usable()?;
+        let unflushed = || MstError::Internal("the tree has changes since its last flush".into());
+        let Some(mut n) = self.root.as_deref() else {
+            path.push(self.empty_root.ok_or_else(unflushed)?);
+            return Ok(None);
+        };
+        loop {
+            let cid = n.cid.ok_or_else(unflushed)?;
+            if !n.loaded {
+                return search_blocks(src, cid, key, path);
+            }
+            path.push(cid);
+            let i = match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
+                Ok(i) => return Ok(Some(n.entries[i].val)),
+                Err(i) => i,
+            };
+            let child = match i {
+                0 => n.left.as_deref(),
+                i => n.entries[i - 1].right.as_deref(),
+            };
+            match child {
+                Some(child) => n = child,
+                None => return Ok(None),
+            }
+        }
+    }
+
     /// Collect all key/value pairs in sorted order into a Vec.
     pub fn entries(&mut self, src: &dyn BlockSource) -> Result<Vec<(String, Cid)>, MstError> {
         let mut result = Vec::new();
@@ -1388,46 +1438,14 @@ fn prune_empty(n: Box<Node>, released: &mut Vec<Cid>) -> Option<Box<Node>> {
 /// handles the same case via a post-load `ensureHeights` walk; we propagate
 /// eagerly during the lazy load instead.
 fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
-    let mut key_buf = Vec::new();
     let mut entries: Vec<Entry> = Vec::with_capacity(nd.entries.len());
-    for ed in &nd.entries {
-        // The prefix length must not exceed the previous key's length. For the
-        // first entry this means prefix_len must be 0 (full key). Vec::truncate
-        // is a silent no-op when the requested length exceeds the current
-        // length, so without this guard a malformed/hostile node block would
-        // silently reconstruct the WRONG key — silent corruption of a
-        // content-addressed structure. Reject instead. (atmos mst.go:886-888)
-        if ed.prefix_len > key_buf.len() {
-            return Err(MstError::InvalidNode(format!(
-                "entry prefix length {} exceeds previous key length {}",
-                ed.prefix_len,
-                key_buf.len()
-            )));
-        }
-        key_buf.truncate(ed.prefix_len);
-        key_buf.extend_from_slice(&ed.key_suffix);
-        let key = String::from_utf8(key_buf.clone())
-            .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
-
-        // Entries within a node must be in strictly ascending key order; the
-        // whole tree's get/diff/binary-search logic relies on it. A block whose
-        // entries are out of order (malformed or hostile) must be rejected, not
-        // loaded as-is. (atmos mst.go:894-896)
-        if let Some(prev) = entries.last()
-            && key.as_str() <= prev.key.as_str()
-        {
-            return Err(MstError::InvalidNode(format!(
-                "entry key {key:?} is not greater than previous key {:?}",
-                prev.key
-            )));
-        }
-
+    for_each_key(nd, |_, ed, key| {
         entries.push(Entry {
-            key,
+            key: key.to_owned(),
             val: ed.value,
             right: ed.right.map(|cid| Box::new(Node::stub(cid, 0))),
         });
-    }
+    })?;
 
     // Derive height from entries when we have one; otherwise preserve the
     // parent-seeded height for empty intermediates.
@@ -1452,6 +1470,79 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
     n.height = height;
     n.loaded = true;
     Ok(())
+}
+
+/// Rebuild each entry's full key from the node's prefix compression and call
+/// `f` with the entry's index, the entry and its key, in order.
+fn for_each_key(nd: &NodeData, mut f: impl FnMut(usize, &EntryData, &str)) -> Result<(), MstError> {
+    let (mut key, mut prev) = (Vec::new(), Vec::new());
+    for (i, ed) in nd.entries.iter().enumerate() {
+        // The prefix length must not exceed the previous key's length. For the
+        // first entry this means prefix_len must be 0 (full key). Without this
+        // guard a malformed/hostile node block would silently reconstruct the
+        // WRONG key — silent corruption of a content-addressed structure.
+        // Reject instead. (atmos mst.go:886-888)
+        let Some(prefix) = prev.get(..ed.prefix_len) else {
+            return Err(MstError::InvalidNode(format!(
+                "entry prefix length {} exceeds previous key length {}",
+                ed.prefix_len,
+                prev.len()
+            )));
+        };
+        key.clear();
+        key.extend_from_slice(prefix);
+        key.extend_from_slice(&ed.key_suffix);
+        let text = std::str::from_utf8(&key)
+            .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
+
+        // Entries within a node must be in strictly ascending key order; the
+        // whole tree's get/diff/binary-search logic relies on it. A block whose
+        // entries are out of order (malformed or hostile) must be rejected, not
+        // loaded as-is. (atmos mst.go:894-896)
+        if i > 0 && key <= prev {
+            return Err(MstError::InvalidNode(format!(
+                "entry key {text:?} is not greater than previous key {:?}",
+                String::from_utf8_lossy(&prev)
+            )));
+        }
+        f(i, ed, text);
+        std::mem::swap(&mut key, &mut prev);
+    }
+    Ok(())
+}
+
+/// [`DetachedTree::search_path`] from a node the tree has not loaded,
+/// decoding each block on the way without keeping it.
+fn search_blocks(
+    src: &dyn BlockSource,
+    mut cid: Cid,
+    key: &str,
+    path: &mut Vec<Cid>,
+) -> Result<Option<Cid>, MstError> {
+    loop {
+        let data = src
+            .read_block(&cid)?
+            .ok_or_else(|| MstError::BlockNotFound(cid.to_string()))?;
+        path.push(cid);
+        let nd = decode_node_data(&data)?;
+        // The first entry at or after `key`, and whether it is `key`.
+        let mut at = None;
+        for_each_key(&nd, |i, _, k| {
+            if at.is_none() && key <= k {
+                at = Some((i, key == k));
+            }
+        })?;
+        let child = match at {
+            Some((i, true)) => return Ok(nd.entries.get(i).map(|e| e.value)),
+            Some((0, false)) => nd.left,
+            Some((i, false)) => nd.entries.get(i - 1).and_then(|e| e.right),
+            None => nd.entries.last().map_or(nd.left, |e| e.right),
+        };
+        match child {
+            Some(next) => cid = next,
+            None => return Ok(None),
+        }
+    }
 }
 
 /// Find the entry index where key would be found.
@@ -2968,5 +3059,195 @@ mod tests {
         assert_eq!(emptied.root, empty);
         assert_eq!(emptied.retired, [one.root]);
         assert_eq!(emptied.new_blocks.len(), 1);
+    }
+
+    // --- search_path: the nodes a record proof carries ---
+
+    /// The nodes `get` reads to find `key` in a tree it has not loaded, in
+    /// the order read, and the value it finds. Proofs carried exactly these
+    /// before they could come from a loaded tree.
+    fn read_by_get(
+        src: &dyn BlockSource,
+        root: Cid,
+        key: &str,
+    ) -> (Vec<Cid>, Result<Option<Cid>, MstError>) {
+        struct Reads<'a>(&'a dyn BlockSource, std::cell::RefCell<Vec<Cid>>);
+        impl BlockSource for Reads<'_> {
+            fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
+                self.1.borrow_mut().push(*cid);
+                self.0.read_block(cid)
+            }
+        }
+        let reads = Reads(src, Default::default());
+        let found = DetachedTree::load(root).get(&reads, key);
+        (reads.1.into_inner(), found)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// `search_path` finds what `get` finds, through the nodes `get`
+        /// reads from an unloaded tree, however much of the tree is in
+        /// memory: none of it, the paths to some other keys, or all of it.
+        #[test]
+        fn search_path_is_the_path_get_reads(
+            keys in proptest::collection::btree_set(0usize..3000, 0..600),
+            loaded in proptest::collection::vec(0usize..3000, 0..30),
+            queries in proptest::collection::vec(0usize..3000, 1..30),
+        ) {
+            let entries: std::collections::BTreeMap<String, Cid> = keys
+                .iter()
+                .map(|&i| (record_key(i), Cid::compute(Codec::Drisl, &i.to_be_bytes())))
+                .collect();
+            let write = canonical_write(&entries);
+            let store: std::collections::HashMap<Cid, Vec<u8>> =
+                write.new_blocks.into_iter().collect();
+
+            let fresh = DetachedTree::load(write.root);
+            let mut partial = DetachedTree::load(write.root);
+            for i in loaded {
+                partial.get(&store, &record_key(i)).unwrap();
+            }
+            let mut whole = DetachedTree::new();
+            for (k, v) in &entries {
+                whole.insert(&NoBlocks, k.clone(), *v).unwrap();
+            }
+            whole.flush().unwrap();
+
+            for i in queries {
+                let key = record_key(i);
+                let (want, found) = read_by_get(&store, write.root, &key);
+                let found = found.unwrap();
+                proptest::prop_assert_eq!(found, entries.get(&key).copied());
+                // The whole tree is in memory, so it reads nothing.
+                let trees: [(&DetachedTree, &dyn BlockSource); 3] =
+                    [(&fresh, &store), (&partial, &store), (&whole, &NoBlocks)];
+                for (tree, src) in trees {
+                    let mut path = vec![test_value_cid()];
+                    proptest::prop_assert_eq!(tree.search_path(src, &key, &mut path).unwrap(), found);
+                    proptest::prop_assert_eq!(path[0], test_value_cid());
+                    proptest::prop_assert_eq!(&path[1..], &want[..]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn search_path_of_empty_tree_is_the_empty_node() {
+        let mut tree = DetachedTree::new();
+        let empty = tree.flush().unwrap().root;
+        let store: std::collections::HashMap<Cid, Vec<u8>> = [empty_node_block().unwrap()].into();
+        let (want, _) = read_by_get(&store, empty, "com.example.record/a");
+        assert_eq!(want, [empty]);
+        for tree in [tree, DetachedTree::load(empty)] {
+            let mut path = Vec::new();
+            assert_eq!(
+                tree.search_path(&store, "com.example.record/a", &mut path)
+                    .unwrap(),
+                None
+            );
+            assert_eq!(path, want);
+        }
+    }
+
+    /// A path through nodes without CIDs could not be checked against a
+    /// commit, so `search_path` refuses a tree with unflushed changes.
+    #[test]
+    fn search_path_refuses_unflushed_changes() {
+        let unflushed = |tree: &DetachedTree| {
+            let mut path = Vec::new();
+            match tree.search_path(&NoBlocks, &record_key(1), &mut path) {
+                Ok(_) => false,
+                Err(MstError::Internal(msg)) if msg.contains("since its last flush") => {
+                    assert!(path.is_empty());
+                    true
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let mut tree = DetachedTree::new();
+        assert!(unflushed(&tree), "never flushed");
+        tree.flush().unwrap();
+        assert!(!unflushed(&tree));
+
+        // Two keys in one node, so removing one changes the root.
+        let [(_, a), (_, b)] = keys_at(0, 0, 2).try_into().unwrap();
+        tree.insert(&NoBlocks, a.clone(), test_value_cid()).unwrap();
+        assert!(unflushed(&tree), "after an insert");
+        let root = tree.flush().unwrap().root;
+        let mut path = Vec::new();
+        assert_eq!(
+            tree.search_path(&NoBlocks, &a, &mut path).unwrap(),
+            Some(test_value_cid())
+        );
+        assert_eq!(path, [root]);
+
+        tree.insert(&NoBlocks, b.clone(), test_value_cid()).unwrap();
+        tree.flush().unwrap();
+        tree.remove(&NoBlocks, &b).unwrap();
+        assert!(unflushed(&tree), "after a remove");
+        assert_eq!(tree.flush().unwrap().root, root);
+        assert!(!unflushed(&tree));
+    }
+
+    /// `search_path` rejects a malformed node, read below a loaded node or
+    /// as the root, with the error loading it gives.
+    #[test]
+    fn search_path_rejects_malformed_nodes_like_get() {
+        let val = test_value_cid();
+        let entry = |prefix_len, key_suffix: &[u8]| EntryData {
+            prefix_len,
+            key_suffix: key_suffix.to_vec(),
+            value: val,
+            right: None,
+        };
+        let leaf = |entries| {
+            encode_node_data(&NodeData {
+                left: None,
+                entries,
+            })
+            .unwrap()
+        };
+        let bad_blocks = [
+            leaf(vec![entry(0, b"a/\xff")]),
+            leaf(vec![entry(1, b"a/b")]),
+            leaf(vec![entry(0, b"a/b"), entry(4, b"c")]),
+            leaf(vec![entry(0, b"a/c"), entry(0, b"a/b")]),
+            leaf(vec![entry(0, b"a/b"), entry(2, b"b")]),
+            b"\xa1\x61x\x01".to_vec(),
+            vec![0xff],
+        ];
+        for bad in bad_blocks {
+            let bad_cid = Cid::compute(Codec::Drisl, &bad);
+            let root = encode_node_data(&NodeData {
+                left: Some(bad_cid),
+                entries: vec![entry(0, b"m")],
+            })
+            .unwrap();
+            let root_cid = Cid::compute(Codec::Drisl, &root);
+            let store: std::collections::HashMap<Cid, Vec<u8>> =
+                [(bad_cid, bad.clone()), (root_cid, root)].into();
+            // Only the root is loaded: "n" sorts after its one entry.
+            let mut partial = DetachedTree::load(root_cid);
+            assert_eq!(partial.get(&store, "n").unwrap(), None);
+
+            for (tree, top) in [(partial, root_cid), (DetachedTree::load(bad_cid), bad_cid)] {
+                for key in ["a/a", "a/b", "a/bb", "a/z"] {
+                    let (want_path, want) = read_by_get(&store, top, key);
+                    let err = want.unwrap_err();
+                    let mut path = Vec::new();
+                    let got = tree.search_path(&store, key, &mut path).unwrap_err();
+                    assert_eq!(format!("{got:?}"), format!("{err:?}"), "{bad:02x?} {key}");
+                    assert_eq!(path, want_path);
+                }
+            }
+        }
+
+        // A node the source lacks.
+        let missing = Cid::compute(Codec::Drisl, b"missing");
+        let (_, want) = read_by_get(&NoBlocks, missing, "a/b");
+        let got = DetachedTree::load(missing).search_path(&NoBlocks, "a/b", &mut Vec::new());
+        assert!(matches!(&got, Err(MstError::BlockNotFound(c)) if *c == missing.to_string()));
+        assert_eq!(format!("{got:?}"), format!("{want:?}"));
     }
 }
