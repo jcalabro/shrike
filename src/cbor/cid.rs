@@ -1,10 +1,35 @@
 use crate::cbor::CborError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest, Sha256};
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::str::FromStr;
+
+/// SHA-256 of `data` in one pass: whole blocks straight from the input, then
+/// the padded tail from the stack, without a streaming hasher's buffering.
+pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
+    let mut state = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let (blocks, tail) = data.as_chunks::<64>();
+    sha2::block_api::compress256(&mut state, blocks);
+
+    let mut last = [[0u8; 64]; 2];
+    let used = if tail.len() < 56 { 1 } else { 2 };
+    let padded = last.as_flattened_mut();
+    padded[..tail.len()].copy_from_slice(tail);
+    padded[tail.len()] = 0x80;
+    let bits = (data.len() as u64).wrapping_mul(8);
+    padded[used * 64 - 8..used * 64].copy_from_slice(&bits.to_be_bytes());
+    sha2::block_api::compress256(&mut state, &last[..used]);
+
+    let mut out = [0; 32];
+    for (word, value) in out.chunks_exact_mut(4).zip(state) {
+        word.copy_from_slice(&value.to_be_bytes());
+    }
+    out
+}
 
 /// Multicodec identifier for CID content encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -109,8 +134,10 @@ impl Cid {
 
     /// Compute a CID by SHA-256 hashing the given data.
     pub fn compute(codec: Codec, data: &[u8]) -> Self {
-        let hash: [u8; 32] = Sha256::digest(data).into();
-        Cid { codec, hash }
+        Cid {
+            codec,
+            hash: sha256(data),
+        }
     }
 
     /// Return the multicodec identifier (Drisl or Raw).
@@ -265,6 +292,47 @@ mod tests {
         let cid = Cid::compute(Codec::Drisl, b"hello world");
         assert_eq!(cid.codec(), Codec::Drisl);
         assert_eq!(cid.hash().len(), 32);
+    }
+
+    /// FIPS 180-2 vectors, spanning one block, two blocks and many: the
+    /// hash backend is picked at runtime from the CPU's SHA extensions.
+    #[test]
+    fn compute_matches_sha256_vectors() {
+        let million = vec![b'a'; 1_000_000];
+        let vectors: [(&[u8], &str); 4] = [
+            (
+                b"",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"abc",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+            (
+                &million,
+                "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+            ),
+        ];
+        for (data, hex) in vectors {
+            let cid = Cid::compute(Codec::Raw, data);
+            assert_eq!(data_encoding::HEXLOWER.encode(cid.hash()), hex);
+        }
+    }
+
+    /// Every padding case (tail lengths 0..64, one or two final blocks)
+    /// matches the streaming hasher.
+    #[test]
+    fn sha256_matches_streaming_hasher() {
+        use sha2::Digest;
+        let data: Vec<u8> = (0..1000u32).map(|i| (i * 131 + 7) as u8).collect();
+        for len in (0..300).chain([511, 512, 513, 999, 1000]) {
+            let expected: [u8; 32] = sha2::Sha256::digest(&data[..len]).into();
+            assert_eq!(sha256(&data[..len]), expected, "{len} bytes");
+        }
     }
 
     #[test]

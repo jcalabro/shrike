@@ -55,7 +55,8 @@ serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the jetstream live parser inspect a commit record's raw JSON
 # text (duplicate-key rejection) without a second full parse of the frame.
 serde_json = { version = "1", features = ["raw_value"] }
-sha2 = "0.10"
+# Hardware SHA-256 is detected at runtime on x86 and aarch64.
+sha2 = { version = "0.11", default-features = false }
 data-encoding = "2"
 p256 = { version = "0.13", features = ["ecdsa"] }
 k256 = { version = "0.13", features = ["ecdsa"] }

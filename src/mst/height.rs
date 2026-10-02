@@ -1,12 +1,11 @@
-use sha2::{Digest, Sha256};
+use crate::cbor::cid::sha256;
 
 /// Compute the MST height for a given key.
 ///
 /// SHA-256 hashes the key, then counts leading zero 2-bit pairs.
 #[inline]
 pub fn height_for_key(key: &str) -> u8 {
-    let hash: [u8; 32] = Sha256::digest(key.as_bytes()).into();
-    height_from_hash(&hash)
+    height_from_hash(&sha256(key.as_bytes()))
 }
 
 /// Count leading zero 2-bit pairs in a 32-byte hash.
