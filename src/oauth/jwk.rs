@@ -68,6 +68,8 @@ impl EcPublicJwk {
 /// The returned value has `kty`, `crv`, `x`, and `y` fields suitable for
 /// use in DPoP headers and client metadata.
 pub fn p256_public_jwk(compressed_bytes: &[u8; 33]) -> Result<serde_json::Value, OAuthError> {
+    crate::crypto::require_compressed(compressed_bytes)
+        .map_err(|e| OAuthError::Crypto(format!("invalid SEC1 point: {e}")))?;
     let encoded = EncodedPoint::from_bytes(compressed_bytes)
         .map_err(|e| OAuthError::Crypto(format!("invalid SEC1 point: {e}")))?;
 
@@ -117,6 +119,16 @@ mod tests {
         // 32 bytes base64url-encoded = 43 characters
         assert_eq!(x.len(), 43);
         assert_eq!(y.len(), 43);
+    }
+
+    #[test]
+    fn jwk_rejects_keys_without_a_compressed_tag() {
+        // Regression: 0x05 ("compact") was read as the even-y point.
+        let mut bytes = P256SigningKey::generate().public_key().to_bytes();
+        for tag in [0x00, 0x04, 0x05, 0xff] {
+            bytes[0] = tag;
+            assert!(p256_public_jwk(&bytes).is_err(), "tag {tag:#04x}");
+        }
     }
 
     #[test]

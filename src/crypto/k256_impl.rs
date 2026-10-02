@@ -6,7 +6,7 @@ use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 use zeroize::ZeroizeOnDrop;
 
-use crate::crypto::{CryptoError, Signature, SigningKey, VerifyingKey};
+use crate::crypto::{CryptoError, Signature, SigningKey, VerifyingKey, require_compressed};
 
 // Static assertion: InnerSigningKey zeroizes on drop.
 const _: () = {
@@ -87,6 +87,7 @@ impl SigningKey for K256SigningKey {
 impl K256VerifyingKey {
     /// Construct from a 33-byte SEC1 compressed public key.
     pub fn from_bytes(bytes: &[u8; 33]) -> Result<Self, CryptoError> {
+        require_compressed(bytes)?;
         let inner = InnerVerifyingKey::from_sec1_bytes(bytes)
             .map_err(|e| CryptoError::InvalidKey(e.to_string()))?;
         Ok(Self { inner })

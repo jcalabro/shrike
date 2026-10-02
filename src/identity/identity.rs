@@ -264,6 +264,40 @@ mod tests {
     }
 
     #[test]
+    fn compact_tagged_multikey_is_not_a_signing_key() {
+        // Regression: a multikey whose SEC1 tag was 0x05 ("compact") parsed,
+        // as the even-y point.
+        use crate::crypto::{K256SigningKey, P256SigningKey, SigningKey};
+        for seed in 1..=4 {
+            let keys: [Box<dyn SigningKey>; 2] = [
+                Box::new(P256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+                Box::new(K256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+            ];
+            for sk in keys {
+                let multibase = sk.public_key().multibase();
+                let mut multikey = bs58::decode(&multibase[1..]).into_vec().unwrap();
+                multikey[2] = 0x05;
+                let compact = format!("z{}", bs58::encode(multikey).into_string());
+                for (multibase, found) in [(multibase, true), (compact, false)] {
+                    let json = format!(
+                        r##"{{
+                        "id": "did:plc:z72i7hdynmk6r22z27h6tvur",
+                        "verificationMethod": [{{
+                            "id": "#atproto",
+                            "type": "Multikey",
+                            "publicKeyMultibase": "{multibase}"
+                        }}]
+                    }}"##
+                    );
+                    let doc: DidDocument = serde_json::from_str(&json).unwrap();
+                    let identity = Identity::from_document(doc).unwrap();
+                    assert_eq!(identity.signing_key().is_some(), found, "{multibase}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn signing_key_found_with_relative_vm_id() {
         // The relative fragment form must also work.
         use crate::crypto::SigningKey;
