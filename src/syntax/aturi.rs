@@ -10,7 +10,8 @@ use crate::syntax::{AtIdentifier, Nsid, RecordKey, SyntaxError};
 ///
 /// Guaranteed to be valid on construction. Use `TryFrom<&str>` or `.parse()`.
 ///
-/// Format: `at://<authority>[/<collection>[/<rkey>]]`
+/// Format: `at://<authority>[/<collection>[/<rkey>]][#<fragment>]`, where the
+/// fragment is a percent-encoded JSON pointer (`#/text`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AtUri(String);
 
@@ -20,7 +21,7 @@ impl AtUri {
     /// For `"at://did:plc:abc123/app.bsky.feed.post/tid"` returns `"did:plc:abc123"`.
     pub fn authority(&self) -> &str {
         // Safety: validated on construction — always has "at://<authority>" form.
-        let rest = &self.0[5..]; // skip "at://"
+        let rest = self.after_scheme();
         match rest.find('/') {
             Some(idx) => &rest[..idx],
             None => rest,
@@ -29,7 +30,7 @@ impl AtUri {
 
     /// Returns the collection NSID path segment, or `None` if not present.
     pub fn collection(&self) -> Option<&str> {
-        let rest = &self.0[5..]; // skip "at://"
+        let rest = self.after_scheme();
         let after_auth = match rest.find('/') {
             Some(idx) => &rest[idx + 1..],
             None => return None,
@@ -45,7 +46,7 @@ impl AtUri {
 
     /// Returns the record key path segment, or `None` if not present.
     pub fn rkey(&self) -> Option<&str> {
-        let rest = &self.0[5..]; // skip "at://"
+        let rest = self.after_scheme();
         let after_auth = match rest.find('/') {
             Some(idx) => &rest[idx + 1..],
             None => return None,
@@ -61,9 +62,24 @@ impl AtUri {
         }
     }
 
+    /// Returns the fragment without its `#`, still percent-encoded, or
+    /// `None` if not present.
+    ///
+    /// For `"at://did:plc:abc123/app.bsky.feed.post/tid#/text"` returns
+    /// `"/text"`.
+    pub fn fragment(&self) -> Option<&str> {
+        self.0.split_once('#').map(|(_, f)| f)
+    }
+
     /// Returns the inner string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The URI after `at://` and before any fragment.
+    fn after_scheme(&self) -> &str {
+        let end = self.0.find('#').unwrap_or(self.0.len());
+        &self.0[5..end] // skip "at://"
     }
 }
 
@@ -95,13 +111,23 @@ impl AtUri {
         if raw.len() > 8192 {
             return Err(err("too long"));
         }
-        if !raw.starts_with("at://") {
+
+        // Everything after the first '#' is the fragment.
+        let uri = match raw.split_once('#') {
+            Some((uri, fragment)) => {
+                validate_fragment(fragment).map_err(|m| err(&format!("invalid fragment: {m}")))?;
+                uri
+            }
+            None => raw,
+        };
+
+        if !uri.starts_with("at://") {
             return Err(err("must start with \"at://\""));
         }
 
         // The authority, NSID and record-key validators below each reject
-        // '?' and '#'; no separate pass over the complete URI is needed.
-        let rest = &raw[5..];
+        // '?'; no separate pass over the complete URI is needed.
+        let rest = &uri[5..];
         if rest.is_empty() {
             return Err(err("empty authority"));
         }
@@ -160,6 +186,53 @@ impl AtUri {
 
         Ok(())
     }
+}
+
+/// Check a fragment the way the reference does: a JSON pointer (RFC 6901)
+/// made of the URI path characters, whose percent-encoding decodes to UTF-8.
+fn validate_fragment(fragment: &str) -> Result<(), &'static str> {
+    if !fragment.starts_with('/') {
+        return Err("must be a JSON pointer, starting with '/'");
+    }
+    if !fragment.bytes().all(is_fragment_char) {
+        return Err("invalid character");
+    }
+    if !fragment.contains('%') {
+        return Ok(());
+    }
+    let b = fragment.as_bytes();
+    let mut decoded = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let byte = match (
+                b.get(i + 1).and_then(hex_value),
+                b.get(i + 2).and_then(hex_value),
+            ) {
+                (Some(hi), Some(lo)) => hi << 4 | lo,
+                _ => return Err("'%' must be followed by two hex digits"),
+            };
+            decoded.push(byte);
+            i += 3;
+        } else {
+            decoded.push(b[i]);
+            i += 1;
+        }
+    }
+    match std::str::from_utf8(&decoded) {
+        Ok(_) => Ok(()),
+        Err(_) => Err("percent-encoding is not UTF-8"),
+    }
+}
+
+fn is_fragment_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"._~:@!$&'()*+,;=%[]/-".contains(&b)
+}
+
+fn hex_value(b: &u8) -> Option<u8> {
+    char::from(*b)
+        .to_digit(16)
+        .and_then(|d| u8::try_from(d).ok())
 }
 
 impl TryFrom<&str> for AtUri {
@@ -238,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn component_validation_rejects_queries_fragments_and_extra_segments() {
+    fn component_validation_rejects_queries_bad_fragments_and_extra_segments() {
         for valid in [
             "at://alice.test",
             "at://did:plc:abc/app.bsky.feed.post",
@@ -246,11 +319,20 @@ mod tests {
         ] {
             assert!(AtUri::try_from(valid).is_ok());
             for index in 5..=valid.len() {
-                for marker in ['?', '#'] {
-                    let mut changed = valid.to_owned();
-                    changed.insert(index, marker);
-                    assert!(AtUri::try_from(changed.as_str()).is_err(), "{changed}");
-                }
+                let mut query = valid.to_owned();
+                query.insert(index, '?');
+                assert!(AtUri::try_from(query.as_str()).is_err(), "{query}");
+
+                // A '#' starts a fragment, which is a valid JSON pointer only
+                // when a '/' follows it (and something precedes it).
+                let mut fragment = valid.to_owned();
+                fragment.insert(index, '#');
+                let pointer = index > 5 && valid[index..].starts_with('/');
+                assert_eq!(
+                    AtUri::try_from(fragment.as_str()).is_ok(),
+                    pointer,
+                    "{fragment}"
+                );
             }
         }
         for bad in [
@@ -300,6 +382,7 @@ mod tests {
         let u = AtUri::try_from("at://did:plc:z72i7hdynmk6r22z27h6tvur").unwrap();
         assert_eq!(u.collection(), None);
         assert_eq!(u.rkey(), None);
+        assert_eq!(u.fragment(), None);
     }
 
     #[test]
@@ -321,9 +404,108 @@ mod tests {
         assert!(AtUri::try_from("at://did:plc:abc/").is_err());
     }
 
+    /// Regression test: fragments holding a JSON pointer were rejected.
     #[test]
-    fn aturi_reject_fragment() {
-        assert!(AtUri::try_from("at://did:plc:abc#frag").is_err());
+    fn aturi_accepts_json_pointer_fragments() {
+        for (uri, fragment) in [
+            (
+                "at://did:plc:abc/app.bsky.feed.post/3jzfcijpj2z2a#/text",
+                "/text",
+            ),
+            ("at://did:plc:asdf123#/frag", "/frag"),
+            ("at://user.bsky.social#/frag", "/frag"),
+            ("at://did:plc:asdf123/com.atproto.feed.post#/frag", "/frag"),
+            ("at://did:plc:asdf123#/", "/"),
+            ("at://did:plc:asdf123#//", "//"),
+            (
+                "at://did:plc:asdf123#/com.atproto.feed.post/",
+                "/com.atproto.feed.post/",
+            ),
+            ("at://did:plc:asdf123#/[asfd]", "/[asfd]"),
+            (
+                "at://did:plc:asdf123#/$@!*():,;~.sdf123-_'&+=",
+                "/$@!*():,;~.sdf123-_'&+=",
+            ),
+            ("at://did:plc:asdf123#/a~1b/c~0d/0", "/a~1b/c~0d/0"),
+            ("at://did:plc:asdf123#/%20%41%c3%a9", "/%20%41%c3%a9"),
+            ("at://did:plc:asdf123#/%F0%9F%98%80", "/%F0%9F%98%80"),
+            ("at://did:plc:asdf123#/%00", "/%00"),
+        ] {
+            let u = AtUri::try_from(uri).unwrap_or_else(|e| panic!("{uri}: {e}"));
+            assert_eq!(u.fragment(), Some(fragment), "{uri}");
+        }
+    }
+
+    #[test]
+    fn aturi_rejects_bad_fragments() {
+        for uri in [
+            "at://did:plc:abc#frag",
+            "at://did:plc:abc#",
+            "at://did:plc:abc##",
+            "at://did:plc:abc#/a#/b",
+            "at://did:plc:abc#/a?b",
+            "at://did:plc:abc#/a b",
+            "at://did:plc:abc#/a\\b",
+            "at://did:plc:abc#/a\"b",
+            "at://did:plc:abc#/a<b>",
+            "at://did:plc:abc#/a^b",
+            "at://did:plc:abc#/a`b",
+            "at://did:plc:abc#/a{b}",
+            "at://did:plc:abc#/a|b",
+            "at://did:plc:abc#/é",
+            "at://did:plc:abc#/frag ",
+            "at://did:plc:abc#/frag\n",
+            // Percent-encoding must be complete and decode to UTF-8.
+            "at://did:plc:abc#/%",
+            "at://did:plc:abc#/%4",
+            "at://did:plc:abc#/%zz",
+            "at://did:plc:abc#/%+1",
+            "at://did:plc:abc#/%FF",
+            "at://did:plc:abc#/%c3",
+            "at://did:plc:abc#/%c3a9",
+            "at://did:plc:abc#/%C0%80",
+            "at://did:plc:abc#/%ED%A0%80",
+            "at://did:plc:abc#/%F4%90%80%80",
+            // A fragment does not excuse the rest of the URI.
+            "at://did:plc:abc?q#/frag",
+            "at://did:plc:abc/#/frag",
+            "at://did:plc:abc/app.bsky.feed.post/#/frag",
+            "at://did:plc:abc/app.bsky.feed.post/a/b#/frag",
+            "at://#/frag",
+            "#/frag",
+            "at:/did:plc:abc#/frag",
+        ] {
+            assert!(AtUri::try_from(uri).is_err(), "{uri:?} should be invalid");
+        }
+    }
+
+    #[test]
+    fn aturi_fragment_counts_toward_length_limit() {
+        let base = "at://did:plc:abc#/";
+        let fits = format!("{base}{}", "a".repeat(8192 - base.len()));
+        assert!(AtUri::try_from(fits.as_str()).is_ok());
+        assert!(AtUri::try_from(format!("{fits}a").as_str()).is_err());
+    }
+
+    #[test]
+    fn aturi_accessors_ignore_fragment() {
+        let u = AtUri::try_from("at://did:plc:abc/app.bsky.feed.post/3jzfcijpj2z2a#/a/b").unwrap();
+        assert_eq!(u.authority(), "did:plc:abc");
+        assert_eq!(u.collection(), Some("app.bsky.feed.post"));
+        assert_eq!(u.rkey(), Some("3jzfcijpj2z2a"));
+        assert_eq!(u.fragment(), Some("/a/b"));
+
+        let u = AtUri::try_from("at://did:plc:abc#/app.bsky.feed.post/x").unwrap();
+        assert_eq!(u.authority(), "did:plc:abc");
+        assert_eq!(u.collection(), None);
+        assert_eq!(u.rkey(), None);
+
+        let u = AtUri::try_from("at://did:plc:abc/app.bsky.feed.post#/x").unwrap();
+        assert_eq!(u.collection(), Some("app.bsky.feed.post"));
+        assert_eq!(u.rkey(), None);
+
+        let u = AtUri::try_from("at://did:plc:abc/app.bsky.feed.post/x").unwrap();
+        assert_eq!(u.fragment(), None);
     }
 
     #[test]

@@ -8,12 +8,13 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use serde::Deserialize;
-use shrike::syntax::Language;
+use shrike::syntax::{AtUri, Language};
 
 #[derive(Deserialize)]
 struct Vectors {
     atproto: String,
     language: Verdicts,
+    aturi: Verdicts,
 }
 
 #[derive(Deserialize)]
@@ -61,5 +62,28 @@ fn language_matches_reference() {
     let v = vectors();
     check("language", &v.atproto, &v.language, |s| {
         Language::try_from(s).is_ok()
+    });
+}
+
+#[test]
+fn aturi_matches_reference() {
+    let mut v = vectors();
+    // Deliberate divergence: shrike rejects '%' in DIDs, which the reference
+    // allows, so an authority holding one makes the URI invalid here.
+    let authority = |uri: &str| {
+        let rest = uri.strip_prefix("at://").unwrap_or("");
+        rest.split(['/', '?', '#']).next().unwrap_or("").to_owned()
+    };
+    let (diverging, valid): (Vec<String>, Vec<String>) = v
+        .aturi
+        .valid
+        .into_iter()
+        .partition(|uri| authority(uri).contains('%'));
+    assert!(!diverging.is_empty(), "no '%' authorities in the vectors");
+    v.aturi.valid = valid;
+    v.aturi.invalid.extend(diverging);
+
+    check("at-uri", &v.atproto, &v.aturi, |s| {
+        AtUri::try_from(s).is_ok()
     });
 }

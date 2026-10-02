@@ -171,6 +171,67 @@ const language = verdicts(
 )
 
 // ---------------------------------------------------------------------------
+// AT-URIs, checked with `isAtUriString` (the lexicon `at-uri` format), with an
+// emphasis on fragments: a percent-encoded JSON pointer.
+
+const POINTER_CHARS = ALNUM + "._~:@!$&')(*+,;=[]-"
+const NOT_POINTER_CHARS = ' "#<>?\\^`{|}\né'
+const percentEscape = () => {
+  switch (int(5)) {
+    case 0: // a whole code point, as UTF-8
+      return encodeURIComponent(String.fromCodePoint(pick([0x20, 0x7e, 0xe9, 0x4e2d, 0x1f600, int(0xd800)])))
+    case 1: // any byte
+      return '%' + int(256).toString(16).padStart(2, '0')
+    case 2: // a truncated or malformed escape
+      return pick(['%', '%4', '%zz', '%+1', '%c3', '%e2%82', '%G0'])
+    case 3: // overlong, surrogate, and out-of-range encodings
+      return pick(['%C0%80', '%ED%A0%80', '%F4%90%80%80', '%F8%88%80%80%80'])
+    default:
+      return '%' + str('0123456789abcdefABCDEF', 2)
+  }
+}
+const pointerSegment = () =>
+  times(int(6), () => {
+    const r = rand()
+    return r < 0.75 ? pick(POINTER_CHARS) : r < 0.95 ? percentEscape() : pick(NOT_POINTER_CHARS)
+  }).join('')
+const pointer = () => times(chance(0.1) ? 0 : 1 + int(3), () => '/' + pointerSegment()).join('')
+
+const authority = () =>
+  pick([
+    () => 'did:plc:' + str(LOWER + '234567', 24),
+    () => 'did:web:' + str(LOWER, 1 + int(8)) + '.com',
+    () => 'did:' + str(LOWER, 1 + int(4)) + ':' + str(ALNUM + '._:-', 1 + int(10)),
+    () => str(LOWER, 1 + int(8)) + '.' + pick(['bsky.social', 'test', 'com']),
+    () => str(ALNUM + '.:-_', 1 + int(12)),
+  ])()
+const nsid = () =>
+  chance(0.9)
+    ? pick(['app.bsky.feed.post', 'com.atproto.feed.post', 'com.example.fooBar'])
+    : str(LOWER + '.', 1 + int(15))
+const rkey = () =>
+  chance(0.8) ? str(LOWER + '234567', 13) : str(ALNUM + '._~:-' + (chance(0.2) ? '!*' : ''), 1 + int(10))
+
+const atUri = () => {
+  let uri = 'at://' + authority()
+  if (chance(0.7)) uri += '/' + nsid()
+  if (chance(0.5) && uri.split('/').length === 4) uri += '/' + rkey()
+  if (chance(0.05)) uri += '/'
+  if (chance(0.05)) uri += '?' + str(ALNUM + '=&', int(6))
+  if (chance(0.7)) uri += (chance(0.95) ? '#' : '##') + (chance(0.9) ? pointer() : pointerSegment())
+  return uri
+}
+
+const atUriSeeds = [
+  ...interop('aturi_syntax_valid.txt'),
+  ...interop('aturi_syntax_invalid.txt'),
+  ...testStrings('aturi-string.test.ts'),
+  ...testStrings('aturi.test.ts'),
+].filter((v) => v.startsWith('at:'))
+const atUriValues = corpus(atUriSeeds, atUri, ALNUM + '#/%?:.~ -', '#', 4000 * scale)
+const aturi = verdicts(atUriValues, (v) => syntax.isAtUriString(v))
+
+// ---------------------------------------------------------------------------
 
 const git = (dir) => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD']).toString().trim()
 const vectors = {
@@ -179,7 +240,11 @@ const vectors = {
   seed,
   scale,
   language,
+  aturi,
 }
 mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, JSON.stringify(vectors) + '\n')
-console.log(`wrote ${out}: language ${language.valid.length} valid, ${language.invalid.length} invalid`)
+console.log(
+  `wrote ${out}: language ${language.valid.length} valid, ${language.invalid.length} invalid; ` +
+    `aturi ${aturi.valid.length} valid, ${aturi.invalid.length} invalid`,
+)
