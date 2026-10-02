@@ -51,7 +51,7 @@ cargo +nightly fuzz run cbor_decode_differential
 | `mst_invert` | undoing a commit's ops from only the blocks an indigo-style or reference producer ships **restores the previous root** |
 | `syntax_parsers` | all 9 identifier parsers never panic; normalization is **idempotent** (canonical form re-parses to itself) |
 | `repo_commit_from_cbor` | commit decode never panics; signed commits round-trip |
-| `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic |
+| `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic; an accepted commit's records **hash to their CIDs** and agree with the raw parser's ops and blocks |
 | `label_decode` | label decode never panics; accepted labels encode/decode **stably**; unsigned bytes deterministic |
 | `k256_backends_differential` | K-256 keys, verifying with libsecp256k1 under the `secp256k1` feature, **must agree** with pure-Rust `k256`: key parsing and encoding, signatures, and strict and malleable verification of valid, high-S, mutated and arbitrary signatures |
 | `lexicon_validate` | record validation against a kitchen-sink schema never panics on arbitrary JSON |

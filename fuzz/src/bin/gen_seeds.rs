@@ -233,6 +233,31 @@ fn main() {
         write_seed("json_slice_to_drisl", name, s.as_bytes());
     }
 
+    // --- Firehose frames (firehose_frame) ---
+    // Real commits (indigo's test vectors), whose blocks verify, so that
+    // mutations reach the ops and records rather than stopping at the CAR.
+    {
+        use shrike::cbor::json::{Integers, json_to_drisl};
+        let header = encode_value(&Value::Map(vec![
+            ("t", Value::Text("#commit")),
+            ("op", Value::Unsigned(1)),
+        ]))
+        .expect("header");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/repo_proofs");
+        for entry in fs::read_dir(dir.join("firehose_commits")).expect("fixtures") {
+            let path = entry.expect("fixture").path();
+            let json = fs::read(&path).expect("fixture");
+            let mut body: serde_json::Value = serde_json::from_slice(&json).expect("JSON");
+            let fields = body.as_object_mut().expect("object");
+            fields.retain(|_, v| !v.is_null());
+            fields.insert("blobs".into(), serde_json::json!([]));
+            let name = path.file_stem().expect("name").to_string_lossy();
+            if let Ok(body) = json_to_drisl(&body, Integers::Any) {
+                write_seed("firehose_frame", &name, &[&header[..], &body].concat());
+            }
+        }
+    }
+
     // --- Syntax identifiers (syntax_parsers) ---
     for (name, s) in [
         ("did_plc", "did:plc:z72i7hdynmk6r22z27h6tvur"),
