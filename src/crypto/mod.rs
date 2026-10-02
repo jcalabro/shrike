@@ -26,6 +26,21 @@ pub enum CryptoError {
     SigningFailed(String),
 }
 
+/// Check that `bytes` carries a SEC1 compressed point's tag (0x02 or 0x03).
+///
+/// The `sec1` decoders behind both curves also take the 0x05 "compact" tag,
+/// reading the x-coordinate as the even-y point: a second encoding of every
+/// even-y key, and a different key for odd-y ones. The reference
+/// implementation rejects it, as must we.
+pub(crate) fn require_compressed(bytes: &[u8; 33]) -> Result<(), CryptoError> {
+    match bytes[0] {
+        0x02 | 0x03 => Ok(()),
+        _ => Err(CryptoError::InvalidKey(
+            "not a compressed SEC1 point".into(),
+        )),
+    }
+}
+
 /// Signing key for producing ECDSA signatures over arbitrary content.
 pub trait SigningKey: Send + Sync {
     /// Return the corresponding public verification key.

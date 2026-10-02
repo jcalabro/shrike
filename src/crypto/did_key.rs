@@ -99,6 +99,52 @@ mod tests {
         k_parsed.verify(b"test", &sig_k).unwrap();
     }
 
+    /// Regression: the `sec1` decoders also take the 0x05 "compact" tag, which
+    /// gave every even-y key a second did:key and decoded odd-y keys as a
+    /// different key. Only 0x02 and 0x03 are compressed points.
+    #[test]
+    fn rejects_keys_without_a_compressed_tag() {
+        let mut parities = std::collections::HashSet::new();
+        for seed in 1..=8 {
+            let keys: [Box<dyn SigningKey>; 2] = [
+                Box::new(P256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+                Box::new(K256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+            ];
+            for sk in keys {
+                let pk = sk.public_key();
+                let canonical = pk.to_bytes();
+                parities.insert((pk.jwt_alg(), canonical[0]));
+                let multikey = bs58::decode(&pk.multibase()[1..]).into_vec().unwrap();
+                for tag in (0..=255).filter(|t| !matches!(t, 0x02 | 0x03)) {
+                    let mut bytes = canonical;
+                    bytes[0] = tag;
+                    let parsed = match pk.jwt_alg() {
+                        "ES256" => P256VerifyingKey::from_bytes(&bytes).map(drop),
+                        _ => K256VerifyingKey::from_bytes(&bytes).map(drop),
+                    };
+                    assert!(
+                        matches!(parsed, Err(CryptoError::InvalidKey(_))),
+                        "{} tag {tag:#04x}",
+                        pk.jwt_alg()
+                    );
+                    let did = [&multikey[..2], &bytes].concat();
+                    let did = format!("did:key:z{}", bs58::encode(did).into_string());
+                    assert!(parse_did_key(&did).is_err(), "{did}");
+                }
+                let sig = sk.sign(b"tag").unwrap();
+                parse_did_key(&pk.did_key())
+                    .unwrap()
+                    .verify(b"tag", &sig)
+                    .unwrap();
+            }
+        }
+        assert_eq!(
+            parities.len(),
+            4,
+            "both parities on both curves: {parities:?}"
+        );
+    }
+
     #[test]
     fn parse_did_key_invalid_prefix() {
         assert!(parse_did_key("did:key:invalid").is_err());

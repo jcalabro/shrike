@@ -1,10 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use shrike::cbor::{Cid, Codec};
-use shrike::mst::{BlockStore, MemBlockStore, MstError, Tree, height_for_key};
+use shrike::mst::{
+    BlockStore, DetachedTree, MemBlockStore, MstError, NoBlocks, Tree, height_for_key,
+};
 
 // ---------------------------------------------------------------------------
 // Shared block store wrapper (MemBlockStore isn't Clone, so use Rc)
@@ -251,6 +255,104 @@ fn bench_node_codec(c: &mut Criterion) {
     group.finish();
 }
 
+/// A fully loaded, flushed tree of `n` keys, as a long-lived tree is once a
+/// bulk build or many commits have touched every node, plus its blocks.
+fn loaded_tree(n: usize) -> (DetachedTree, Vec<String>, HashMap<Cid, Vec<u8>>) {
+    let keys = gen_keys(n);
+    let mut tree = DetachedTree::new();
+    for key in &keys {
+        let val = Cid::compute(Codec::Drisl, key.as_bytes());
+        tree.insert(&NoBlocks, key.clone(), val).expect("insert");
+    }
+    let blocks = tree
+        .flush()
+        .expect("flush")
+        .new_blocks
+        .into_iter()
+        .collect();
+    (tree, keys, blocks)
+}
+
+/// One-key commits (a mutation then `flush`) against long-lived trees and
+/// freshly loaded ones.
+fn bench_commit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("commit");
+    let vals = [
+        Cid::compute(Codec::Raw, b"a"),
+        Cid::compute(Codec::Raw, b"b"),
+    ];
+
+    for &n in &[43_649, 200_000, 1_000_000] {
+        let (mut tree, keys, blocks) = loaded_tree(n);
+        let root = tree.flush().expect("flush").root;
+        let key = keys[n / 2].clone();
+        let new_key = format!("{key}x");
+        if n > 100_000 {
+            group.sample_size(10);
+            group.measurement_time(Duration::from_secs(10));
+        } else {
+            group.sample_size(30);
+            group.measurement_time(Duration::from_secs(5));
+        }
+
+        let mut flip = 0;
+        group.bench_function(BenchmarkId::new("update_loaded", n), |b| {
+            b.iter(|| {
+                flip ^= 1;
+                tree.insert(&NoBlocks, key.clone(), vals[flip])
+                    .expect("insert");
+                black_box(tree.flush().expect("flush"));
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("insert_remove_loaded", n), |b| {
+            b.iter(|| {
+                tree.insert(&NoBlocks, new_key.clone(), vals[0])
+                    .expect("insert");
+                black_box(tree.flush().expect("flush"));
+                tree.remove(&NoBlocks, &new_key).expect("remove");
+                black_box(tree.flush().expect("flush"));
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("update_fresh", n), |b| {
+            b.iter(|| {
+                let mut tree = DetachedTree::load(root);
+                tree.insert(&blocks, key.clone(), vals[1]).expect("insert");
+                black_box(tree.flush().expect("flush"));
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Flush a tree built from scratch, where every node is dirty.
+fn bench_flush_dirty(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush_dirty");
+    group.sample_size(20);
+
+    for &n in &[1_000, 10_000, 100_000] {
+        let keys = gen_keys(n);
+        let cids = gen_cids(&keys);
+        group.bench_with_input(BenchmarkId::new("all_nodes", n), &n, |b, _| {
+            b.iter_batched(
+                || {
+                    let mut tree = DetachedTree::new();
+                    for (key, cid) in keys.iter().zip(&cids) {
+                        tree.insert(&NoBlocks, key.clone(), *cid).expect("insert");
+                    }
+                    tree
+                },
+                |mut tree| black_box(tree.flush().expect("flush")),
+                BatchSize::LargeInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_height_for_key,
@@ -260,5 +362,7 @@ criterion_group!(
     bench_entries,
     bench_remove,
     bench_node_codec,
+    bench_commit,
+    bench_flush_dirty,
 );
 criterion_main!(benches);

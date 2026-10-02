@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::car::{Block, Reader};
+use crate::car::{Block, SliceReader};
+use crate::cbor::cid::{CidMap, FastHashState};
 use crate::cbor::{Cid, Codec};
 use crate::crypto::SigningKey;
 use crate::mst::{BlockSource, DetachedTree, MstError};
@@ -10,7 +11,7 @@ use crate::syntax::{Did, Nsid, RecordKey, TidClock};
 
 use crate::repo::RepoError;
 use crate::repo::commit::Commit;
-use crate::repo::proof::{ProofError, record_proofs_car};
+use crate::repo::proof::{ProofError, proof_car};
 use crate::repo::store::{CommitData, MemRepoStore, RecordAction, RecordOp, RepoStore, WriteOp};
 
 /// An AT Protocol repository.
@@ -117,26 +118,28 @@ impl<S: RepoStore> Repo<S> {
         if store.head().map_err(storage)?.is_some() {
             return Err(RepoError::StoreNotEmpty);
         }
-        let mut reader = Reader::new(car)?;
+        let reader = SliceReader::new(car)?;
         let root = match reader.roots() {
             [root] => *root,
             roots => return Err(RepoError::RootCount(roots.len())),
         };
-        let mut blocks: HashMap<Cid, Vec<u8>> = HashMap::new();
-        let mut block = Block::default();
-        while reader.next_block_into(&mut block)? {
-            if Cid::compute(block.cid.codec(), &block.data) != block.cid {
+        // Blocks stay in `car` until the reachable ones are copied out.
+        let mut blocks = CidMap::default();
+        for block in reader {
+            let block = block?;
+            if Cid::compute(block.cid.codec(), block.data) != block.cid {
                 return Err(RepoError::CidMismatch(block.cid));
             }
-            blocks
-                .entry(block.cid)
-                .or_insert_with(|| std::mem::take(&mut block.data));
+            blocks.entry(block.cid).or_insert(block.data);
         }
 
         if root.codec() != Codec::Drisl {
             return Err(RepoError::Commit(format!("commit {root} is not DRISL")));
         }
-        let commit_bytes = blocks.remove(&root).ok_or(RepoError::MissingBlock(root))?;
+        let commit_bytes = blocks
+            .remove(&root)
+            .ok_or(RepoError::MissingBlock(root))?
+            .to_vec();
         let commit = Commit::from_cbor(&commit_bytes)?;
         let mut new_blocks: BTreeMap<Cid, Vec<u8>> = reachable_blocks(&blocks, commit.data)?
             .into_iter()
@@ -490,10 +493,23 @@ impl<S: RepoStore> Repo<S> {
     }
 
     /// Build one proof CAR for several records at the last commit. See
-    /// [`record_proofs_car`].
+    /// [`record_proofs_car`](crate::repo::record_proofs_car).
     pub fn records_proof(&self, paths: &[(Nsid, RecordKey)]) -> Result<Vec<u8>, ProofError> {
-        let head = self.head_cid().ok_or(ProofError::NoCommit)?;
-        record_proofs_car(&StoreSource(&self.store), &head, paths)
+        let head = self.head.as_ref().ok_or(ProofError::NoCommit)?;
+        let src = StoreSource(&self.store);
+        let commit = src
+            .read_block(&head.cid)?
+            .ok_or(ProofError::MissingBlock(head.cid))?;
+        // Until there are writes since the commit, the tree in memory is
+        // the commit's, and the nodes it has loaded need no decoding.
+        let fresh;
+        let tree = if self.tree.root_cid() == Some(head.commit.data) {
+            &self.tree
+        } else {
+            fresh = DetachedTree::load(head.commit.data);
+            &fresh
+        };
+        proof_car(&src, tree, &head.cid, &commit, paths)
     }
 
     /// Export the last commit as a full-repository CAR file, as
@@ -550,7 +566,7 @@ impl<S: RepoStore> Repo<S> {
 /// its entry, each block once.
 fn reachable_blocks(src: &dyn BlockSource, root: Cid) -> Result<Vec<(Cid, Vec<u8>)>, RepoError> {
     let recorder = Recorder::new(src);
-    let mut leaves = HashSet::new();
+    let mut leaves: HashSet<Cid, FastHashState> = HashSet::default();
     let mut leaf_err = None;
     DetachedTree::load(root)
         .walk(&recorder, |_, cid| {
@@ -594,10 +610,9 @@ struct StoreSource<'a, S: ?Sized>(&'a S);
 
 impl<S: RepoStore + ?Sized> BlockSource for StoreSource<'_, S> {
     fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
-        match self.0.get_block(cid) {
-            Ok(data) => Ok(data.map(Cow::Owned)),
-            Err(e) => Err(MstError::Storage(Box::new(e))),
-        }
+        self.0
+            .borrow_block(cid)
+            .map_err(|e| MstError::Storage(Box::new(e)))
     }
 }
 
@@ -611,10 +626,10 @@ impl<S: RepoStore> BlockSource for Overlay<'_, S> {
     fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
         match self.blocks.get(cid) {
             Some(data) => Ok(Some(Cow::Borrowed(data))),
-            None => match self.store.get_block(cid) {
-                Ok(data) => Ok(data.map(Cow::Owned)),
-                Err(e) => Err(MstError::Storage(Box::new(e))),
-            },
+            None => self
+                .store
+                .borrow_block(cid)
+                .map_err(|e| MstError::Storage(Box::new(e))),
         }
     }
 }
@@ -639,9 +654,8 @@ impl BlockSource for Recorder<'_> {
         let Some(data) = self.src.read_block(cid)? else {
             return Ok(None);
         };
-        let data = data.into_owned();
-        self.seen.borrow_mut().push((*cid, data.clone()));
-        Ok(Some(Cow::Owned(data)))
+        self.seen.borrow_mut().push((*cid, data.to_vec()));
+        Ok(Some(data))
     }
 }
 
@@ -651,6 +665,7 @@ mod tests {
     use super::*;
     use crate::car::read_all;
     use crate::crypto::P256SigningKey;
+    use crate::repo::proof::record_proofs_car;
 
     fn did() -> Did {
         Did::try_from("did:plc:storestorestorestorestor").unwrap()
@@ -1092,5 +1107,135 @@ mod tests {
         let (roots, blocks) = read_all(&car[..]).unwrap();
         assert_eq!(roots, [c.cid]);
         assert_eq!(blocks.len(), 3);
+    }
+
+    // --- record proofs from the tree in memory ---
+
+    /// `record_proofs_car` before proofs could come from a loaded tree:
+    /// the commit, the nodes `get` reads from a fresh tree in the order
+    /// read, then the records.
+    fn proofs_car_by_get(
+        src: &dyn BlockSource,
+        commit_cid: &Cid,
+        paths: &[(Nsid, RecordKey)],
+    ) -> Result<Vec<u8>, ProofError> {
+        let read = |cid: &Cid| -> Result<Vec<u8>, ProofError> {
+            src.read_block(cid)?
+                .map(Cow::into_owned)
+                .ok_or(ProofError::MissingBlock(*cid))
+        };
+        let commit_bytes = read(commit_cid)?;
+        let commit = Commit::from_cbor(&commit_bytes).map_err(ProofError::InvalidCommit)?;
+        let recorder = Recorder::new(src);
+        let mut tree = DetachedTree::load(commit.data);
+        let mut found = Vec::new();
+        for (collection, rkey) in paths {
+            found.extend(tree.get(&recorder, &mst_key(collection, rkey))?);
+        }
+        let mut blocks = vec![Block {
+            cid: *commit_cid,
+            data: commit_bytes,
+        }];
+        let mut seen = HashSet::from([*commit_cid]);
+        for (cid, data) in recorder.seen.into_inner() {
+            if seen.insert(cid) {
+                blocks.push(Block { cid, data });
+            }
+        }
+        for cid in found {
+            if seen.insert(cid) {
+                blocks.push(Block {
+                    data: read(&cid)?,
+                    cid,
+                });
+            }
+        }
+        Ok(crate::car::write_all(&[*commit_cid], &blocks)?)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+
+        /// `records_proof` uses the tree in memory while it is the last
+        /// commit's, and falls back to reading the commit's tree when there
+        /// are writes since. Either way the proof must be the CAR the commit
+        /// alone yields, byte for byte: what `record_proofs_car` builds and
+        /// what it built before.
+        #[test]
+        fn proofs_match_proofs_from_the_commit(
+            ops in proptest::collection::vec((0u8..8, 0usize..120, 0u16..40), 1..80),
+            queries in proptest::collection::vec(
+                proptest::collection::vec(0usize..140, 1..6),
+                1..4,
+            ),
+        ) {
+            let key = P256SigningKey::generate();
+            let queries: Vec<Vec<(Nsid, RecordKey)>> = queries
+                .iter()
+                .map(|q| q.iter().map(|&i| (col(), rk(i))).collect())
+                .collect();
+            let mut repo = Repo::new(did(), TidClock::new(0).unwrap());
+            for (op, i, v) in ops {
+                match op {
+                    0..=2 => drop(repo.create(&col(), &rk(i), &record(v))),
+                    3 => drop(repo.update(&col(), &rk(i), &record(v))),
+                    4 => drop(repo.delete(&col(), &rk(i))),
+                    5 | 6 => drop(repo.commit(&key).unwrap()),
+                    // Reopening drops staged writes and the loaded nodes.
+                    _ if repo.head().is_some() => repo = Repo::open(repo.into_store()).unwrap(),
+                    _ => {}
+                }
+                let Some(head) = repo.head_cid() else {
+                    continue;
+                };
+                let src = StoreSource(&repo.store);
+                for paths in &queries {
+                    let got = repo.records_proof(paths).unwrap();
+                    proptest::prop_assert_eq!(&got, &record_proofs_car(&src, &head, paths).unwrap());
+                    proptest::prop_assert_eq!(&got, &proofs_car_by_get(&src, &head, paths).unwrap());
+                }
+            }
+        }
+    }
+
+    /// A failed commit leaves the tree flushed past the head, which proofs
+    /// must not use. `Flaky` also leaves `borrow_block` to its default,
+    /// which copies.
+    #[test]
+    fn proofs_after_a_failed_commit_are_of_the_head() {
+        let key = P256SigningKey::generate();
+        let mut repo = Repo::init(Flaky::default(), did(), TidClock::new(0).unwrap()).unwrap();
+        repo.apply_writes(
+            &(0..60).map(|i| create(i, i as u16)).collect::<Vec<_>>(),
+            &key,
+        )
+        .unwrap();
+        let head = repo.head_cid().unwrap();
+        let paths = [0, 7, 59, 60, 7].map(|i| (col(), rk(i)));
+        let proof = repo.records_proof(&paths).unwrap();
+        assert_eq!(
+            proof,
+            proofs_car_by_get(&StoreSource(&repo.store), &head, &paths).unwrap()
+        );
+
+        repo.update(&col(), &rk(7), &record(700)).unwrap();
+        repo.create(&col(), &rk(60), &record(60)).unwrap();
+        assert_eq!(repo.records_proof(&paths).unwrap(), proof);
+        repo.store.fail_next = true;
+        assert!(repo.commit(&key).is_err());
+        assert_eq!(repo.head_cid(), Some(head));
+        assert_eq!(repo.records_proof(&paths).unwrap(), proof);
+
+        repo.store.fail_reads = true;
+        assert!(matches!(
+            repo.records_proof(&paths),
+            Err(ProofError::Mst(MstError::Storage(_)))
+        ));
+        repo.store.fail_reads = false;
+        let head = repo.commit(&key).unwrap().cid;
+        assert_eq!(
+            repo.records_proof(&paths).unwrap(),
+            record_proofs_car(&StoreSource(&repo.store), &head, &paths).unwrap()
+        );
     }
 }

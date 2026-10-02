@@ -36,6 +36,12 @@ impl<S: BuildHasher> BlockSource for HashMap<Cid, Vec<u8>, S> {
     }
 }
 
+impl<S: BuildHasher> BlockSource for HashMap<Cid, &[u8], S> {
+    fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
+        Ok(self.get(cid).map(|data| Cow::Borrowed(*data)))
+    }
+}
+
 impl BlockSource for MemBlockStore {
     fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
         Ok(self.blocks.borrow().get(cid).cloned().map(Cow::Owned))

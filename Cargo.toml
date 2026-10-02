@@ -55,7 +55,8 @@ serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the jetstream live parser inspect a commit record's raw JSON
 # text (duplicate-key rejection) without a second full parse of the frame.
 serde_json = { version = "1", features = ["raw_value"] }
-sha2 = "0.10"
+# Hardware SHA-256 is detected at runtime on x86 and aarch64.
+sha2 = { version = "0.11", default-features = false }
 data-encoding = "2"
 p256 = { version = "0.13", features = ["ecdsa"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
@@ -88,6 +89,10 @@ cbor = ["dep:simdutf8", "dep:bumpalo"]
 crypto = ["dep:p256", "dep:k256", "dep:bs58", "dep:rand_core", "dep:zeroize", "dep:getrandom-02"]
 
 # Layer 1 (depend on foundation)
+# Verify K-256 signatures with libsecp256k1 (vendored C) instead of the
+# pure-Rust `k256`, and on aarch64 sign with hardware SHA-256. Native only, so
+# it is left out of `wasm`.
+secp256k1 = ["crypto", "dep:secp256k1", "dep:sha2-010"]
 car = ["cbor"]
 mst = ["cbor"]
 lexicon = ["syntax", "cbor", "dep:unicode-segmentation"]
@@ -126,7 +131,7 @@ jetstream = ["dep:twox-hash", "dep:zstd", "dep:ruzstd", "dep:bytes", "dep:jiff",
 
 # Everything
 full = [
-    "syntax", "cbor", "crypto", "mst", "repo", "car",
+    "syntax", "cbor", "crypto", "secp256k1", "mst", "repo", "car",
     "lexicon", "lexicon-resolver", "xrpc", "xrpc-server", "service-auth", "identity", "streaming",
     "sync", "backfill", "labeling", "oauth", "api", "jetstream",
 ]
@@ -158,6 +163,8 @@ k256 = { workspace = true, optional = true }
 bs58 = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 zeroize = { version = "1", optional = true }
+# secp256k1: `std` gives each thread its own context; `rand` stays off.
+secp256k1 = { version = "0.33", default-features = false, features = ["std"], optional = true }
 
 # xrpc, identity, oauth
 reqwest = { workspace = true, optional = true }
@@ -203,6 +210,12 @@ hickory-resolver = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 # jetstream (native): bounded zstd block/frame decode via libzstd.
 zstd = { version = "0.14", optional = true }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+# secp256k1: `k256` and `p256` sign with RFC 6979 nonces hashed by sha2 0.10,
+# which uses the ARMv8 SHA-256 instructions only with `asm` (built with a C
+# toolchain). Enabling it here turns it on for them; x86 detects SHA-NI anyway.
+sha2-010 = { package = "sha2", version = "0.10", features = ["asm"], optional = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "macros", "io-util"] }
@@ -356,3 +369,18 @@ required-features = ["car"]
 name = "repo_benchmarks"
 harness = false
 required-features = ["repo"]
+
+[[bench]]
+name = "record_benchmarks"
+harness = false
+required-features = ["repo", "lexicon"]
+
+[[bench]]
+name = "streaming_benchmarks"
+harness = false
+required-features = ["repo", "streaming"]
+
+[[bench]]
+name = "crypto_benchmarks"
+harness = false
+required-features = ["crypto"]

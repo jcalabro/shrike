@@ -5,14 +5,14 @@ use crate::lexicon::schema::{Def, FieldSchema, ObjectDef, ParamsDef, Schema};
 
 /// A collection of parsed Lexicon schemas, keyed by NSID.
 pub struct Catalog {
-    schemas: HashMap<String, Schema>,
+    schemas: HashMap<String, Schema, crate::cbor::cid::FastHashState>,
 }
 
 impl Catalog {
     /// Create a new, empty catalog.
     pub fn new() -> Self {
         Catalog {
-            schemas: HashMap::new(),
+            schemas: HashMap::default(),
         }
     }
 

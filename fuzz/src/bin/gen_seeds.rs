@@ -35,7 +35,7 @@ fn cid() -> Cid {
 fn main() {
     println!("generating fuzz seeds...");
 
-    // --- DRISL values (cbor_decode, cbor_decode_differential) ---
+    // --- DRISL values (cbor_decode, cbor_decode_differential, cbor_json_writer) ---
     let values: &[(&str, Value)] = &[
         ("u0", Value::Unsigned(0)),
         ("imax", Value::Unsigned(i64::MAX as u64)),
@@ -61,7 +61,7 @@ fn main() {
     ];
     for (name, v) in values {
         if let Ok(bytes) = encode_value(v) {
-            for t in ["cbor_decode", "cbor_decode_differential"] {
+            for t in ["cbor_decode", "cbor_decode_differential", "cbor_json_writer"] {
                 write_seed(t, name, &bytes);
             }
         }
@@ -82,7 +82,7 @@ fn main() {
             include_bytes!("../../../benches/fixtures/record_profile.cbor").as_slice(),
         ),
     ] {
-        for target in ["cbor_decode", "cbor_decode_differential"] {
+        for target in ["cbor_decode", "cbor_decode_differential", "cbor_json_writer"] {
             write_seed(target, name, bytes);
         }
     }
@@ -215,6 +215,45 @@ fn main() {
             }
             if let Ok(car) = repo.export_car() {
                 write_seed("repo_load_car", &format!("repo_{filler}"), &car);
+            }
+        }
+    }
+
+    // --- Record JSON (json_slice_to_drisl) ---
+    for (name, s) in [
+        (
+            "post",
+            r#"{"$type":"app.bsky.feed.post","text":"hi \u00e9\ud83d\ude00","createdAt":"2024-01-01T00:00:00.000Z","langs":["en"],"embed":{"$type":"app.bsky.embed.images","images":[{"alt":"","image":{"$type":"blob","ref":{"$link":"bafkreig77vqcdozl2wyk6z3cscaj5q5fggi53aoh64fewkdiri3cdauyn4"},"mimeType":"image/jpeg","size":10000},"aspectRatio":{"width":3,"height":2}}]}}"#,
+        ),
+        (
+            "edge",
+            r#"{"b":[1,-0,1.0,1e3,9007199254740991],"a":{"$bytes":"TQ=="},"a":{"$link":"x","$link":"bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"},"aaaaaaaaaaaaaaaaaaaaaaaa":{"$bytes":"-_","x":null}}"#,
+        ),
+    ] {
+        write_seed("json_slice_to_drisl", name, s.as_bytes());
+    }
+
+    // --- Firehose frames (firehose_frame) ---
+    // Real commits (indigo's test vectors), whose blocks verify, so that
+    // mutations reach the ops and records rather than stopping at the CAR.
+    {
+        use shrike::cbor::json::{Integers, json_to_drisl};
+        let header = encode_value(&Value::Map(vec![
+            ("t", Value::Text("#commit")),
+            ("op", Value::Unsigned(1)),
+        ]))
+        .expect("header");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/repo_proofs");
+        for entry in fs::read_dir(dir.join("firehose_commits")).expect("fixtures") {
+            let path = entry.expect("fixture").path();
+            let json = fs::read(&path).expect("fixture");
+            let mut body: serde_json::Value = serde_json::from_slice(&json).expect("JSON");
+            let fields = body.as_object_mut().expect("object");
+            fields.retain(|_, v| !v.is_null());
+            fields.insert("blobs".into(), serde_json::json!([]));
+            let name = path.file_stem().expect("name").to_string_lossy();
+            if let Ok(body) = json_to_drisl(&body, Integers::Any) {
+                write_seed("firehose_frame", &name, &[&header[..], &body].concat());
             }
         }
     }

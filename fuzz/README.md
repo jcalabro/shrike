@@ -36,6 +36,8 @@ cargo +nightly fuzz run cbor_decode_differential
 | `cbor_decode` | strict decoder never panics; accepted input re-encodes to **identical** (canonical) bytes |
 | `cbor_decode_differential` | `decode` (heap) and `decode_bump` (arena, the firehose hot path) **must agree** — both accept with identical structure or both reject (the H1 bug class) |
 | `cbor_encode_roundtrip` | structured (`arbitrary`) value → encode → decode → re-encode is a **fixed point** |
+| `cbor_json_writer` | `drisl_to_json_into` writes **exactly** the JSON `serde_json` writes of `drisl_to_json`, or fails with the same error |
+| `json_slice_to_drisl` | `json_slice_to_drisl` and `serde_json::from_slice` + `json_to_drisl` **must agree**, output and error, on raw bytes and on structured JSON |
 | `cid_parse` | CID parse never panics; bytes/string forms are **fixed points** (no non-canonical aliases) |
 | `car_read_all` | CAR v1 reader never panics on malformed framing |
 | `repo_record_proof` | record proof verifier never panics, and never accepts a record the fixed signing key did not commit to |
@@ -49,8 +51,9 @@ cargo +nightly fuzz run cbor_decode_differential
 | `mst_invert` | undoing a commit's ops from only the blocks an indigo-style or reference producer ships **restores the previous root** |
 | `syntax_parsers` | all 9 identifier parsers never panic; normalization is **idempotent** (canonical form re-parses to itself) |
 | `repo_commit_from_cbor` | commit decode never panics; signed commits round-trip |
-| `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic |
+| `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic; an accepted commit's records **hash to their CIDs** and agree with the raw parser's ops and blocks |
 | `label_decode` | label decode never panics; accepted labels encode/decode **stably**; unsigned bytes deterministic |
+| `k256_backends_differential` | K-256 keys, verifying with libsecp256k1 under the `secp256k1` feature, **must agree** with pure-Rust `k256`: key parsing and encoding, signatures, and strict and malleable verification of valid, high-S, mutated and arbitrary signatures |
 | `lexicon_validate` | record validation against a kitchen-sink schema never panics on arbitrary JSON |
 
 ## Notes

@@ -6,17 +6,20 @@
 //!
 //! Reader and Writer provide streaming access, and IncrementalReader decodes
 //! a CAR whose bytes arrive in chunks (e.g. an HTTP body) without blocking
-//! I/O. Use read_all and write_all for one-shot operations. The verify function checks that all block CIDs
-//! match their content.
+//! I/O. SliceReader and read_slice read a CAR already in memory without
+//! copying its blocks. Use read_all and write_all for one-shot operations.
+//! The verify function checks that all block CIDs match their content.
 
 use crate::cbor::Cid;
 
 pub mod incremental;
 pub mod reader;
+pub mod slice;
 pub mod writer;
 
 pub use incremental::IncrementalReader;
 pub use reader::Reader;
+pub use slice::{BlockRef, SliceReader};
 pub use writer::Writer;
 
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +64,20 @@ pub fn read_all(mut reader: impl std::io::Read) -> Result<(Vec<Cid>, Vec<Block>)
         blocks.push(block);
     }
 
+    Ok((roots, blocks))
+}
+
+/// Read all blocks from a CAR in memory, borrowing each block's data from
+/// `car` rather than copying it.
+pub fn read_slice(car: &[u8]) -> Result<(Vec<Cid>, Vec<BlockRef<'_>>), CarError> {
+    let mut reader = SliceReader::new(car)?;
+    let roots = std::mem::take(&mut reader.roots);
+    // Repository blocks average a few hundred bytes; sizing for that saves
+    // regrowing the list a dozen times.
+    let mut blocks = Vec::with_capacity(car.len() / 256);
+    for block in reader {
+        blocks.push(block?);
+    }
     Ok((roots, blocks))
 }
 

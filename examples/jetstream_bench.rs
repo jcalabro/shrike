@@ -221,7 +221,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "blocks": frames.len(), "compressed_bytes": compressed_bytes,
             "elapsed_s": elapsed, "events": events, "dropped": dropped,
             "typed": typed, "typed_errors": typed_errors,
-            "fingerprint": if mode.starts_with("verify") { Some(format!("{:x}", hash.finalize())) } else { None },
+            "fingerprint": if mode.starts_with("verify") { Some(data_encoding::HEXLOWER.encode(&hash.finalize())) } else { None },
         })
     );
     Ok(())

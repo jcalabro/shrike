@@ -1,4 +1,5 @@
-use crate::cbor::{CborError, Cid, Encoder};
+use crate::cbor::encode::{put_cid, put_head, put_text};
+use crate::cbor::{CborError, Cid};
 
 use crate::mst::MstError;
 
@@ -37,64 +38,78 @@ pub struct EntryData {
 /// sorted in CBOR key order: "e" < "l".
 #[inline]
 pub fn encode_node_data(nd: &NodeData) -> Result<Vec<u8>, MstError> {
-    let mut buf = Vec::with_capacity(64 + nd.entries.len() * 60);
-    {
-        let mut enc = Encoder::new(&mut buf);
-
-        // Map(2): keys "e" and "l" (already in CBOR sort order)
-        enc.encode_map_header(2).map_err(cbor_err)?;
-
-        // "e" key
-        enc.encode_text("e").map_err(cbor_err)?;
-
-        // Array of entries
-        enc.encode_array_header(nd.entries.len() as u64)
-            .map_err(cbor_err)?;
-        for entry in &nd.entries {
-            encode_entry_data(&mut enc, entry)?;
-        }
-
-        // "l" key
-        enc.encode_text("l").map_err(cbor_err)?;
-
-        // Left CID or null
-        match &nd.left {
-            Some(cid) => enc.encode_cid(cid).map_err(cbor_err)?,
-            None => enc.encode_null().map_err(cbor_err)?,
-        }
+    // At most 49 bytes besides the entries, and 57 per entry besides its
+    // suffix and subtree, while lengths are under 65536.
+    let entries: usize = nd
+        .entries
+        .iter()
+        .map(|e| 57 + e.key_suffix.len() + if e.right.is_some() { 41 } else { 1 })
+        .sum();
+    let mut buf = Vec::with_capacity(49 + entries);
+    start_node(&mut buf, nd.entries.len());
+    for e in &nd.entries {
+        put_entry(
+            &mut buf,
+            e.prefix_len,
+            &e.key_suffix,
+            &e.value,
+            e.right.as_ref(),
+        );
     }
+    finish_node(&mut buf, nd.left.as_ref());
     Ok(buf)
 }
 
-/// Encode a single entry within a node.
-///
-/// Map(4) with keys in CBOR sort order: "k", "p", "t", "v".
-fn encode_entry_data<W: std::io::Write>(
-    enc: &mut Encoder<W>,
-    e: &EntryData,
-) -> Result<(), MstError> {
-    enc.encode_map_header(4).map_err(cbor_err)?;
+/// Begin a node block of `entries` entries in `buf`: the node map's
+/// header, then "e" and the entries array's. Write the entries with
+/// [`put_entry`], then end the block with [`finish_node`].
+#[inline]
+pub(crate) fn start_node(buf: &mut Vec<u8>, entries: usize) {
+    // Map(2): keys "e" and "l" (already in CBOR sort order)
+    put_head(buf, 5, 2);
+    put_text(buf, "e");
+    put_head(buf, 4, entries as u64);
+}
 
+/// Write a node entry: map(4) with keys in CBOR sort order "k", "p", "t",
+/// "v".
+#[inline]
+pub(crate) fn put_entry(
+    buf: &mut Vec<u8>,
+    prefix_len: usize,
+    key_suffix: &[u8],
+    value: &Cid,
+    right: Option<&Cid>,
+) {
+    put_head(buf, 5, 4);
     // "k" - key suffix as bytes
-    enc.encode_text("k").map_err(cbor_err)?;
-    enc.encode_bytes(&e.key_suffix).map_err(cbor_err)?;
-
+    put_text(buf, "k");
+    put_head(buf, 2, key_suffix.len() as u64);
+    buf.extend_from_slice(key_suffix);
     // "p" - prefix length
-    enc.encode_text("p").map_err(cbor_err)?;
-    enc.encode_u64(e.prefix_len as u64).map_err(cbor_err)?;
-
+    put_text(buf, "p");
+    put_head(buf, 0, prefix_len as u64);
     // "t" - right subtree CID or null
-    enc.encode_text("t").map_err(cbor_err)?;
-    match &e.right {
-        Some(cid) => enc.encode_cid(cid).map_err(cbor_err)?,
-        None => enc.encode_null().map_err(cbor_err)?,
-    }
-
+    put_text(buf, "t");
+    put_cid_or_null(buf, right);
     // "v" - value CID
-    enc.encode_text("v").map_err(cbor_err)?;
-    enc.encode_cid(&e.value).map_err(cbor_err)?;
+    put_text(buf, "v");
+    put_cid(buf, value);
+}
 
-    Ok(())
+/// End a node block with "l" and the left subtree.
+#[inline]
+pub(crate) fn finish_node(buf: &mut Vec<u8>, left: Option<&Cid>) {
+    put_text(buf, "l");
+    put_cid_or_null(buf, left);
+}
+
+#[inline(always)]
+fn put_cid_or_null(buf: &mut Vec<u8>, cid: Option<&Cid>) {
+    match cid {
+        Some(cid) => put_cid(buf, cid),
+        None => buf.push(0xf6),
+    }
 }
 
 /// Decode a `NodeData` from DAG-CBOR bytes.
@@ -209,9 +224,84 @@ fn cbor_err(e: CborError) -> MstError {
     clippy::panic,
     clippy::unreachable
 )]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::cbor::Codec;
+    use proptest::prelude::*;
+
+    /// `encode_node_data` as it was, through `Encoder`: the oracle for the
+    /// node encoding.
+    pub(crate) fn reference_encode_node_data(nd: &NodeData) -> Vec<u8> {
+        use crate::cbor::Encoder;
+        fn cid_or_null(enc: &mut Encoder<&mut Vec<u8>>, cid: Option<Cid>) {
+            match cid {
+                Some(cid) => enc.encode_cid(&cid).unwrap(),
+                None => enc.encode_null().unwrap(),
+            }
+        }
+        let mut buf = Vec::new();
+        let mut enc = Encoder::new(&mut buf);
+        enc.encode_map_header(2).unwrap();
+        enc.encode_text("e").unwrap();
+        enc.encode_array_header(nd.entries.len() as u64).unwrap();
+        for e in &nd.entries {
+            enc.encode_map_header(4).unwrap();
+            enc.encode_text("k").unwrap();
+            enc.encode_bytes(&e.key_suffix).unwrap();
+            enc.encode_text("p").unwrap();
+            enc.encode_u64(e.prefix_len as u64).unwrap();
+            enc.encode_text("t").unwrap();
+            cid_or_null(&mut enc, e.right);
+            enc.encode_text("v").unwrap();
+            enc.encode_cid(&e.value).unwrap();
+        }
+        enc.encode_text("l").unwrap();
+        cid_or_null(&mut enc, nd.left);
+        buf
+    }
+
+    fn cid() -> impl Strategy<Value = Cid> {
+        (any::<bool>(), any::<[u8; 4]>()).prop_map(|(raw, data)| {
+            Cid::compute(if raw { Codec::Raw } else { Codec::Drisl }, &data)
+        })
+    }
+
+    /// Entries whose lengths cross each head size boundary below 65536.
+    fn entry() -> impl Strategy<Value = EntryData> {
+        let len = prop_oneof![0usize..30, 250usize..260, 65530usize..65540];
+        (
+            len,
+            prop::collection::vec(any::<u8>(), 0..300),
+            cid(),
+            prop::option::of(cid()),
+        )
+            .prop_map(|(prefix_len, key_suffix, value, right)| EntryData {
+                prefix_len,
+                key_suffix,
+                value,
+                right,
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn encode_node_data_matches_reference(
+            left in prop::option::of(cid()),
+            entries in prop::collection::vec(entry(), 0..30),
+        ) {
+            let nd = NodeData { left, entries };
+            let data = encode_node_data(&nd).unwrap();
+            prop_assert_eq!(&data, &reference_encode_node_data(&nd));
+            // The capacity reserved up front is enough while the lengths
+            // in the node are under 65536.
+            let bound = 49 + nd.entries.iter()
+                .map(|e| 57 + e.key_suffix.len() + if e.right.is_some() { 41 } else { 1 })
+                .sum::<usize>();
+            if nd.entries.iter().all(|e| e.prefix_len < 65536) {
+                prop_assert!(data.len() <= bound, "{} > {}", data.len(), bound);
+            }
+        }
+    }
 
     #[test]
     fn node_data_round_trip_empty() {

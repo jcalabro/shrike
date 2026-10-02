@@ -483,6 +483,130 @@ mod tests {
         assert!(check_string(&catalog, "abc"));
     }
 
+    /// Pieces whose neighbours can join them into one cluster: CR LF, a base
+    /// and its combining mark, ZWJ emoji sequences, regional-indicator
+    /// pairs, prepended marks, Hangul jamo and Indic conjuncts.
+    const GRAPHEME_PIECES: &[&str] = &[
+        "a",
+        " ",
+        "\r",
+        "\n",
+        "\u{e9}",
+        "\u{301}",
+        "\u{200d}",
+        "\u{1f469}",
+        "\u{1f1e9}",
+        "\u{600}",
+        "\u{1100}",
+        "\u{1161}",
+        "\u{11a8}",
+        "\u{915}",
+        "\u{94d}",
+        "\u{93f}",
+    ];
+
+    proptest::proptest! {
+        /// Grapheme limits skip or shortcut the count for most strings; what
+        /// they accept and the counts they report must match full UAX #29
+        /// segmentation.
+        #[test]
+        fn grapheme_limits_match_full_segmentation(
+            pieces in proptest::collection::vec(proptest::sample::select(GRAPHEME_PIECES), 0..40),
+            ascii in proptest::bool::ANY,
+            min in proptest::option::of(0u64..24),
+            max in proptest::option::of(0u64..24),
+        ) {
+            use unicode_segmentation::UnicodeSegmentation;
+            let s: String = pieces
+                .into_iter()
+                .filter(|p| !ascii || p.is_ascii())
+                .collect();
+            let count = s.graphemes(true).count() as u64;
+            let mut schema = serde_json::json!({"type": "string"});
+            if let Some(min) = min {
+                schema["minGraphemes"] = min.into();
+            }
+            if let Some(max) = max {
+                schema["maxGraphemes"] = max.into();
+            }
+            let catalog = string_catalog(schema);
+            let errors = match validate_record(&catalog, "com.example.s", &serde_json::json!({"s": s})) {
+                Ok(()) => vec![],
+                Err(ValidationError::Multiple(errors)) => errors,
+                Err(e) => vec![e],
+            };
+            let reported: Vec<(bool, u64, u64)> = errors
+                .iter()
+                .map(|e| match e {
+                    ValidationError::Field { kind: ValidationErrorKind::TooShort { min, got }, .. } => (false, *min, *got),
+                    ValidationError::Field { kind: ValidationErrorKind::TooLong { max, got }, .. } => (true, *max, *got),
+                    other => panic!("{other}"),
+                })
+                .collect();
+            let mut expected = vec![];
+            if let Some(min) = min.filter(|&min| count < min) {
+                expected.push((false, min, count));
+            }
+            if let Some(max) = max.filter(|&max| count > max) {
+                expected.push((true, max, count));
+            }
+            proptest::prop_assert_eq!(reported, expected, "{:?}", s);
+        }
+    }
+
+    /// Error paths name each object field, array index and union member on
+    /// the way down, through refs.
+    #[test]
+    fn error_paths_name_fields_indices_and_union_members() {
+        let mut catalog = Catalog::new();
+        catalog
+            .add_schema(
+                serde_json::json!({
+                    "lexicon": 1,
+                    "id": "com.example.paths",
+                    "defs": {
+                        "main": {"type": "record", "record": {"type": "object", "properties": {
+                            "items": {"type": "array", "items": {"type": "ref", "ref": "#item"}},
+                            "u": {"type": "union", "refs": ["#item"]},
+                        }}},
+                        "item": {"type": "object", "required": ["name"], "properties": {
+                            "name": {"type": "string", "maxLength": 3},
+                            "tags": {"type": "array", "maxLength": 1, "items": {"type": "string"}},
+                        }},
+                    },
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+        let record = serde_json::json!({
+            "items": [{"name": "ok"}, {"name": "toolong", "tags": ["a", 1]}],
+            "u": {"$type": "com.example.paths#item"},
+        });
+        let Err(ValidationError::Multiple(errors)) =
+            validate_record(&catalog, "com.example.paths", &record)
+        else {
+            panic!("expected several errors");
+        };
+        let mut paths: Vec<String> = errors
+            .iter()
+            .map(|e| match e {
+                ValidationError::Field { path, .. } => path.clone(),
+                other => panic!("{other}"),
+            })
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            [
+                "record.items[1].name",
+                "record.items[1].tags",
+                "record.items[1].tags[1]",
+                "record.u.name",
+            ]
+        );
+    }
+
     #[test]
     fn uri_format() {
         let catalog = string_catalog(serde_json::json!({"type": "string", "format": "uri"}));

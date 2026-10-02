@@ -112,11 +112,14 @@ impl AtUri {
             return Err(err("too long"));
         }
 
-        // Everything after the first '#' is the fragment.
-        let uri = match raw.split_once('#') {
-            Some((uri, fragment)) => {
-                validate_fragment(fragment).map_err(|m| err(&format!("invalid fragment: {m}")))?;
-                uri
+        // Everything after the first '#' is the fragment. Usually there is
+        // none, so this scans the whole URI, where `str::find`'s
+        // word-at-a-time search beats a byte scan.
+        let uri = match raw.find('#') {
+            Some(hash) => {
+                validate_fragment(&raw[hash + 1..])
+                    .map_err(|m| err(&format!("invalid fragment: {m}")))?;
+                &raw[..hash]
             }
             None => raw,
         };
@@ -132,8 +135,12 @@ impl AtUri {
             return Err(err("empty authority"));
         }
 
+        // The separators are near the start of what is searched, where a
+        // plain byte scan beats `str::find`.
+        let find = |s: &str, c| s.bytes().position(|b| b == c);
+
         // Split authority from the path on the first '/'.
-        let (authority, has_path) = match rest.find('/') {
+        let (authority, has_path) = match find(rest, b'/') {
             Some(idx) => (&rest[..idx], true),
             None => (rest, false),
         };
@@ -158,7 +165,7 @@ impl AtUri {
         }
 
         // Split collection from rkey on the second '/'.
-        let (collection, has_rkey) = match after_auth.find('/') {
+        let (collection, has_rkey) = match find(after_auth, b'/') {
             Some(idx) => (&after_auth[..idx], true),
             None => (after_auth, false),
         };

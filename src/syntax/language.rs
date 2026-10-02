@@ -48,15 +48,22 @@ impl Borrow<str> for Language {
     }
 }
 
+impl Language {
+    pub(crate) fn validate(raw: &str) -> Result<(), SyntaxError> {
+        if !GRANDFATHERED.contains(&raw) && !is_langtag_or_private_use(raw) {
+            return Err(SyntaxError::InvalidLanguage(format!(
+                "{raw:?}: not a valid BCP-47 language tag"
+            )));
+        }
+        Ok(())
+    }
+}
+
 impl TryFrom<&str> for Language {
     type Error = SyntaxError;
 
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
-        let err = |msg: &str| SyntaxError::InvalidLanguage(format!("{raw:?}: {msg}"));
-
-        if !GRANDFATHERED.contains(&raw) && !is_langtag_or_private_use(raw) {
-            return Err(err("not a valid BCP-47 language tag"));
-        }
+        Self::validate(raw)?;
         Ok(Language(raw.to_owned()))
     }
 }

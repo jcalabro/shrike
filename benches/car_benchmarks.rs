@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use shrike::car::{Block, Reader, read_all, verify, write_all};
+use shrike::car::{Block, Reader, SliceReader, read_all, read_slice, verify, write_all};
 use shrike::cbor::{Cid, Codec};
 
 // ---------------------------------------------------------------------------
@@ -62,6 +62,34 @@ fn bench_read_all(c: &mut Criterion) {
         });
     }
 
+    group.finish();
+}
+
+fn bench_read_slice(c: &mut Criterion) {
+    let mut group = c.benchmark_group("slice_reader");
+    group.bench_function("calabro_1.5mb", |b| {
+        b.iter(|| {
+            for block in SliceReader::new(black_box(CALABRO_CAR)).expect("header") {
+                black_box(block.expect("block"));
+            }
+        });
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("read_slice");
+    group.bench_function("calabro_1.5mb", |b| {
+        b.iter(|| black_box(read_slice(black_box(CALABRO_CAR)).expect("read_slice")));
+    });
+    for &(n, data_size, label) in &[
+        (10, 100, "10x100b"),
+        (100, 200, "100x200b"),
+        (1000, 200, "1000x200b"),
+    ] {
+        let car = build_synthetic_car(n, data_size);
+        group.bench_with_input(BenchmarkId::new("synthetic", label), &car, |b, car| {
+            b.iter(|| black_box(read_slice(black_box(car)).expect("read_slice")));
+        });
+    }
     group.finish();
 }
 
@@ -202,6 +230,7 @@ fn bench_block_write(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_read_all,
+    bench_read_slice,
     bench_streaming_read,
     bench_write_all,
     bench_verify,

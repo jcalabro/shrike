@@ -1065,6 +1065,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_a_compact_tagged_did_key() {
+        // Regression: a did:key whose SEC1 tag was 0x05 ("compact") parsed as
+        // the even-y point, so it verified that key's tokens.
+        let mut even = Vec::new();
+        for seed in 1..=8 {
+            let keys: [Box<dyn SigningKey>; 2] = [
+                Box::new(P256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+                Box::new(K256SigningKey::from_bytes(&[seed; 32]).unwrap()),
+            ];
+            for key in keys {
+                let public = key.public_key();
+                let mut multikey = bs58::decode(&public.multibase()[1..]).into_vec().unwrap();
+                if multikey[2] == 0x02 {
+                    even.push(public.jwt_alg());
+                }
+                multikey[2] = 0x05;
+                let compact = Keys {
+                    keys: vec![format!("did:key:z{}", bs58::encode(multikey).into_string())],
+                    calls: Arc::default(),
+                };
+                let jwt = create_service_jwt(&ServiceJwtParams::new(ISS, AUD), &*key).unwrap();
+                assert_eq!(
+                    verifier(&compact).verify(&jwt, None).await,
+                    Err(ServiceAuthError::UnverifiableSignature)
+                );
+                let canonical = Keys::new(&[&*key]);
+                verifier(&canonical).verify(&jwt, None).await.unwrap();
+            }
+        }
+        even.sort();
+        even.dedup();
+        assert_eq!(even, ["ES256", "ES256K"]);
+    }
+
+    #[tokio::test]
     async fn refreshes_a_cached_key_of_another_type() {
         // Regression: a key rotated to another curve was never refreshed,
         // because the cached key could not check the token's alg at all.

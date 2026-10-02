@@ -1,12 +1,13 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry as MapEntry;
 
+use crate::cbor::cid::CidMap;
 use crate::cbor::{Cid, Codec};
 
 use crate::mst::MstError;
 use crate::mst::block_store::{BlockSource, BlockStore, NoBlocks};
 use crate::mst::height::height_for_key;
-use crate::mst::node::{EntryData, NodeData, decode_node_data, encode_node_data};
+use crate::mst::node::{self, EntryData, NodeData, decode_node_data, encode_node_data};
 
 /// An in-memory MST entry: a key/value pair with optional right subtree.
 struct Entry {
@@ -23,10 +24,10 @@ struct Entry {
 struct Node {
     left: Option<Box<Node>>,
     entries: Vec<Entry>,
-    /// Cached CID; only valid when `dirty` is false.
+    /// The node's CID, or `None` if it changed since the last flush (or was
+    /// never written).
     cid: Option<Cid>,
     height: u8,
-    dirty: bool,
     loaded: bool,
 }
 
@@ -38,7 +39,6 @@ impl Node {
             entries,
             cid: None,
             height,
-            dirty: true,
             loaded: true,
         }
     }
@@ -50,9 +50,18 @@ impl Node {
             entries: Vec::new(),
             cid: Some(cid),
             height,
-            dirty: false,
             loaded: false,
         }
+    }
+
+    /// Note that the node is about to change, releasing its CID.
+    fn touch(&mut self, released: &mut Vec<Cid>) {
+        released.extend(self.cid.take());
+    }
+
+    /// Drop the node, releasing its CID.
+    fn discard(self, released: &mut Vec<Cid>) {
+        released.extend(self.cid);
     }
 }
 
@@ -80,10 +89,17 @@ impl Node {
 /// and inside storage transaction closures.
 pub struct DetachedTree {
     root: Option<Box<Node>>,
-    /// CIDs of nodes known to be persisted: loaded from a source, or
-    /// returned by an earlier flush. `flush` reports the ones it can no
-    /// longer reach as retired.
-    persisted: HashSet<Cid>,
+    /// How many nodes in memory carry each CID: stubs, loaded nodes, and
+    /// nodes an earlier flush wrote. Every one of these blocks is persisted.
+    /// In a well-formed tree each count is one; counting lets a malformed
+    /// tree that links one block twice keep it while either link remains.
+    refs: CidMap<u32>,
+    /// CIDs that nodes gave up since the last flush, by changing or being
+    /// dropped. `flush` retires those no node carries any more, so it costs
+    /// time in proportion to what changed, not to the size of the tree.
+    released: Vec<Cid>,
+    /// The empty-tree node, if the last flush wrote it as the root.
+    empty_root: Option<Cid>,
     /// Set when a mutation or flush failed partway through changing nodes.
     poisoned: bool,
 }
@@ -118,7 +134,9 @@ impl DetachedTree {
     pub fn new() -> Self {
         DetachedTree {
             root: None,
-            persisted: HashSet::new(),
+            refs: CidMap::default(),
+            released: Vec::new(),
+            empty_root: None,
             poisoned: false,
         }
     }
@@ -126,11 +144,10 @@ impl DetachedTree {
     /// Open the tree rooted at `root`. Nothing is read until a method needs
     /// a node.
     pub fn load(root: Cid) -> Self {
-        DetachedTree {
-            root: Some(Box::new(Node::stub(root, 0))),
-            persisted: HashSet::new(),
-            poisoned: false,
-        }
+        let mut tree = Self::new();
+        tree.root = Some(Box::new(Node::stub(root, 0)));
+        tree.refs.insert(root, 1);
+        tree
     }
 
     /// Report the blocks `src` lacks that a get or insert of any of `keys`
@@ -176,7 +193,7 @@ impl DetachedTree {
         if let Some(root) = self.root.as_deref_mut() {
             let mut ld = Loader {
                 src,
-                persisted: &mut self.persisted,
+                refs: &mut self.refs,
             };
             for key in keys {
                 visit_key_path(&mut ld, root, key, visit, true, &mut missing)?;
@@ -195,7 +212,7 @@ impl DetachedTree {
             Some(root) => {
                 let mut ld = Loader {
                     src,
-                    persisted: &mut self.persisted,
+                    refs: &mut self.refs,
                 };
                 get_node(&mut ld, root, key)
             }
@@ -219,7 +236,11 @@ impl DetachedTree {
         }
         let height = height_for_key(&key);
         let root = self.root.take();
-        match insert_node(root, key, val, height) {
+        if root.is_none() {
+            // The tree stops being empty: the empty-tree node goes.
+            self.released.extend(self.empty_root.take());
+        }
+        match insert_node(root, key, val, height, &mut self.released) {
             Ok(root) => {
                 self.root = Some(root);
                 Ok(prev)
@@ -240,7 +261,7 @@ impl DetachedTree {
         let Some(root) = self.root.take() else {
             return Ok(None);
         };
-        match remove_from_root(root, key) {
+        match remove_from_root(root, key, &mut self.released) {
             Ok((root, removed)) => {
                 self.root = root;
                 Ok(removed)
@@ -259,33 +280,119 @@ impl DetachedTree {
     /// them.
     pub fn flush(&mut self) -> Result<TreeWrite, MstError> {
         self.check_usable()?;
-        let mut new_blocks = Vec::new();
-        let written = match self.root.as_deref_mut() {
-            None => empty_node_block().map(|(cid, data)| {
-                new_blocks.push((cid, data));
-                cid
-            }),
-            Some(root) => write_node(root, &mut new_blocks),
-        };
-        let root = written.map_err(|e| self.poison(e))?;
-
-        let mut reachable = HashSet::new();
-        match self.root.as_deref() {
+        let mut written = Vec::new();
+        let root = match self.root.as_deref_mut() {
             None => {
-                reachable.insert(root);
+                // The empty-tree node is rewritten each time; release the
+                // previous copy so the two cancel out.
+                self.released.extend(self.empty_root.take());
+                empty_node_block().map(|(cid, data)| {
+                    written.push((cid, data));
+                    cid
+                })
             }
-            Some(n) => collect_cids(n, &mut reachable),
+            Some(root) => write_node(root, &mut written, &mut Vec::new()),
+        };
+        let root = root.map_err(|e| self.poison(e))?;
+        if self.root.is_none() {
+            self.empty_root = Some(root);
         }
-        let mut retired: Vec<Cid> = self.persisted.difference(&reachable).copied().collect();
-        retired.sort_unstable();
-        new_blocks.retain(|(cid, _)| !self.persisted.contains(cid));
-        self.persisted = reachable;
+        self.settle(written, root).map_err(|e| self.poison(e))
+    }
 
+    /// Count the nodes `flush` just wrote and retire the CIDs released
+    /// since the last flush that no node carries any more.
+    ///
+    /// A written node whose CID already has a count (one that was released
+    /// and then rebuilt identically, such as after an insert and a remove
+    /// of the same key) is persisted already, so it is neither new nor
+    /// retired.
+    fn settle(&mut self, written: Vec<(Cid, Vec<u8>)>, root: Cid) -> Result<TreeWrite, MstError> {
+        for cid in &self.released {
+            match self.refs.get_mut(cid) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => {
+                    return Err(MstError::Internal(format!(
+                        "MST node {cid} released more often than it was held"
+                    )));
+                }
+            }
+        }
+        self.refs.reserve(written.len());
+        let mut new_blocks = written;
+        new_blocks.retain(|(cid, _)| match self.refs.entry(*cid) {
+            MapEntry::Occupied(mut count) => {
+                *count.get_mut() += 1;
+                false
+            }
+            MapEntry::Vacant(slot) => {
+                slot.insert(1);
+                true
+            }
+        });
+        let mut retired = Vec::new();
+        for cid in self.released.drain(..) {
+            if self.refs.get(&cid) == Some(&0) {
+                self.refs.remove(&cid);
+                retired.push(cid);
+            }
+        }
+        retired.sort_unstable();
         Ok(TreeWrite {
             root,
             new_blocks,
             retired,
         })
+    }
+
+    /// The root's CID, or `None` if the root has changes since the tree was
+    /// loaded or last flushed.
+    pub(crate) fn root_cid(&self) -> Option<Cid> {
+        match &self.root {
+            Some(root) => root.cid,
+            None => self.empty_root,
+        }
+    }
+
+    /// Append the CIDs of the nodes on `key`'s search path to `path`, root
+    /// first, and return the key's value. These are the nodes a record proof
+    /// for `key` carries.
+    ///
+    /// Nodes the tree has not loaded are read from `src` and decoded without
+    /// being kept, so a proof needs only shared access. Fails if the path
+    /// runs through a node changed since the tree was loaded or last
+    /// flushed, which has no CID yet.
+    pub fn search_path(
+        &self,
+        src: &dyn BlockSource,
+        key: &str,
+        path: &mut Vec<Cid>,
+    ) -> Result<Option<Cid>, MstError> {
+        self.check_usable()?;
+        let unflushed = || MstError::Internal("the tree has changes since its last flush".into());
+        let Some(mut n) = self.root.as_deref() else {
+            path.push(self.empty_root.ok_or_else(unflushed)?);
+            return Ok(None);
+        };
+        loop {
+            let cid = n.cid.ok_or_else(unflushed)?;
+            if !n.loaded {
+                return search_blocks(src, cid, key, path);
+            }
+            path.push(cid);
+            let i = match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
+                Ok(i) => return Ok(Some(n.entries[i].val)),
+                Err(i) => i,
+            };
+            let child = match i {
+                0 => n.left.as_deref(),
+                i => n.entries[i - 1].right.as_deref(),
+            };
+            match child {
+                Some(child) => n = child,
+                None => return Ok(None),
+            }
+        }
     }
 
     /// Collect all key/value pairs in sorted order into a Vec.
@@ -307,7 +414,7 @@ impl DetachedTree {
         if let Some(root) = self.root.as_deref_mut() {
             let mut ld = Loader {
                 src,
-                persisted: &mut self.persisted,
+                refs: &mut self.refs,
             };
             walk_node(&mut ld, root, &mut f)?;
         }
@@ -325,7 +432,7 @@ impl DetachedTree {
         if let Some(root) = self.root.as_deref_mut() {
             let mut ld = Loader {
                 src,
-                persisted: &mut self.persisted,
+                refs: &mut self.refs,
             };
             ld.ensure_loaded(root)?;
             walk_reachable_node(&mut ld, root, &mut f)?;
@@ -360,7 +467,7 @@ impl DetachedTree {
             Some(root) => {
                 let mut ld = Loader {
                     src,
-                    persisted: &mut self.persisted,
+                    refs: &mut self.refs,
                 };
                 for step in [key_step, left_sib_step, right_sib_step] {
                     proof_pass(&mut ld, root, &keys, step, &mut out)?;
@@ -385,7 +492,7 @@ impl DetachedTree {
         };
         let mut ld = Loader {
             src,
-            persisted: &mut self.persisted,
+            refs: &mut self.refs,
         };
         let mut missing = Vec::new();
         visit_key_path(&mut ld, root, key, visit, true, &mut missing)?;
@@ -413,10 +520,11 @@ impl DetachedTree {
     }
 }
 
-/// Decodes stubs from a block source, recording each one as persisted.
+/// Decodes stubs from a block source, counting the child stubs each one
+/// links to.
 struct Loader<'a> {
     src: &'a dyn BlockSource,
-    persisted: &'a mut HashSet<Cid>,
+    refs: &'a mut CidMap<u32>,
 }
 
 impl Loader<'_> {
@@ -433,7 +541,15 @@ impl Loader<'_> {
             return Ok(Some(cid));
         };
         populate_node(n, &decode_node_data(&data)?)?;
-        self.persisted.insert(cid);
+        let children = n
+            .left
+            .iter()
+            .chain(n.entries.iter().filter_map(|e| e.right.as_ref()));
+        for child in children {
+            if let Some(cid) = child.cid {
+                *self.refs.entry(cid).or_insert(0) += 1;
+            }
+        }
         Ok(None)
     }
 
@@ -585,11 +701,16 @@ fn get_node(ld: &mut Loader<'_>, n: &mut Node, key: &str) -> Result<Option<Cid>,
     Ok(None)
 }
 
+// The mutations below take `released`, the tree's list of CIDs given up
+// since the last flush: each node they change or drop adds its CID there
+// (see `Node::touch` and `Node::discard`).
+
 fn insert_node(
     n: Option<Box<Node>>,
     key: String,
     val: Cid,
     height: u8,
+    released: &mut Vec<Cid>,
 ) -> Result<Box<Node>, MstError> {
     let Some(n) = n else {
         return Ok(Box::new(Node::fresh(
@@ -609,15 +730,15 @@ fn insert_node(
         // Step up one level, wrapping the current node as a child.
         let child_height = n.height;
         let parent = Box::new(Node::fresh(child_height + 1, Some(n), Vec::new()));
-        return insert_node(Some(parent), key, val, height);
+        return insert_node(Some(parent), key, val, height, released);
     }
 
     if height < n.height {
-        return insert_below(n, key, val, height);
+        return insert_below(n, key, val, height, released);
     }
 
     // Same height: insert into this node's entries.
-    insert_at_level(n, key, val)
+    insert_at_level(n, key, val, released)
 }
 
 /// Insert a key into a subtree of `n` (key height < n.height).
@@ -626,6 +747,7 @@ fn insert_below(
     key: String,
     val: Cid,
     height: u8,
+    released: &mut Vec<Cid>,
 ) -> Result<Box<Node>, MstError> {
     let idx = find_child_index(&n, &key);
 
@@ -646,7 +768,7 @@ fn insert_below(
                 right: None,
             }],
         ));
-        n.dirty = true;
+        n.touch(released);
         if idx == 0 {
             n.left = Some(new_child);
         } else {
@@ -660,9 +782,9 @@ fn insert_below(
         None => Box::new(Node::fresh(n.height - 1, None, Vec::new())),
     };
 
-    let new_child = insert_node(Some(child), key, val, height)?;
+    let new_child = insert_node(Some(child), key, val, height, released)?;
 
-    n.dirty = true;
+    n.touch(released);
     if idx == 0 {
         n.left = Some(new_child);
     } else {
@@ -672,7 +794,12 @@ fn insert_below(
 }
 
 /// Insert a key at the same height level as `n`.
-fn insert_at_level(mut n: Box<Node>, key: String, val: Cid) -> Result<Box<Node>, MstError> {
+fn insert_at_level(
+    mut n: Box<Node>,
+    key: String,
+    val: Cid,
+    released: &mut Vec<Cid>,
+) -> Result<Box<Node>, MstError> {
     // Binary search for insertion point.
     let i = n
         .entries
@@ -682,7 +809,7 @@ fn insert_at_level(mut n: Box<Node>, key: String, val: Cid) -> Result<Box<Node>,
     // Check for update of existing key.
     if i < n.entries.len() && n.entries[i].key == key {
         n.entries[i].val = val;
-        n.dirty = true;
+        n.touch(released);
         return Ok(n);
     }
 
@@ -693,7 +820,7 @@ fn insert_at_level(mut n: Box<Node>, key: String, val: Cid) -> Result<Box<Node>,
         n.entries[i - 1].right.take()
     };
 
-    let (left, right) = split_node(child_to_split, &key)?;
+    let (left, right) = split_node(child_to_split, &key, released)?;
 
     let new_entry = Entry {
         key,
@@ -710,18 +837,24 @@ fn insert_at_level(mut n: Box<Node>, key: String, val: Cid) -> Result<Box<Node>,
         n.entries[i - 1].right = left.map(Box::new);
     }
 
-    n.dirty = true;
+    n.touch(released);
     Ok(n)
 }
 
 /// Split a node at key, returning (left, right) subtrees.
 /// Left contains everything < key, right contains everything > key.
-fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<Node>), MstError> {
+fn split_node(
+    n: Option<Box<Node>>,
+    key: &str,
+    released: &mut Vec<Cid>,
+) -> Result<(Option<Node>, Option<Node>), MstError> {
     let Some(mut n) = n else {
         return Ok((None, None));
     };
 
     require_loaded(&n)?;
+    // Every branch below changes `n` or replaces it.
+    n.touch(released);
 
     // Binary search for split point: first entry with key >= key.
     let split_idx = match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
@@ -743,13 +876,12 @@ fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<N
             } else {
                 n.left.take()
             };
-            let (child_left, child_right) = split_node(last_child, key)?;
+            let (child_left, child_right) = split_node(last_child, key, released)?;
             if let Some(last) = n.entries.last_mut() {
                 last.right = child_left.map(Box::new);
             } else {
                 n.left = child_left.map(Box::new);
             }
-            n.dirty = true;
             let right_node =
                 child_right.map(|cr| Node::fresh(n.height, Some(Box::new(cr)), Vec::new()));
             Ok((trim_node(*n), trim_node_opt(right_node)))
@@ -757,9 +889,8 @@ fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<N
         Some(0) => {
             // All entries >= key. The left child may still need splitting.
             let left_child = n.left.take();
-            let (child_left, child_right) = split_node(left_child, key)?;
+            let (child_left, child_right) = split_node(left_child, key, released)?;
             n.left = child_right.map(Box::new);
-            n.dirty = true;
             let left_node =
                 child_left.map(|cl| Node::fresh(n.height, Some(Box::new(cl)), Vec::new()));
             Ok((trim_node_opt(left_node), trim_node(*n)))
@@ -778,7 +909,7 @@ fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<N
                 .last_mut()
                 .ok_or_else(|| MstError::Internal("split produced empty left".into()))?;
             let mid_child = last.right.take();
-            let (mid_left, mid_right) = split_node(mid_child, key)?;
+            let (mid_left, mid_right) = split_node(mid_child, key, released)?;
             let last = left_node
                 .entries
                 .last_mut()
@@ -796,12 +927,17 @@ fn split_node(n: Option<Box<Node>>, key: &str) -> Result<(Option<Node>, Option<N
 fn remove_from_root(
     root: Box<Node>,
     key: &str,
+    released: &mut Vec<Cid>,
 ) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
-    let (root, removed) = remove_node(root, key)?;
-    Ok((trim_top(root)?, removed))
+    let (root, removed) = remove_node(root, key, released)?;
+    Ok((trim_top(root, released)?, removed))
 }
 
-fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
+fn remove_node(
+    mut n: Box<Node>,
+    key: &str,
+    released: &mut Vec<Cid>,
+) -> Result<(Option<Box<Node>>, Option<Cid>), MstError> {
     require_loaded(&n)?;
 
     // Search for the key in entries.
@@ -817,7 +953,7 @@ fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option
             };
             let right_child = n.entries[i].right.take();
 
-            let merged = merge_nodes(left_child, right_child)?;
+            let merged = merge_nodes(left_child, right_child, released)?;
 
             n.entries.remove(i);
 
@@ -826,9 +962,9 @@ fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option
             } else {
                 n.entries[i - 1].right = merged;
             }
-            n.dirty = true;
+            n.touch(released);
 
-            return Ok((prune_empty(n), Some(removed_val)));
+            return Ok((prune_empty(n, released), Some(removed_val)));
         }
 
         if key < n.entries[i].key.as_str() {
@@ -839,16 +975,16 @@ fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option
                 n.entries[i - 1].right.take()
             };
             if let Some(child) = child {
-                let (new_child, removed) = remove_node(child, key)?;
+                let (new_child, removed) = remove_node(child, key, released)?;
                 if removed.is_some() {
-                    n.dirty = true;
+                    n.touch(released);
                 }
                 if i == 0 {
                     n.left = new_child;
                 } else {
                     n.entries[i - 1].right = new_child;
                 }
-                return Ok((prune_empty(n), removed));
+                return Ok((prune_empty(n, released), removed));
             }
             return Ok((Some(n), None));
         }
@@ -859,20 +995,20 @@ fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option
         let last = n.entries.len() - 1;
         let child = n.entries[last].right.take();
         if let Some(child) = child {
-            let (new_child, removed) = remove_node(child, key)?;
+            let (new_child, removed) = remove_node(child, key, released)?;
             if removed.is_some() {
-                n.dirty = true;
+                n.touch(released);
             }
             n.entries[last].right = new_child;
-            return Ok((prune_empty(n), removed));
+            return Ok((prune_empty(n, released), removed));
         }
     } else if let Some(left) = n.left.take() {
-        let (new_child, removed) = remove_node(left, key)?;
+        let (new_child, removed) = remove_node(left, key, released)?;
         if removed.is_some() {
-            n.dirty = true;
+            n.touch(released);
         }
         n.left = new_child;
-        return Ok((prune_empty(n), removed));
+        return Ok((prune_empty(n, released), removed));
     }
     Ok((Some(n), None))
 }
@@ -881,6 +1017,7 @@ fn remove_node(mut n: Box<Node>, key: &str) -> Result<(Option<Box<Node>>, Option
 fn merge_nodes(
     left: Option<Box<Node>>,
     right: Option<Box<Node>>,
+    released: &mut Vec<Cid>,
 ) -> Result<Option<Box<Node>>, MstError> {
     let (mut left, mut right) = match (left, right) {
         (None, r) => return Ok(r),
@@ -898,7 +1035,7 @@ fn merge_nodes(
         left.left.take()
     };
 
-    let merged = merge_nodes(left_right_child, right.left.take())?;
+    let merged = merge_nodes(left_right_child, right.left.take(), released)?;
 
     if let Some(last) = left.entries.last_mut() {
         last.right = merged;
@@ -908,7 +1045,8 @@ fn merge_nodes(
 
     // Append right's entries to left.
     left.entries.append(&mut right.entries);
-    left.dirty = true;
+    left.touch(released);
+    right.discard(released);
 
     Ok(Some(left))
 }
@@ -923,85 +1061,64 @@ fn empty_node_block() -> Result<(Cid, Vec<u8>), MstError> {
     Ok((Cid::compute(Codec::Drisl, &data), data))
 }
 
-/// Recursively encode dirty nodes into `out`. Returns the node's CID.
-fn write_node(n: &mut Node, out: &mut Vec<(Cid, Vec<u8>)>) -> Result<Cid, MstError> {
-    if !n.dirty {
-        return n
-            .cid
-            .ok_or_else(|| MstError::Internal("clean MST node has no CID".into()));
+/// Recursively encode changed nodes into `out`. Returns the node's CID.
+///
+/// Each block is encoded in `scratch`, which grows to the largest node and
+/// is then reused, and copied out at its exact size.
+fn write_node(
+    n: &mut Node,
+    out: &mut Vec<(Cid, Vec<u8>)>,
+    scratch: &mut Vec<u8>,
+) -> Result<Cid, MstError> {
+    if let Some(cid) = n.cid {
+        return Ok(cid);
     }
     require_loaded(n)?;
 
     // Recursively write children first.
     if let Some(left) = &mut n.left {
-        write_node(left, out)?;
+        write_node(left, out, scratch)?;
     }
     for entry in &mut n.entries {
         if let Some(right) = &mut entry.right {
-            write_node(right, out)?;
+            write_node(right, out, scratch)?;
         }
     }
 
-    let nd = node_to_data(n)?;
-    let data = encode_node_data(&nd)?;
-    let cid = Cid::compute(Codec::Drisl, &data);
-    out.push((cid, data));
+    scratch.clear();
+    encode_node(n, scratch)?;
+    let cid = Cid::compute(Codec::Drisl, scratch);
+    out.push((cid, scratch.to_vec()));
     n.cid = Some(cid);
-    n.dirty = false;
     Ok(cid)
 }
 
-/// Collect the CIDs of every node reachable in memory, including stubs.
-/// All nodes must have been written.
-fn collect_cids(n: &Node, out: &mut HashSet<Cid>) {
-    if let Some(cid) = n.cid {
-        out.insert(cid);
-    }
-    if !n.loaded {
-        return;
-    }
-    if let Some(left) = &n.left {
-        collect_cids(left, out);
-    }
-    for entry in &n.entries {
-        if let Some(right) = &entry.right {
-            collect_cids(right, out);
-        }
-    }
-}
-
-/// Convert an in-memory node to the serializable NodeData.
-fn node_to_data(n: &Node) -> Result<NodeData, MstError> {
-    let mut nd = NodeData {
-        left: None,
-        entries: Vec::with_capacity(n.entries.len()),
+/// Append an in-memory node's block to `buf`: the encoding of the
+/// `NodeData` it stands for, with each key's suffix borrowed from the key.
+fn encode_node(n: &Node, buf: &mut Vec<u8>) -> Result<(), MstError> {
+    let left = match &n.left {
+        Some(left) => Some(left.cid.ok_or_else(|| {
+            MstError::Internal("left node CID not computed; call write_node first".into())
+        })?),
+        None => None,
     };
 
-    if let Some(left) = &n.left {
-        nd.left = Some(left.cid.ok_or_else(|| {
-            MstError::Internal("left node CID not computed; call write_node first".into())
-        })?);
-    }
-
+    node::start_node(buf, n.entries.len());
     let mut prev_key: &str = "";
     for e in &n.entries {
-        let prefix_len = shared_prefix_len(prev_key, &e.key);
-        let mut ed = EntryData {
-            prefix_len,
-            key_suffix: e.key.as_bytes()[prefix_len..].to_vec(),
-            value: e.val,
-            right: None,
-        };
-        if let Some(right) = &e.right {
-            ed.right = Some(right.cid.ok_or_else(|| {
+        let right = match &e.right {
+            Some(right) => Some(right.cid.ok_or_else(|| {
                 MstError::Internal("right node CID not computed; call write_node first".into())
-            })?);
-        }
-        nd.entries.push(ed);
+            })?),
+            None => None,
+        };
+        let prefix_len = shared_prefix_len(prev_key, &e.key);
+        let suffix = &e.key.as_bytes()[prefix_len..];
+        node::put_entry(buf, prefix_len, suffix, &e.val, right.as_ref());
         prev_key = &e.key;
     }
-
-    Ok(nd)
+    node::finish_node(buf, left.as_ref());
+    Ok(())
 }
 
 fn walk_node<F>(ld: &mut Loader<'_>, n: &mut Node, f: &mut F) -> Result<(), MstError>
@@ -1151,8 +1268,8 @@ fn proof_pass(
     }
     if included {
         match n.cid {
-            Some(cid) if !n.dirty => out.push(cid),
-            _ => {
+            Some(cid) => out.push(cid),
+            None => {
                 return Err(MstError::Internal(
                     "covering proof needs a flushed tree".into(),
                 ));
@@ -1271,8 +1388,11 @@ impl BlockSource for StoreSource<'_> {
 /// stub has no entries and no left child in memory even when its CID
 /// points at a real subtree. Treating one as empty would replace the root
 /// with `None` and silently drop every record below the removed key.
-fn trim_top(mut n: Option<Box<Node>>) -> Result<Option<Box<Node>>, MstError> {
-    while let Some(node) = n {
+fn trim_top(
+    mut n: Option<Box<Node>>,
+    released: &mut Vec<Cid>,
+) -> Result<Option<Box<Node>>, MstError> {
+    while let Some(mut node) = n {
         // A height-0 node has no subtrees, so it can only appear as a child
         // if it has entries: it is the root as it stands. Accepting it
         // unread lets a partial tree, such as a commit proof, be inverted.
@@ -1283,7 +1403,8 @@ fn trim_top(mut n: Option<Box<Node>>) -> Result<Option<Box<Node>>, MstError> {
         if !node.entries.is_empty() {
             return Ok(Some(node));
         }
-        n = node.left;
+        n = node.left.take();
+        node.discard(released);
     }
     Ok(None)
 }
@@ -1294,8 +1415,9 @@ fn trim_top(mut n: Option<Box<Node>>) -> Result<Option<Box<Node>>, MstError> {
 /// and must stay: only the root chain is trimmed (see `trim_top`). A node
 /// with neither holds nothing, and the reference implementations remove it,
 /// cascading up through any intermediates it leaves empty in turn.
-fn prune_empty(n: Box<Node>) -> Option<Box<Node>> {
+fn prune_empty(n: Box<Node>, released: &mut Vec<Cid>) -> Option<Box<Node>> {
     if n.loaded && n.entries.is_empty() && n.left.is_none() {
+        n.discard(released);
         None
     } else {
         Some(n)
@@ -1319,46 +1441,14 @@ fn prune_empty(n: Box<Node>) -> Option<Box<Node>> {
 /// handles the same case via a post-load `ensureHeights` walk; we propagate
 /// eagerly during the lazy load instead.
 fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
-    let mut key_buf = Vec::new();
     let mut entries: Vec<Entry> = Vec::with_capacity(nd.entries.len());
-    for ed in &nd.entries {
-        // The prefix length must not exceed the previous key's length. For the
-        // first entry this means prefix_len must be 0 (full key). Vec::truncate
-        // is a silent no-op when the requested length exceeds the current
-        // length, so without this guard a malformed/hostile node block would
-        // silently reconstruct the WRONG key — silent corruption of a
-        // content-addressed structure. Reject instead. (atmos mst.go:886-888)
-        if ed.prefix_len > key_buf.len() {
-            return Err(MstError::InvalidNode(format!(
-                "entry prefix length {} exceeds previous key length {}",
-                ed.prefix_len,
-                key_buf.len()
-            )));
-        }
-        key_buf.truncate(ed.prefix_len);
-        key_buf.extend_from_slice(&ed.key_suffix);
-        let key = String::from_utf8(key_buf.clone())
-            .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
-
-        // Entries within a node must be in strictly ascending key order; the
-        // whole tree's get/diff/binary-search logic relies on it. A block whose
-        // entries are out of order (malformed or hostile) must be rejected, not
-        // loaded as-is. (atmos mst.go:894-896)
-        if let Some(prev) = entries.last()
-            && key.as_str() <= prev.key.as_str()
-        {
-            return Err(MstError::InvalidNode(format!(
-                "entry key {key:?} is not greater than previous key {:?}",
-                prev.key
-            )));
-        }
-
+    for_each_key(nd, |_, ed, key| {
         entries.push(Entry {
-            key,
+            key: key.to_owned(),
             val: ed.value,
             right: ed.right.map(|cid| Box::new(Node::stub(cid, 0))),
         });
-    }
+    })?;
 
     // Derive height from entries when we have one; otherwise preserve the
     // parent-seeded height for empty intermediates.
@@ -1385,6 +1475,79 @@ fn populate_node(n: &mut Node, nd: &NodeData) -> Result<(), MstError> {
     Ok(())
 }
 
+/// Rebuild each entry's full key from the node's prefix compression and call
+/// `f` with the entry's index, the entry and its key, in order.
+fn for_each_key(nd: &NodeData, mut f: impl FnMut(usize, &EntryData, &str)) -> Result<(), MstError> {
+    let (mut key, mut prev) = (Vec::new(), Vec::new());
+    for (i, ed) in nd.entries.iter().enumerate() {
+        // The prefix length must not exceed the previous key's length. For the
+        // first entry this means prefix_len must be 0 (full key). Without this
+        // guard a malformed/hostile node block would silently reconstruct the
+        // WRONG key — silent corruption of a content-addressed structure.
+        // Reject instead. (atmos mst.go:886-888)
+        let Some(prefix) = prev.get(..ed.prefix_len) else {
+            return Err(MstError::InvalidNode(format!(
+                "entry prefix length {} exceeds previous key length {}",
+                ed.prefix_len,
+                prev.len()
+            )));
+        };
+        key.clear();
+        key.extend_from_slice(prefix);
+        key.extend_from_slice(&ed.key_suffix);
+        let text = std::str::from_utf8(&key)
+            .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
+
+        // Entries within a node must be in strictly ascending key order; the
+        // whole tree's get/diff/binary-search logic relies on it. A block whose
+        // entries are out of order (malformed or hostile) must be rejected, not
+        // loaded as-is. (atmos mst.go:894-896)
+        if i > 0 && key <= prev {
+            return Err(MstError::InvalidNode(format!(
+                "entry key {text:?} is not greater than previous key {:?}",
+                String::from_utf8_lossy(&prev)
+            )));
+        }
+        f(i, ed, text);
+        std::mem::swap(&mut key, &mut prev);
+    }
+    Ok(())
+}
+
+/// [`DetachedTree::search_path`] from a node the tree has not loaded,
+/// decoding each block on the way without keeping it.
+fn search_blocks(
+    src: &dyn BlockSource,
+    mut cid: Cid,
+    key: &str,
+    path: &mut Vec<Cid>,
+) -> Result<Option<Cid>, MstError> {
+    loop {
+        let data = src
+            .read_block(&cid)?
+            .ok_or_else(|| MstError::BlockNotFound(cid.to_string()))?;
+        path.push(cid);
+        let nd = decode_node_data(&data)?;
+        // The first entry at or after `key`, and whether it is `key`.
+        let mut at = None;
+        for_each_key(&nd, |i, _, k| {
+            if at.is_none() && key <= k {
+                at = Some((i, key == k));
+            }
+        })?;
+        let child = match at {
+            Some((i, true)) => return Ok(nd.entries.get(i).map(|e| e.value)),
+            Some((0, false)) => nd.left,
+            Some((i, false)) => nd.entries.get(i - 1).and_then(|e| e.right),
+            None => nd.entries.last().map_or(nd.left, |e| e.right),
+        };
+        match child {
+            Some(next) => cid = next,
+            None => return Ok(None),
+        }
+    }
+}
+
 /// Find the entry index where key would be found.
 /// Returns 0 if key < all entries (meaning use n.left).
 /// Returns i if key should be in the subtree after entries[i-1].
@@ -1394,17 +1557,26 @@ fn find_child_index(n: &Node, key: &str) -> usize {
         .unwrap_or_else(|x| x)
 }
 
-/// Return the length of the common prefix between two strings.
+/// Return the length in bytes of the common prefix between two strings.
 #[inline]
 fn shared_prefix_len(a: &str, b: &str) -> usize {
-    a.as_bytes()
-        .iter()
-        .zip(b.as_bytes().iter())
-        .take_while(|(x, y)| x == y)
-        .count()
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    // Keys share long prefixes, so compare eight bytes at a time: the first
+    // byte that differs is the lowest set byte of the words' difference.
+    let mut len = 0;
+    for (x, y) in a.as_chunks::<8>().0.iter().zip(b.as_chunks::<8>().0) {
+        let diff = u64::from_le_bytes(*x) ^ u64::from_le_bytes(*y);
+        if diff != 0 {
+            return len + diff.trailing_zeros() as usize / 8;
+        }
+        len += 8;
+    }
+    let rest = a[len..].iter().zip(&b[len..]);
+    len + rest.take_while(|(x, y)| x == y).count()
 }
 
-/// Remove completely empty nodes (no entries and no children).
+/// Remove completely empty nodes (no entries and no children). Split calls
+/// this only on nodes it has already released or built.
 fn trim_node(n: Node) -> Option<Node> {
     if n.loaded && n.entries.is_empty() && n.left.is_none() {
         None
@@ -1425,11 +1597,13 @@ fn trim_node_opt(n: Option<Node>) -> Option<Node> {
     clippy::unreachable
 )]
 mod tests {
+    use std::collections::HashSet;
     use std::rc::Rc;
 
     use super::*;
     use crate::cbor::Codec;
     use crate::mst::block_store::MemBlockStore;
+    use crate::mst::node::tests::reference_encode_node_data;
 
     /// Test-only adapter so the same `MemBlockStore` can back two `Tree`
     /// handles. The production `Tree` takes `Box<dyn BlockStore>` (owned),
@@ -1963,6 +2137,18 @@ mod tests {
         assert_eq!(shared_prefix_len("abc", "abd"), 2);
         assert_eq!(shared_prefix_len("abcdef", "abcxyz"), 3);
         assert_eq!(shared_prefix_len("hello", "hello world"), 5);
+        // Either side of each eight-byte word compared at once.
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        for len in 0..=long.len() {
+            for diff in 0..len {
+                let mut other = long[..len].to_owned();
+                other.replace_range(diff..=diff, "_");
+                assert_eq!(shared_prefix_len(&long[..len], &other), diff);
+            }
+            assert_eq!(shared_prefix_len(&long[..len], long), len);
+        }
+        // A shared prefix can end inside a multi-byte character.
+        assert_eq!(shared_prefix_len("aaaaaaaé", "aaaaaaaè"), 8);
     }
 
     // --- Security tests ---
@@ -2656,5 +2842,528 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{key}: {e}"));
             assert_eq!(inv.flush().unwrap().root, base_write.root, "{key}");
         }
+    }
+
+    // --- flush bookkeeping: `retired` and `new_blocks` without a tree walk ---
+
+    /// Every CID in memory, stubs included: what the tree references.
+    fn in_memory_cids(tree: &DetachedTree) -> HashSet<Cid> {
+        fn visit(n: &Node, out: &mut HashSet<Cid>) {
+            out.extend(n.cid);
+            if let Some(left) = &n.left {
+                visit(left, out);
+            }
+            for e in &n.entries {
+                if let Some(right) = &e.right {
+                    visit(right, out);
+                }
+            }
+        }
+        let mut out = HashSet::new();
+        if let Some(root) = &tree.root {
+            visit(root, &mut out);
+        }
+        out
+    }
+
+    /// One step of [`flush_matches_whole_tree_bookkeeping`].
+    #[derive(Debug, Clone)]
+    enum Step {
+        Insert(usize, u8),
+        Remove(usize),
+        Flush,
+        Reload,
+    }
+
+    fn step_strategy(keys: usize) -> impl proptest::strategy::Strategy<Value = Step> {
+        use proptest::prelude::*;
+        prop_oneof![
+            6 => (0..keys, 0u8..3).prop_map(|(k, v)| Step::Insert(k, v)),
+            3 => (0..keys).prop_map(Step::Remove),
+            2 => Just(Step::Flush),
+            1 => Just(Step::Reload),
+        ]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// Regression test for the O(tree) flush: `flush` used to collect
+        /// every CID in memory and diff it against everything persisted.
+        /// It now settles only the CIDs that changed, and must report
+        /// exactly what that walk would have: as retired, every block the
+        /// tree held since the last flush and no longer references; as new,
+        /// every referenced block it did not hold.
+        #[test]
+        fn flush_matches_whole_tree_bookkeeping(
+            base in 0usize..300,
+            steps in proptest::collection::vec(step_strategy(400), 1..120),
+        ) {
+            let base: std::collections::BTreeMap<String, Cid> =
+                (0..base).map(|i| (record_key(i), test_value_cid())).collect();
+            let base_write = canonical_write(&base);
+            let mut store: std::collections::HashMap<Cid, Vec<u8>> =
+                base_write.new_blocks.iter().cloned().collect();
+            let mut model = base;
+            let mut tree = DetachedTree::load(base_write.root);
+            // CIDs the tree held since its last flush, and the blocks it
+            // referenced at that flush.
+            let mut held: HashSet<Cid> = [base_write.root].into();
+            let empty = empty_node_block().unwrap().0;
+
+            let flush = |tree: &mut DetachedTree,
+                             held: &mut HashSet<Cid>,
+                             store: &mut std::collections::HashMap<Cid, Vec<u8>>,
+                             model: &std::collections::BTreeMap<String, Cid>| {
+                let write = tree.flush().unwrap();
+                let mut now = in_memory_cids(tree);
+                if tree.root.is_none() {
+                    now.insert(empty);
+                }
+                let mut retired: Vec<Cid> = held.difference(&now).copied().collect();
+                retired.sort_unstable();
+                assert_eq!(write.retired, retired);
+                let new: HashSet<Cid> = write.new_blocks.iter().map(|(c, _)| *c).collect();
+                assert_eq!(new.len(), write.new_blocks.len(), "duplicate new block");
+                assert_eq!(new, now.difference(held).copied().collect::<HashSet<_>>());
+                for (cid, data) in &write.new_blocks {
+                    assert_eq!(*cid, Cid::compute(Codec::Drisl, data));
+                    store.insert(*cid, data.clone());
+                }
+                assert_eq!(write.root, canonical_write(model).root);
+                *held = now;
+            };
+
+            for step in steps {
+                match step {
+                    Step::Insert(k, v) => {
+                        let key = record_key(k);
+                        tree.missing_blocks(&store, [key.as_str()]).unwrap();
+                        held.extend(in_memory_cids(&tree));
+                        let val = Cid::compute(Codec::Drisl, &[v]);
+                        tree.insert(&store, key.clone(), val).unwrap();
+                        model.insert(key, val);
+                    }
+                    Step::Remove(k) => {
+                        let key = record_key(k);
+                        tree.missing_blocks_for_remove(&store, [key.as_str()]).unwrap();
+                        held.extend(in_memory_cids(&tree));
+                        tree.remove(&store, &key).unwrap();
+                        model.remove(&key);
+                    }
+                    Step::Flush => flush(&mut tree, &mut held, &mut store, &model),
+                    Step::Reload => {
+                        flush(&mut tree, &mut held, &mut store, &model);
+                        let root = tree.flush().unwrap().root;
+                        tree = DetachedTree::load(root);
+                        held = [root].into();
+                    }
+                }
+                held.extend(in_memory_cids(&tree));
+            }
+            flush(&mut tree, &mut held, &mut store, &model);
+        }
+    }
+
+    /// A node's block as it used to be encoded, through `NodeData` and
+    /// `Encoder`: the oracle for `encode_node`.
+    fn reference_node_block(n: &Node) -> Vec<u8> {
+        let mut entries = Vec::new();
+        let mut prev: &[u8] = b"";
+        for e in &n.entries {
+            let key = e.key.as_bytes();
+            let prefix_len = prev.iter().zip(key).take_while(|(a, b)| a == b).count();
+            entries.push(EntryData {
+                prefix_len,
+                key_suffix: key[prefix_len..].to_vec(),
+                value: e.val,
+                right: e.right.as_ref().map(|r| r.cid.unwrap()),
+            });
+            prev = key;
+        }
+        let left = n.left.as_ref().map(|l| l.cid.unwrap());
+        reference_encode_node_data(&NodeData { left, entries })
+    }
+
+    /// Keys that share long prefixes, hold multi-byte UTF-8 (so a shared
+    /// prefix can end inside a character), and reach heights 2 and 3 (so
+    /// trees have nodes with no entries, only a left subtree).
+    fn node_key() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        prop_oneof![
+            (0usize..2000).prop_map(record_key),
+            "[aéè☃★]{0,6}",
+            "x{0,40}[ab]{0,3}",
+            "app\\.bsky\\.feed\\.(post|like)/3k[a-z2-7]{0,11}",
+        ]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(512))]
+
+        /// `flush` encodes each node straight from memory, exactly as
+        /// building its `NodeData` and encoding that would.
+        #[test]
+        fn node_blocks_match_reference_encoding(
+            keys in proptest::collection::vec(node_key(), 0..80),
+            removes in proptest::collection::vec(proptest::prelude::any::<proptest::sample::Index>(), 0..20),
+        ) {
+            let mut tree = DetachedTree::new();
+            for key in &keys {
+                let val = Cid::compute(Codec::Raw, key.as_bytes());
+                tree.insert(&NoBlocks, key.clone(), val).unwrap();
+            }
+            if !keys.is_empty() {
+                for i in removes {
+                    tree.remove(&NoBlocks, &keys[i.index(keys.len())]).unwrap();
+                }
+            }
+            let write = tree.flush().unwrap();
+            let blocks: std::collections::HashMap<Cid, Vec<u8>> =
+                write.new_blocks.into_iter().collect();
+
+            fn check(n: &Node, blocks: &std::collections::HashMap<Cid, Vec<u8>>) -> usize {
+                let want = reference_node_block(n);
+                let mut got = vec![0xaa];
+                encode_node(n, &mut got).unwrap();
+                assert_eq!(got[1..], want);
+                let cid = Cid::compute(Codec::Drisl, &want);
+                assert_eq!(n.cid, Some(cid));
+                assert_eq!(blocks.get(&cid), Some(&want));
+                let below = n.entries.iter().filter_map(|e| e.right.as_deref());
+                1 + n.left.as_deref().into_iter().chain(below).map(|c| check(c, blocks)).sum::<usize>()
+            }
+            let nodes = match tree.root.as_deref() {
+                Some(root) => check(root, &blocks),
+                None => {
+                    let empty = reference_encode_node_data(&NodeData { left: None, entries: vec![] });
+                    assert_eq!(write.root, Cid::compute(Codec::Drisl, &empty));
+                    assert_eq!(blocks.get(&write.root), Some(&empty));
+                    1
+                }
+            };
+            proptest::prop_assert_eq!(nodes, blocks.len());
+        }
+
+        #[test]
+        fn shared_prefix_len_matches_bytewise(
+            (a, b) in proptest::strategy::Strategy::prop_map(
+                ("[aé]{0,20}", "[aéè]{0,10}", "[aéè]{0,10}"),
+                |(prefix, x, y)| (prefix.clone() + &x, prefix + &y),
+            ),
+        ) {
+            let want = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+            proptest::prop_assert_eq!(shared_prefix_len(&a, &b), want);
+        }
+    }
+
+    /// A malformed tree that links one block from two places keeps that
+    /// block until neither link uses it. Retiring it on the first change
+    /// would let a store delete a block the tree still references.
+    #[test]
+    fn block_linked_twice_retires_once_unreferenced() {
+        let (im, m) = keys_at(1, 0, 1).remove(0);
+        let low: Vec<String> = keys_at(0, 0, 3).into_iter().map(|(_, k)| k).collect();
+        let (_, high) = keys_at(0, im, 1).remove(0);
+        assert!(low.iter().all(|k| *k < m) && high > m);
+        let val = test_value_cid();
+
+        // The shared leaf holds low[1] and low[2]; low[0] and `high` will
+        // be inserted into each of its two copies.
+        let leaf = encode_node_data(&NodeData {
+            left: None,
+            entries: vec![
+                EntryData {
+                    prefix_len: 0,
+                    key_suffix: low[1].as_bytes().to_vec(),
+                    value: val,
+                    right: None,
+                },
+                EntryData {
+                    prefix_len: shared_prefix_len(&low[1], &low[2]),
+                    key_suffix: low[2].as_bytes()[shared_prefix_len(&low[1], &low[2])..].to_vec(),
+                    value: val,
+                    right: None,
+                },
+            ],
+        })
+        .unwrap();
+        let leaf_cid = Cid::compute(Codec::Drisl, &leaf);
+        let root = encode_node_data(&NodeData {
+            left: Some(leaf_cid),
+            entries: vec![EntryData {
+                prefix_len: 0,
+                key_suffix: m.as_bytes().to_vec(),
+                value: val,
+                right: Some(leaf_cid),
+            }],
+        })
+        .unwrap();
+        let root_cid = Cid::compute(Codec::Drisl, &root);
+        let store: std::collections::HashMap<Cid, Vec<u8>> =
+            [(leaf_cid, leaf), (root_cid, root)].into();
+
+        let mut tree = DetachedTree::load(root_cid);
+        tree.insert(&store, low[0].clone(), val).unwrap();
+        let first = tree.flush().unwrap();
+        assert_eq!(first.retired, [root_cid], "the shared leaf is still linked");
+
+        tree.insert(&store, high.clone(), val).unwrap();
+        let second = tree.flush().unwrap();
+        assert!(second.retired.contains(&leaf_cid));
+        assert!(!second.retired.contains(&root_cid));
+    }
+
+    /// Flushing an unchanged tree, or one changed and changed back, writes
+    /// and retires nothing.
+    #[test]
+    fn flush_of_restored_tree_is_empty() {
+        let base: std::collections::BTreeMap<String, Cid> = (0..200)
+            .map(|i| (record_key(i * 2), test_value_cid()))
+            .collect();
+        let mut tree = DetachedTree::new();
+        for (k, v) in &base {
+            tree.insert(&NoBlocks, k.clone(), *v).unwrap();
+        }
+        let first = tree.flush().unwrap();
+        let again = tree.flush().unwrap();
+        assert_eq!(again.root, first.root);
+        assert!(again.new_blocks.is_empty() && again.retired.is_empty());
+
+        let other = Cid::compute(Codec::Drisl, b"other");
+        // Add an odd key and update its even neighbour, then undo both.
+        for i in (0..200).step_by(17) {
+            tree.insert(&NoBlocks, record_key(2 * i + 1), other)
+                .unwrap();
+            tree.insert(&NoBlocks, record_key(2 * i), other).unwrap();
+        }
+        for i in (0..200).step_by(17) {
+            tree.remove(&NoBlocks, &record_key(2 * i + 1)).unwrap();
+            tree.insert(&NoBlocks, record_key(2 * i), test_value_cid())
+                .unwrap();
+        }
+        let restored = tree.flush().unwrap();
+        assert_eq!(restored.root, first.root);
+        assert!(
+            restored.new_blocks.is_empty(),
+            "{:?}",
+            restored.new_blocks.len()
+        );
+        assert!(restored.retired.is_empty());
+    }
+
+    /// The empty-tree node is written once, kept while the tree stays empty,
+    /// and retired when the tree gains a key.
+    #[test]
+    fn empty_root_is_written_once_and_retired_with_the_first_key() {
+        let mut tree = DetachedTree::new();
+        let first = tree.flush().unwrap();
+        assert_eq!(first.new_blocks.len(), 1);
+        let empty = first.root;
+        let again = tree.flush().unwrap();
+        assert_eq!(again.root, empty);
+        assert!(again.new_blocks.is_empty() && again.retired.is_empty());
+
+        tree.insert(&NoBlocks, record_key(1), test_value_cid())
+            .unwrap();
+        let one = tree.flush().unwrap();
+        assert_eq!(one.retired, [empty]);
+        assert_eq!(one.new_blocks.len(), 1);
+
+        tree.remove(&NoBlocks, &record_key(1)).unwrap();
+        let emptied = tree.flush().unwrap();
+        assert_eq!(emptied.root, empty);
+        assert_eq!(emptied.retired, [one.root]);
+        assert_eq!(emptied.new_blocks.len(), 1);
+    }
+
+    // --- search_path: the nodes a record proof carries ---
+
+    /// The nodes `get` reads to find `key` in a tree it has not loaded, in
+    /// the order read, and the value it finds. Proofs carried exactly these
+    /// before they could come from a loaded tree.
+    fn read_by_get(
+        src: &dyn BlockSource,
+        root: Cid,
+        key: &str,
+    ) -> (Vec<Cid>, Result<Option<Cid>, MstError>) {
+        struct Reads<'a>(&'a dyn BlockSource, std::cell::RefCell<Vec<Cid>>);
+        impl BlockSource for Reads<'_> {
+            fn read_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, MstError> {
+                self.1.borrow_mut().push(*cid);
+                self.0.read_block(cid)
+            }
+        }
+        let reads = Reads(src, Default::default());
+        let found = DetachedTree::load(root).get(&reads, key);
+        (reads.1.into_inner(), found)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        /// `search_path` finds what `get` finds, through the nodes `get`
+        /// reads from an unloaded tree, however much of the tree is in
+        /// memory: none of it, the paths to some other keys, or all of it.
+        #[test]
+        fn search_path_is_the_path_get_reads(
+            keys in proptest::collection::btree_set(0usize..3000, 0..600),
+            loaded in proptest::collection::vec(0usize..3000, 0..30),
+            queries in proptest::collection::vec(0usize..3000, 1..30),
+        ) {
+            let entries: std::collections::BTreeMap<String, Cid> = keys
+                .iter()
+                .map(|&i| (record_key(i), Cid::compute(Codec::Drisl, &i.to_be_bytes())))
+                .collect();
+            let write = canonical_write(&entries);
+            let store: std::collections::HashMap<Cid, Vec<u8>> =
+                write.new_blocks.into_iter().collect();
+
+            let fresh = DetachedTree::load(write.root);
+            let mut partial = DetachedTree::load(write.root);
+            for i in loaded {
+                partial.get(&store, &record_key(i)).unwrap();
+            }
+            let mut whole = DetachedTree::new();
+            for (k, v) in &entries {
+                whole.insert(&NoBlocks, k.clone(), *v).unwrap();
+            }
+            whole.flush().unwrap();
+
+            for i in queries {
+                let key = record_key(i);
+                let (want, found) = read_by_get(&store, write.root, &key);
+                let found = found.unwrap();
+                proptest::prop_assert_eq!(found, entries.get(&key).copied());
+                // The whole tree is in memory, so it reads nothing.
+                let trees: [(&DetachedTree, &dyn BlockSource); 3] =
+                    [(&fresh, &store), (&partial, &store), (&whole, &NoBlocks)];
+                for (tree, src) in trees {
+                    let mut path = vec![test_value_cid()];
+                    proptest::prop_assert_eq!(tree.search_path(src, &key, &mut path).unwrap(), found);
+                    proptest::prop_assert_eq!(path[0], test_value_cid());
+                    proptest::prop_assert_eq!(&path[1..], &want[..]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn search_path_of_empty_tree_is_the_empty_node() {
+        let mut tree = DetachedTree::new();
+        let empty = tree.flush().unwrap().root;
+        let store: std::collections::HashMap<Cid, Vec<u8>> = [empty_node_block().unwrap()].into();
+        let (want, _) = read_by_get(&store, empty, "com.example.record/a");
+        assert_eq!(want, [empty]);
+        for tree in [tree, DetachedTree::load(empty)] {
+            let mut path = Vec::new();
+            assert_eq!(
+                tree.search_path(&store, "com.example.record/a", &mut path)
+                    .unwrap(),
+                None
+            );
+            assert_eq!(path, want);
+        }
+    }
+
+    /// A path through nodes without CIDs could not be checked against a
+    /// commit, so `search_path` refuses a tree with unflushed changes.
+    #[test]
+    fn search_path_refuses_unflushed_changes() {
+        let unflushed = |tree: &DetachedTree| {
+            let mut path = Vec::new();
+            match tree.search_path(&NoBlocks, &record_key(1), &mut path) {
+                Ok(_) => false,
+                Err(MstError::Internal(msg)) if msg.contains("since its last flush") => {
+                    assert!(path.is_empty());
+                    true
+                }
+                Err(e) => panic!("{e}"),
+            }
+        };
+        let mut tree = DetachedTree::new();
+        assert!(unflushed(&tree), "never flushed");
+        tree.flush().unwrap();
+        assert!(!unflushed(&tree));
+
+        // Two keys in one node, so removing one changes the root.
+        let [(_, a), (_, b)] = keys_at(0, 0, 2).try_into().unwrap();
+        tree.insert(&NoBlocks, a.clone(), test_value_cid()).unwrap();
+        assert!(unflushed(&tree), "after an insert");
+        let root = tree.flush().unwrap().root;
+        let mut path = Vec::new();
+        assert_eq!(
+            tree.search_path(&NoBlocks, &a, &mut path).unwrap(),
+            Some(test_value_cid())
+        );
+        assert_eq!(path, [root]);
+
+        tree.insert(&NoBlocks, b.clone(), test_value_cid()).unwrap();
+        tree.flush().unwrap();
+        tree.remove(&NoBlocks, &b).unwrap();
+        assert!(unflushed(&tree), "after a remove");
+        assert_eq!(tree.flush().unwrap().root, root);
+        assert!(!unflushed(&tree));
+    }
+
+    /// `search_path` rejects a malformed node, read below a loaded node or
+    /// as the root, with the error loading it gives.
+    #[test]
+    fn search_path_rejects_malformed_nodes_like_get() {
+        let val = test_value_cid();
+        let entry = |prefix_len, key_suffix: &[u8]| EntryData {
+            prefix_len,
+            key_suffix: key_suffix.to_vec(),
+            value: val,
+            right: None,
+        };
+        let leaf = |entries| {
+            encode_node_data(&NodeData {
+                left: None,
+                entries,
+            })
+            .unwrap()
+        };
+        let bad_blocks = [
+            leaf(vec![entry(0, b"a/\xff")]),
+            leaf(vec![entry(1, b"a/b")]),
+            leaf(vec![entry(0, b"a/b"), entry(4, b"c")]),
+            leaf(vec![entry(0, b"a/c"), entry(0, b"a/b")]),
+            leaf(vec![entry(0, b"a/b"), entry(2, b"b")]),
+            b"\xa1\x61x\x01".to_vec(),
+            vec![0xff],
+        ];
+        for bad in bad_blocks {
+            let bad_cid = Cid::compute(Codec::Drisl, &bad);
+            let root = encode_node_data(&NodeData {
+                left: Some(bad_cid),
+                entries: vec![entry(0, b"m")],
+            })
+            .unwrap();
+            let root_cid = Cid::compute(Codec::Drisl, &root);
+            let store: std::collections::HashMap<Cid, Vec<u8>> =
+                [(bad_cid, bad.clone()), (root_cid, root)].into();
+            // Only the root is loaded: "n" sorts after its one entry.
+            let mut partial = DetachedTree::load(root_cid);
+            assert_eq!(partial.get(&store, "n").unwrap(), None);
+
+            for (tree, top) in [(partial, root_cid), (DetachedTree::load(bad_cid), bad_cid)] {
+                for key in ["a/a", "a/b", "a/bb", "a/z"] {
+                    let (want_path, want) = read_by_get(&store, top, key);
+                    let err = want.unwrap_err();
+                    let mut path = Vec::new();
+                    let got = tree.search_path(&store, key, &mut path).unwrap_err();
+                    assert_eq!(format!("{got:?}"), format!("{err:?}"), "{bad:02x?} {key}");
+                    assert_eq!(path, want_path);
+                }
+            }
+        }
+
+        // A node the source lacks.
+        let missing = Cid::compute(Codec::Drisl, b"missing");
+        let (_, want) = read_by_get(&NoBlocks, missing, "a/b");
+        let got = DetachedTree::load(missing).search_path(&NoBlocks, "a/b", &mut Vec::new());
+        assert!(matches!(&got, Err(MstError::BlockNotFound(c)) if *c == missing.to_string()));
+        assert_eq!(format!("{got:?}"), format!("{want:?}"));
     }
 }

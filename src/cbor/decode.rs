@@ -13,6 +13,31 @@ const MAX_DEPTH: usize = 64;
 /// of input size). AT Protocol collections are bounded well below this.
 const MAX_COLLECTION_LEN: usize = 500_000;
 
+/// A value as [`Decoder::decode_shallow`] reads it.
+pub(crate) enum Shallow<'a> {
+    /// Text, as bytes checked to be UTF-8.
+    Text(&'a [u8]),
+    /// An array of this many items.
+    Array(usize),
+    /// A map of this many entries.
+    Map(usize),
+    /// Any other value.
+    Scalar(Value<'a>),
+}
+
+/// The UTF-8 check of text that need not become a `&str`, which ASCII passes
+/// quickly.
+#[inline]
+fn utf8(bytes: &[u8]) -> Result<&[u8], CborError> {
+    if bytes.is_ascii() || simdutf8::basic::from_utf8(bytes).is_ok() {
+        Ok(bytes)
+    } else {
+        Err(CborError::InvalidCbor(
+            "invalid UTF-8 in text string".into(),
+        ))
+    }
+}
+
 /// Strict DRISL decoder. Rejects non-canonical input.
 pub struct Decoder<'a> {
     buf: &'a [u8],
@@ -70,21 +95,11 @@ impl<'a> Decoder<'a> {
                 };
                 Ok(Value::Signed(val))
             }
-            2 => {
-                let len = self.read_argument(additional)?;
-                let len_usize = usize::try_from(len)
-                    .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
-                let bytes = self.read_slice(len_usize)?;
-                Ok(Value::Bytes(bytes))
-            }
+            2 => Ok(Value::Bytes(self.read_string(additional)?)),
             3 => {
-                let len = self.read_argument(additional)?;
-                let len_usize = usize::try_from(len)
-                    .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
-                let bytes = self.read_slice(len_usize)?;
-                // Safety: simdutf8 validates UTF-8 using SIMD instructions
-                // (AVX2/SSE4.2) for ~4x throughput on strings > 64 bytes.
-                // After validation succeeds, from_utf8_unchecked is safe.
+                let bytes = self.read_string(additional)?;
+                // simdutf8 validates UTF-8 with SIMD instructions (AVX2/SSE4.2
+                // on x86, NEON on aarch64): ~4x throughput on strings > 64 bytes.
                 let text = match simdutf8::basic::from_utf8(bytes) {
                     Ok(s) => s,
                     Err(_) => {
@@ -96,14 +111,7 @@ impl<'a> Decoder<'a> {
                 Ok(Value::Text(text))
             }
             4 => {
-                let len = self.read_argument(additional)?;
-                let len_usize = usize::try_from(len)
-                    .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
-                if len_usize > MAX_COLLECTION_LEN {
-                    return Err(CborError::InvalidCbor(
-                        "array length exceeds maximum".into(),
-                    ));
-                }
+                let len_usize = self.collection_len(additional, "array length exceeds maximum")?;
                 let capacity = len_usize.min(self.remaining());
                 let mut items = Vec::with_capacity(capacity);
                 self.depth += 1;
@@ -115,12 +123,7 @@ impl<'a> Decoder<'a> {
             }
             5 => {
                 self.depth += 1;
-                let len = self.read_argument(additional)?;
-                let len_usize = usize::try_from(len)
-                    .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
-                if len_usize > MAX_COLLECTION_LEN {
-                    return Err(CborError::InvalidCbor("map length exceeds maximum".into()));
-                }
+                let len_usize = self.collection_len(additional, "map length exceeds maximum")?;
                 let capacity = len_usize.min(self.remaining());
                 let mut entries = Vec::with_capacity(capacity);
                 // Track the raw CBOR-encoded key bytes for canonical order
@@ -213,6 +216,56 @@ impl<'a> Decoder<'a> {
         Cid::from_tag42_bytes(self.read_slice(len)?)
     }
 
+    /// `decode`, with the same checks and errors, except that text stays bytes,
+    /// and an array or map yields only its length and enters its nesting
+    /// level: the caller reads each item (a map key with `read_map_key_utf8`,
+    /// then a value), then `leave`s.
+    pub(crate) fn decode_shallow(&mut self) -> Result<Shallow<'a>, CborError> {
+        match self.buf.get(self.pos) {
+            Some(&byte @ 0x60..=0xbf) if self.depth < MAX_DEPTH => {
+                self.pos += 1;
+                let additional = byte & 0x1f;
+                Ok(match byte >> 5 {
+                    3 => Shallow::Text(utf8(self.read_string(additional)?)?),
+                    4 => Shallow::Array(self.enter(additional, "array length exceeds maximum")?),
+                    _ => Shallow::Map(self.enter(additional, "map length exceeds maximum")?),
+                })
+            }
+            // Other values, and the depth and end of input errors.
+            _ => self.decode().map(Shallow::Scalar),
+        }
+    }
+
+    fn enter(&mut self, additional: u8, too_long: &str) -> Result<usize, CborError> {
+        let len = self.collection_len(additional, too_long)?;
+        self.depth += 1;
+        Ok(len)
+    }
+
+    /// Leave the array or map `decode_shallow` entered.
+    pub(crate) fn leave(&mut self) {
+        self.depth -= 1;
+    }
+
+    #[inline(always)]
+    fn read_string(&mut self, additional: u8) -> Result<&'a [u8], CborError> {
+        let len = self.read_argument(additional)?;
+        let len = usize::try_from(len)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        self.read_slice(len)
+    }
+
+    #[inline(always)]
+    fn collection_len(&mut self, additional: u8, too_long: &str) -> Result<usize, CborError> {
+        let len = self.read_argument(additional)?;
+        let len = usize::try_from(len)
+            .map_err(|_| CborError::InvalidCbor("length exceeds platform limits".into()))?;
+        if len > MAX_COLLECTION_LEN {
+            return Err(CborError::InvalidCbor(too_long.into()));
+        }
+        Ok(len)
+    }
+
     /// Read typed fields without allocating a top-level generic map. The
     /// iterator shares the strict key/depth/length checks used by `decode`.
     #[cfg(any(feature = "api", test))]
@@ -238,6 +291,14 @@ impl<'a> Decoder<'a> {
             remaining: len as usize,
             previous: &[],
         })
+    }
+
+    /// `read_map_key`, returning the key as bytes checked to be UTF-8.
+    pub(crate) fn read_map_key_utf8(
+        &mut self,
+        prev_key_bytes: &mut &'a [u8],
+    ) -> Result<&'a [u8], CborError> {
+        utf8(self.read_map_key_bytes(prev_key_bytes)?)
     }
 
     #[inline]

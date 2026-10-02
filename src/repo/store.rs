@@ -6,11 +6,13 @@
 //! commit, and apply a commit. [`MemRepoStore`] is the in-memory
 //! implementation and a template for persistent ones.
 
-use std::collections::{BTreeMap, HashMap};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 
 use crate::car::{Block, CarError};
 use crate::cbor::Cid;
+use crate::cbor::cid::CidMap;
 use crate::repo::commit::Commit;
 use crate::syntax::{Nsid, RecordKey, Tid};
 
@@ -53,6 +55,12 @@ pub trait RepoStore {
     /// have it.
     fn get_block(&self, cid: &Cid) -> Result<Option<Vec<u8>>, Self::Error>;
 
+    /// [`get_block`](Self::get_block), borrowing the block if the store
+    /// holds it in memory. The default copies it out with `get_block`.
+    fn borrow_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, Self::Error> {
+        Ok(self.get_block(cid)?.map(Cow::Owned))
+    }
+
     /// Return the CID of the current commit, or `None` if nothing has been
     /// committed.
     fn head(&self) -> Result<Option<Cid>, Self::Error>;
@@ -75,6 +83,10 @@ impl<S: RepoStore + ?Sized> RepoStore for &mut S {
         (**self).get_block(cid)
     }
 
+    fn borrow_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, Self::Error> {
+        (**self).borrow_block(cid)
+    }
+
     fn head(&self) -> Result<Option<Cid>, Self::Error> {
         (**self).head()
     }
@@ -87,7 +99,7 @@ impl<S: RepoStore + ?Sized> RepoStore for &mut S {
 /// An in-memory [`RepoStore`].
 #[derive(Debug, Clone, Default)]
 pub struct MemRepoStore {
-    blocks: HashMap<Cid, Vec<u8>>,
+    blocks: CidMap<Vec<u8>>,
     head: Option<Cid>,
 }
 
@@ -118,6 +130,13 @@ impl RepoStore for MemRepoStore {
 
     fn get_block(&self, cid: &Cid) -> Result<Option<Vec<u8>>, Infallible> {
         Ok(self.blocks.get(cid).cloned())
+    }
+
+    fn borrow_block(&self, cid: &Cid) -> Result<Option<Cow<'_, [u8]>>, Infallible> {
+        Ok(self
+            .blocks
+            .get(cid)
+            .map(|data| Cow::Borrowed(data.as_slice())))
     }
 
     fn head(&self) -> Result<Option<Cid>, Infallible> {
