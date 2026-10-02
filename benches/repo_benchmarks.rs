@@ -1,10 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+mod common;
+
+use std::time::Duration;
+
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use shrike::cbor::{Cid, Codec};
-use shrike::crypto::{P256SigningKey, SigningKey};
+use shrike::crypto::{K256SigningKey, P256SigningKey, SigningKey};
 use shrike::repo::commit::Commit;
 use shrike::repo::repo::Repo;
+use shrike::repo::verify_record_proof;
 use shrike::syntax::{Did, Nsid, RecordKey, Tid, TidClock};
 
 // ---------------------------------------------------------------------------
@@ -247,6 +252,84 @@ fn bench_repo_list(c: &mut Criterion) {
     group.finish();
 }
 
+/// Records in the large synthetic repository: the size of the real repo
+/// the issue's numbers came from.
+const LARGE: u64 = 43_649;
+
+/// Commits, record proofs, and CAR handling on a large, long-lived repo.
+fn bench_large_repo(c: &mut Criterion) {
+    let key = K256SigningKey::from_bytes(&[7; 32]).unwrap();
+    let mut repo = common::synthetic_repo(LARGE, &key);
+    let paths: Vec<(Nsid, RecordKey)> = (0..LARGE)
+        .map(|i| {
+            let (collection, rkey, _) = common::record(i);
+            (collection, rkey)
+        })
+        .collect();
+    let mut rng = common::SplitMix(1);
+    let probes: Vec<usize> = (0..1000).map(|_| rng.below(paths.len())).collect();
+
+    let mut group = c.benchmark_group("large_repo");
+    group.sample_size(30);
+
+    // A one-record write signed into a commit, as a PDS does per request.
+    let mut i = 0u64;
+    group.bench_function(BenchmarkId::new("update_commit", LARGE), |b| {
+        b.iter(|| {
+            i += 1;
+            let (collection, rkey) = &paths[probes[i as usize % probes.len()]];
+            repo.update(collection, rkey, &common::record(LARGE + i).2)
+                .unwrap();
+            black_box(repo.commit(&key).unwrap());
+        });
+    });
+
+    let mut j = 0;
+    group.bench_function(BenchmarkId::new("record_proof", LARGE), |b| {
+        b.iter(|| {
+            j = (j + 1) % probes.len();
+            let (collection, rkey) = &paths[probes[j]];
+            black_box(repo.record_proof(collection, rkey).unwrap());
+        });
+    });
+
+    let proofs: Vec<(usize, Vec<u8>)> = probes
+        .iter()
+        .take(100)
+        .map(|&p| (p, repo.record_proof(&paths[p].0, &paths[p].1).unwrap()))
+        .collect();
+    let did = common::did();
+    let mut j = 0;
+    group.bench_function(BenchmarkId::new("verify_record_proof", LARGE), |b| {
+        b.iter(|| {
+            j = (j + 1) % proofs.len();
+            let (p, car) = &proofs[j];
+            let (collection, rkey) = &paths[*p];
+            black_box(verify_record_proof(car, &did, key.public_key(), collection, rkey).unwrap());
+        });
+    });
+    group.finish();
+
+    let car = repo.export_car().unwrap();
+    let mut group = c.benchmark_group("large_repo_car");
+    group.sample_size(20);
+    group.measurement_time(Duration::from_secs(8));
+    group.throughput(Throughput::Bytes(car.len() as u64));
+    group.bench_function(BenchmarkId::new("read_all", LARGE), |b| {
+        b.iter(|| black_box(shrike::car::read_all(black_box(&car[..])).unwrap()));
+    });
+    group.bench_function(BenchmarkId::new("verify", LARGE), |b| {
+        b.iter(|| shrike::car::verify(black_box(&car[..])).unwrap());
+    });
+    group.bench_function(BenchmarkId::new("load_car", LARGE), |b| {
+        b.iter(|| black_box(Repo::load_car(black_box(&car)).unwrap()));
+    });
+    group.bench_function(BenchmarkId::new("export_car", LARGE), |b| {
+        b.iter(|| black_box(repo.export_car().unwrap()));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_commit_encode,
@@ -255,5 +338,6 @@ criterion_group!(
     bench_repo_get,
     bench_repo_commit,
     bench_repo_list,
+    bench_large_repo,
 );
 criterion_main!(benches);

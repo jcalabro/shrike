@@ -356,3 +356,18 @@ required-features = ["car"]
 name = "repo_benchmarks"
 harness = false
 required-features = ["repo"]
+
+[[bench]]
+name = "record_benchmarks"
+harness = false
+required-features = ["repo", "lexicon"]
+
+[[bench]]
+name = "streaming_benchmarks"
+harness = false
+required-features = ["repo", "streaming"]
+
+[[bench]]
+name = "crypto_benchmarks"
+harness = false
+required-features = ["crypto"]
