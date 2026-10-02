@@ -337,6 +337,32 @@ mod tests {
         assert!(other.public_key().verify_malleable(b"jwt", &high).is_err());
     }
 
+    /// Signing is RFC 6979 over SHA-256, low-S, as in the widely used
+    /// secp256k1 vectors. A wrong nonce would still verify, so only known
+    /// answers catch a broken hash backend.
+    #[test]
+    fn k256_sign_matches_rfc6979_vectors() {
+        let mut one = [0; 32];
+        one[31] = 1;
+        let sk = K256SigningKey::from_bytes(&one).unwrap();
+        let cases: [(&[u8], &str); 2] = [
+            (
+                b"Satoshi Nakamoto",
+                "934b1ea10a4b3c1757e2b0c017d0b6143ce3c9a7e6a4a49860d7a6ab210ee3d8\
+                 2442ce9d2b916064108014783e923ec36b49743e2ffa1c4496f01a512aafd9e5",
+            ),
+            (
+                b"All those moments will be lost in time, like tears in rain. Time to die...",
+                "8600dbd41e348fe5c9465ab92d23e3db8b98b873beecd930736488696438cb6b\
+                 547fe64427496db33bf66019dacbf0039c04199abb0122918601db38a72cfc21",
+            ),
+        ];
+        for (msg, want) in cases {
+            let sig = sk.sign(msg).unwrap();
+            assert_eq!(data_encoding::HEXLOWER.encode(sig.as_bytes()), want);
+        }
+    }
+
     // The backends must agree on every input; `agreed` checks that, and
     // without the `secp256k1` feature it pins the `k256` behavior.
 

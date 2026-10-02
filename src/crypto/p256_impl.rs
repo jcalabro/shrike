@@ -215,6 +215,34 @@ mod tests {
         }
     }
 
+    /// Signing is RFC 6979 over SHA-256 (RFC 6979 A.2.5), normalized to
+    /// low-S. A wrong nonce would still verify, so only known answers catch
+    /// a broken hash backend.
+    #[test]
+    fn p256_sign_matches_rfc6979_vectors() {
+        let key = data_encoding::HEXLOWER
+            .decode(b"c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721")
+            .unwrap();
+        let sk = P256SigningKey::from_bytes(&key.try_into().unwrap()).unwrap();
+        let cases: [(&[u8], &str); 2] = [
+            // The RFC's s is high: this is n - s.
+            (
+                b"sample",
+                "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716\
+                 0834e36ad29a83bf2bc9385e491d6099c8fdf9d1ed67aa7ea5f51f93782857a9",
+            ),
+            (
+                b"test",
+                "f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367\
+                 019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083",
+            ),
+        ];
+        for (msg, want) in cases {
+            let sig = sk.sign(msg).unwrap();
+            assert_eq!(data_encoding::HEXLOWER.encode(sig.as_bytes()), want);
+        }
+    }
+
     #[test]
     fn p256_multibase_format() {
         let sk = P256SigningKey::generate();

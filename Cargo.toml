@@ -90,8 +90,9 @@ crypto = ["dep:p256", "dep:k256", "dep:bs58", "dep:rand_core", "dep:zeroize", "d
 
 # Layer 1 (depend on foundation)
 # Verify K-256 signatures with libsecp256k1 (vendored C) instead of the
-# pure-Rust `k256`. Native only, so it is left out of `wasm`.
-secp256k1 = ["crypto", "dep:secp256k1"]
+# pure-Rust `k256`, and on aarch64 sign with hardware SHA-256. Native only, so
+# it is left out of `wasm`.
+secp256k1 = ["crypto", "dep:secp256k1", "dep:sha2-010"]
 car = ["cbor"]
 mst = ["cbor"]
 lexicon = ["syntax", "cbor", "dep:unicode-segmentation"]
@@ -209,6 +210,12 @@ hickory-resolver = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 # jetstream (native): bounded zstd block/frame decode via libzstd.
 zstd = { version = "0.14", optional = true }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+# secp256k1: `k256` and `p256` sign with RFC 6979 nonces hashed by sha2 0.10,
+# which uses the ARMv8 SHA-256 instructions only with `asm` (built with a C
+# toolchain). Enabling it here turns it on for them; x86 detects SHA-NI anyway.
+sha2-010 = { package = "sha2", version = "0.10", features = ["asm"], optional = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "macros", "io-util"] }

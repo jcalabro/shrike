@@ -15,7 +15,7 @@ The default feature set enables `syntax`, `cbor`, `crypto`, `mst`, `repo`, and `
 | `syntax` | [`shrike::syntax`](https://docs.rs/shrike/latest/shrike/syntax/) | core identifier types (DID, Handle, NSID, AT-URI, TID, RecordKey) |
 | `cbor` | [`shrike::cbor`](https://docs.rs/shrike/latest/shrike/cbor/) | DAG-CBOR encoding and decoding |
 | `crypto` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | P-256 and secp256k1 signing, verification, and did:key encoding |
-| `secp256k1` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | faster secp256k1 verification with libsecp256k1 (C) instead of the pure-Rust `k256` (native only) |
+| `secp256k1` | [`shrike::crypto`](https://docs.rs/shrike/latest/shrike/crypto/) | faster secp256k1 verification with libsecp256k1 (C) instead of the pure-Rust `k256`, and hardware SHA-256 for signing on aarch64 (native only; needs a C toolchain) |
 | `mst` | [`shrike::mst`](https://docs.rs/shrike/latest/shrike/mst/) | Merkle Search Tree implementation |
 | `repo` | [`shrike::repo`](https://docs.rs/shrike/latest/shrike/repo/) | AT Protocol repository with signed commits, pluggable storage, and record proofs |
 | `car` | [`shrike::car`](https://docs.rs/shrike/latest/shrike/car/) | CAR v1 archive reading and writing |
