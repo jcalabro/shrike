@@ -7,7 +7,7 @@ use crate::cbor::{Cid, Codec};
 use crate::mst::MstError;
 use crate::mst::block_store::{BlockSource, BlockStore, NoBlocks};
 use crate::mst::height::height_for_key;
-use crate::mst::node::{EntryData, NodeData, decode_node_data, encode_node_data};
+use crate::mst::node::{self, EntryData, NodeData, decode_node_data, encode_node_data};
 
 /// An in-memory MST entry: a key/value pair with optional right subtree.
 struct Entry {
@@ -291,7 +291,7 @@ impl DetachedTree {
                     cid
                 })
             }
-            Some(root) => write_node(root, &mut written),
+            Some(root) => write_node(root, &mut written, &mut Vec::new()),
         };
         let root = root.map_err(|e| self.poison(e))?;
         if self.root.is_none() {
@@ -318,16 +318,18 @@ impl DetachedTree {
                 }
             }
         }
-        let mut new_blocks = Vec::with_capacity(written.len());
-        for (cid, data) in written {
-            match self.refs.entry(cid) {
-                MapEntry::Occupied(mut count) => *count.get_mut() += 1,
-                MapEntry::Vacant(slot) => {
-                    slot.insert(1);
-                    new_blocks.push((cid, data));
-                }
+        self.refs.reserve(written.len());
+        let mut new_blocks = written;
+        new_blocks.retain(|(cid, _)| match self.refs.entry(*cid) {
+            MapEntry::Occupied(mut count) => {
+                *count.get_mut() += 1;
+                false
             }
-        }
+            MapEntry::Vacant(slot) => {
+                slot.insert(1);
+                true
+            }
+        });
         let mut retired = Vec::new();
         for cid in self.released.drain(..) {
             if self.refs.get(&cid) == Some(&0) {
@@ -1060,7 +1062,14 @@ fn empty_node_block() -> Result<(Cid, Vec<u8>), MstError> {
 }
 
 /// Recursively encode changed nodes into `out`. Returns the node's CID.
-fn write_node(n: &mut Node, out: &mut Vec<(Cid, Vec<u8>)>) -> Result<Cid, MstError> {
+///
+/// Each block is encoded in `scratch`, which grows to the largest node and
+/// is then reused, and copied out at its exact size.
+fn write_node(
+    n: &mut Node,
+    out: &mut Vec<(Cid, Vec<u8>)>,
+    scratch: &mut Vec<u8>,
+) -> Result<Cid, MstError> {
     if let Some(cid) = n.cid {
         return Ok(cid);
     }
@@ -1068,54 +1077,48 @@ fn write_node(n: &mut Node, out: &mut Vec<(Cid, Vec<u8>)>) -> Result<Cid, MstErr
 
     // Recursively write children first.
     if let Some(left) = &mut n.left {
-        write_node(left, out)?;
+        write_node(left, out, scratch)?;
     }
     for entry in &mut n.entries {
         if let Some(right) = &mut entry.right {
-            write_node(right, out)?;
+            write_node(right, out, scratch)?;
         }
     }
 
-    let nd = node_to_data(n)?;
-    let data = encode_node_data(&nd)?;
-    let cid = Cid::compute(Codec::Drisl, &data);
-    out.push((cid, data));
+    scratch.clear();
+    encode_node(n, scratch)?;
+    let cid = Cid::compute(Codec::Drisl, scratch);
+    out.push((cid, scratch.to_vec()));
     n.cid = Some(cid);
     Ok(cid)
 }
 
-/// Convert an in-memory node to the serializable NodeData.
-fn node_to_data(n: &Node) -> Result<NodeData, MstError> {
-    let mut nd = NodeData {
-        left: None,
-        entries: Vec::with_capacity(n.entries.len()),
+/// Append an in-memory node's block to `buf`: the encoding of the
+/// `NodeData` it stands for, with each key's suffix borrowed from the key.
+fn encode_node(n: &Node, buf: &mut Vec<u8>) -> Result<(), MstError> {
+    let left = match &n.left {
+        Some(left) => Some(left.cid.ok_or_else(|| {
+            MstError::Internal("left node CID not computed; call write_node first".into())
+        })?),
+        None => None,
     };
 
-    if let Some(left) = &n.left {
-        nd.left = Some(left.cid.ok_or_else(|| {
-            MstError::Internal("left node CID not computed; call write_node first".into())
-        })?);
-    }
-
+    node::start_node(buf, n.entries.len());
     let mut prev_key: &str = "";
     for e in &n.entries {
-        let prefix_len = shared_prefix_len(prev_key, &e.key);
-        let mut ed = EntryData {
-            prefix_len,
-            key_suffix: e.key.as_bytes()[prefix_len..].to_vec(),
-            value: e.val,
-            right: None,
-        };
-        if let Some(right) = &e.right {
-            ed.right = Some(right.cid.ok_or_else(|| {
+        let right = match &e.right {
+            Some(right) => Some(right.cid.ok_or_else(|| {
                 MstError::Internal("right node CID not computed; call write_node first".into())
-            })?);
-        }
-        nd.entries.push(ed);
+            })?),
+            None => None,
+        };
+        let prefix_len = shared_prefix_len(prev_key, &e.key);
+        let suffix = &e.key.as_bytes()[prefix_len..];
+        node::put_entry(buf, prefix_len, suffix, &e.val, right.as_ref());
         prev_key = &e.key;
     }
-
-    Ok(nd)
+    node::finish_node(buf, left.as_ref());
+    Ok(())
 }
 
 fn walk_node<F>(ld: &mut Loader<'_>, n: &mut Node, f: &mut F) -> Result<(), MstError>
@@ -1554,14 +1557,22 @@ fn find_child_index(n: &Node, key: &str) -> usize {
         .unwrap_or_else(|x| x)
 }
 
-/// Return the length of the common prefix between two strings.
+/// Return the length in bytes of the common prefix between two strings.
 #[inline]
 fn shared_prefix_len(a: &str, b: &str) -> usize {
-    a.as_bytes()
-        .iter()
-        .zip(b.as_bytes().iter())
-        .take_while(|(x, y)| x == y)
-        .count()
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    // Keys share long prefixes, so compare eight bytes at a time: the first
+    // byte that differs is the lowest set byte of the words' difference.
+    let mut len = 0;
+    for (x, y) in a.as_chunks::<8>().0.iter().zip(b.as_chunks::<8>().0) {
+        let diff = u64::from_le_bytes(*x) ^ u64::from_le_bytes(*y);
+        if diff != 0 {
+            return len + diff.trailing_zeros() as usize / 8;
+        }
+        len += 8;
+    }
+    let rest = a[len..].iter().zip(&b[len..]);
+    len + rest.take_while(|(x, y)| x == y).count()
 }
 
 /// Remove completely empty nodes (no entries and no children). Split calls
@@ -1592,6 +1603,7 @@ mod tests {
     use super::*;
     use crate::cbor::Codec;
     use crate::mst::block_store::MemBlockStore;
+    use crate::mst::node::tests::reference_encode_node_data;
 
     /// Test-only adapter so the same `MemBlockStore` can back two `Tree`
     /// handles. The production `Tree` takes `Box<dyn BlockStore>` (owned),
@@ -2125,6 +2137,18 @@ mod tests {
         assert_eq!(shared_prefix_len("abc", "abd"), 2);
         assert_eq!(shared_prefix_len("abcdef", "abcxyz"), 3);
         assert_eq!(shared_prefix_len("hello", "hello world"), 5);
+        // Either side of each eight-byte word compared at once.
+        let long = "abcdefghijklmnopqrstuvwxyz";
+        for len in 0..=long.len() {
+            for diff in 0..len {
+                let mut other = long[..len].to_owned();
+                other.replace_range(diff..=diff, "_");
+                assert_eq!(shared_prefix_len(&long[..len], &other), diff);
+            }
+            assert_eq!(shared_prefix_len(&long[..len], long), len);
+        }
+        // A shared prefix can end inside a multi-byte character.
+        assert_eq!(shared_prefix_len("aaaaaaaé", "aaaaaaaè"), 8);
     }
 
     // --- Security tests ---
@@ -2938,6 +2962,98 @@ mod tests {
                 held.extend(in_memory_cids(&tree));
             }
             flush(&mut tree, &mut held, &mut store, &model);
+        }
+    }
+
+    /// A node's block as it used to be encoded, through `NodeData` and
+    /// `Encoder`: the oracle for `encode_node`.
+    fn reference_node_block(n: &Node) -> Vec<u8> {
+        let mut entries = Vec::new();
+        let mut prev: &[u8] = b"";
+        for e in &n.entries {
+            let key = e.key.as_bytes();
+            let prefix_len = prev.iter().zip(key).take_while(|(a, b)| a == b).count();
+            entries.push(EntryData {
+                prefix_len,
+                key_suffix: key[prefix_len..].to_vec(),
+                value: e.val,
+                right: e.right.as_ref().map(|r| r.cid.unwrap()),
+            });
+            prev = key;
+        }
+        let left = n.left.as_ref().map(|l| l.cid.unwrap());
+        reference_encode_node_data(&NodeData { left, entries })
+    }
+
+    /// Keys that share long prefixes, hold multi-byte UTF-8 (so a shared
+    /// prefix can end inside a character), and reach heights 2 and 3 (so
+    /// trees have nodes with no entries, only a left subtree).
+    fn node_key() -> impl proptest::strategy::Strategy<Value = String> {
+        use proptest::prelude::*;
+        prop_oneof![
+            (0usize..2000).prop_map(record_key),
+            "[aéè☃★]{0,6}",
+            "x{0,40}[ab]{0,3}",
+            "app\\.bsky\\.feed\\.(post|like)/3k[a-z2-7]{0,11}",
+        ]
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(512))]
+
+        /// `flush` encodes each node straight from memory, exactly as
+        /// building its `NodeData` and encoding that would.
+        #[test]
+        fn node_blocks_match_reference_encoding(
+            keys in proptest::collection::vec(node_key(), 0..80),
+            removes in proptest::collection::vec(proptest::prelude::any::<proptest::sample::Index>(), 0..20),
+        ) {
+            let mut tree = DetachedTree::new();
+            for key in &keys {
+                let val = Cid::compute(Codec::Raw, key.as_bytes());
+                tree.insert(&NoBlocks, key.clone(), val).unwrap();
+            }
+            if !keys.is_empty() {
+                for i in removes {
+                    tree.remove(&NoBlocks, &keys[i.index(keys.len())]).unwrap();
+                }
+            }
+            let write = tree.flush().unwrap();
+            let blocks: std::collections::HashMap<Cid, Vec<u8>> =
+                write.new_blocks.into_iter().collect();
+
+            fn check(n: &Node, blocks: &std::collections::HashMap<Cid, Vec<u8>>) -> usize {
+                let want = reference_node_block(n);
+                let mut got = vec![0xaa];
+                encode_node(n, &mut got).unwrap();
+                assert_eq!(got[1..], want);
+                let cid = Cid::compute(Codec::Drisl, &want);
+                assert_eq!(n.cid, Some(cid));
+                assert_eq!(blocks.get(&cid), Some(&want));
+                let below = n.entries.iter().filter_map(|e| e.right.as_deref());
+                1 + n.left.as_deref().into_iter().chain(below).map(|c| check(c, blocks)).sum::<usize>()
+            }
+            let nodes = match tree.root.as_deref() {
+                Some(root) => check(root, &blocks),
+                None => {
+                    let empty = reference_encode_node_data(&NodeData { left: None, entries: vec![] });
+                    assert_eq!(write.root, Cid::compute(Codec::Drisl, &empty));
+                    assert_eq!(blocks.get(&write.root), Some(&empty));
+                    1
+                }
+            };
+            proptest::prop_assert_eq!(nodes, blocks.len());
+        }
+
+        #[test]
+        fn shared_prefix_len_matches_bytewise(
+            (a, b) in proptest::strategy::Strategy::prop_map(
+                ("[aé]{0,20}", "[aéè]{0,10}", "[aéè]{0,10}"),
+                |(prefix, x, y)| (prefix.clone() + &x, prefix + &y),
+            ),
+        ) {
+            let want = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
+            proptest::prop_assert_eq!(shared_prefix_len(&a, &b), want);
         }
     }
 

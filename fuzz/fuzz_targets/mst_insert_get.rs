@@ -2,14 +2,15 @@
 //! MST mutation invariants on arbitrary key sets:
 //!   1. every key that inserts successfully is retrievable with its value;
 //!   2. the root CID is independent of insertion order (a core MST property —
-//!      the same logical key/value set must produce the same content address).
+//!      the same logical key/value set must produce the same content address);
+//!   3. the node blocks a flush writes load back to the same entries.
 //! Structured input (a list of keys) drives real tree shapes: splits, merges,
 //! shared prefixes, varying heights.
 
 use libfuzzer_sys::fuzz_target;
 use shrike::Cid;
 use shrike::cbor::Codec;
-use shrike::mst::{MemBlockStore, Tree};
+use shrike::mst::{DetachedTree, MemBlockStore, NoBlocks, Tree};
 
 fn val_for(key: &str) -> Cid {
     Cid::compute(Codec::Drisl, key.as_bytes())
@@ -57,4 +58,22 @@ fuzz_target!(|keys: Vec<String>| {
         "MST root CID depends on insertion order ({} keys)",
         accepted.len()
     );
+
+    // Invariant 3: the blocks a `DetachedTree` writes for the same set load
+    // back to exactly that set, under the same root.
+    let mut detached = DetachedTree::new();
+    for k in &accepted {
+        detached
+            .insert(&NoBlocks, k.clone(), val_for(k))
+            .expect("insert of an accepted key must succeed");
+    }
+    let write = detached.flush().expect("flush");
+    assert_eq!(write.root, root1, "Tree and DetachedTree roots differ");
+    let blocks: std::collections::HashMap<Cid, Vec<u8>> = write.new_blocks.into_iter().collect();
+    let mut want: Vec<(String, Cid)> = accepted.iter().map(|k| (k.clone(), val_for(k))).collect();
+    want.sort();
+    let got = DetachedTree::load(write.root)
+        .entries(&blocks)
+        .expect("written blocks must load");
+    assert_eq!(got, want, "written blocks load back to different entries");
 });
