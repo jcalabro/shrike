@@ -7,9 +7,10 @@
 //! absence) without trusting the server that sent it.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::car::{Block, CarError, Reader};
+use crate::car::{Block, CarError, SliceReader};
+use crate::cbor::cid::CidMap;
 use crate::cbor::{Cid, Codec, Value};
 use crate::crypto::VerifyingKey;
 use crate::mst::{BlockSource, DetachedTree, MstError};
@@ -262,22 +263,24 @@ pub fn record_proofs_car(
 
 /// Read a proof CAR, check every block against its CID, and check that its
 /// root is a commit by `did` signed by `key`.
-fn open_proof(car: &[u8], did: &Did, key: &dyn VerifyingKey) -> Result<OpenProof, ProofError> {
-    let mut reader = Reader::new(car)?;
+fn open_proof<'a>(
+    car: &'a [u8],
+    did: &Did,
+    key: &dyn VerifyingKey,
+) -> Result<OpenProof<'a>, ProofError> {
+    let reader = SliceReader::new(car)?;
     let commit_cid = match reader.roots() {
         [root] => *root,
         roots => return Err(ProofError::RootCount(roots.len())),
     };
 
-    let mut blocks: HashMap<Cid, Vec<u8>> = HashMap::new();
-    let mut block = Block::default();
-    while reader.next_block_into(&mut block)? {
-        if Cid::compute(block.cid.codec(), &block.data) != block.cid {
+    let mut blocks = CidMap::default();
+    for block in reader {
+        let block = block?;
+        if Cid::compute(block.cid.codec(), block.data) != block.cid {
             return Err(ProofError::CidMismatch(block.cid));
         }
-        blocks
-            .entry(block.cid)
-            .or_insert_with(|| std::mem::take(&mut block.data));
+        blocks.entry(block.cid).or_insert(block.data);
     }
 
     let commit =
@@ -297,25 +300,25 @@ fn open_proof(car: &[u8], did: &Did, key: &dyn VerifyingKey) -> Result<OpenProof
 }
 
 /// A proof CAR whose blocks and commit [`open_proof`] has checked.
-struct OpenProof {
-    blocks: HashMap<Cid, Vec<u8>>,
+struct OpenProof<'a> {
+    blocks: CidMap<&'a [u8]>,
     commit_cid: Cid,
     commit: Commit,
 }
 
 /// Look up a block that must be present and DRISL-encoded.
-fn drisl_block<'a>(blocks: &'a HashMap<Cid, Vec<u8>>, cid: &Cid) -> Result<&'a [u8], ProofError> {
+fn drisl_block<'a>(blocks: &CidMap<&'a [u8]>, cid: &Cid) -> Result<&'a [u8], ProofError> {
     if cid.codec() != Codec::Drisl {
         return Err(ProofError::NotDrisl(*cid));
     }
     blocks
         .get(cid)
-        .map(Vec::as_slice)
+        .copied()
         .ok_or(ProofError::MissingBlock(*cid))
 }
 
 /// Look up a record block: present, DRISL, and a map.
-fn record_block<'a>(blocks: &'a HashMap<Cid, Vec<u8>>, cid: &Cid) -> Result<&'a [u8], ProofError> {
+fn record_block<'a>(blocks: &CidMap<&'a [u8]>, cid: &Cid) -> Result<&'a [u8], ProofError> {
     let data = drisl_block(blocks, cid)?;
     match crate::cbor::decode(data) {
         Ok(Value::Map(_)) => Ok(data),

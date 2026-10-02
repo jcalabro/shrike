@@ -318,6 +318,9 @@ fn bench_large_repo(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("read_all", LARGE), |b| {
         b.iter(|| black_box(shrike::car::read_all(black_box(&car[..])).unwrap()));
     });
+    group.bench_function(BenchmarkId::new("read_slice", LARGE), |b| {
+        b.iter(|| black_box(shrike::car::read_slice(black_box(&car)).unwrap()));
+    });
     group.bench_function(BenchmarkId::new("verify", LARGE), |b| {
         b.iter(|| shrike::car::verify(black_box(&car[..])).unwrap());
     });

@@ -166,6 +166,16 @@ impl Cid {
 
     /// Decode from binary CID bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CborError> {
+        if let [0x01, codec @ (0x71 | 0x55), 0x12, 0x20, hash @ ..] = bytes
+            && let Ok(hash) = <[u8; 32]>::try_from(hash)
+        {
+            let codec = if *codec == 0x71 {
+                Codec::Drisl
+            } else {
+                Codec::Raw
+            };
+            return Ok(Cid { codec, hash });
+        }
         if bytes.len() != 36 {
             return Err(CborError::InvalidCid("wrong length".into()));
         }

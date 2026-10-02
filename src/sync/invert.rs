@@ -98,7 +98,7 @@ pub struct DecodedCommitCar {
 
 pub fn decode_commit_car(raw: &RawCommit) -> Result<DecodedCommitCar, VerifierError> {
     let (roots, blocks) =
-        crate::car::read_all(&raw.blocks[..]).map_err(|source| VerifierError::Car {
+        crate::car::read_slice(&raw.blocks).map_err(|source| VerifierError::Car {
             did: Some(raw.repo.clone()),
             rev: Some(raw.rev.to_string()),
             source,
@@ -121,7 +121,7 @@ pub fn decode_commit_car(raw: &RawCommit) -> Result<DecodedCommitCar, VerifierEr
 
     let mut block_map = HashMap::with_capacity(blocks.len());
     for block in blocks {
-        let computed = Cid::compute(block.cid.codec(), &block.data);
+        let computed = Cid::compute(block.cid.codec(), block.data);
         if computed != block.cid {
             return Err(VerifierError::Car {
                 did: Some(raw.repo.clone()),
@@ -134,7 +134,7 @@ pub fn decode_commit_car(raw: &RawCommit) -> Result<DecodedCommitCar, VerifierEr
         }
 
         if let Some(existing) = block_map.get(&block.cid) {
-            if existing != &block.data {
+            if existing != block.data {
                 return Err(VerifierError::Car {
                     did: Some(raw.repo.clone()),
                     rev: Some(raw.rev.to_string()),
@@ -146,7 +146,7 @@ pub fn decode_commit_car(raw: &RawCommit) -> Result<DecodedCommitCar, VerifierEr
             }
             continue;
         }
-        block_map.insert(block.cid, block.data);
+        block_map.insert(block.cid, block.data.to_vec());
     }
 
     let store = CarBlockStore::new(block_map);
@@ -175,7 +175,7 @@ pub fn decode_commit_car(raw: &RawCommit) -> Result<DecodedCommitCar, VerifierEr
 /// commit-only CAR a real `#sync` frame ships.
 pub fn decode_sync_commit(did: &Did, rev: &str, blocks: &[u8]) -> Result<Commit, VerifierError> {
     let (roots, car_blocks) =
-        crate::car::read_all(blocks).map_err(|source| VerifierError::Car {
+        crate::car::read_slice(blocks).map_err(|source| VerifierError::Car {
             did: Some(did.clone()),
             rev: Some(rev.to_owned()),
             source,
@@ -199,7 +199,7 @@ pub fn decode_sync_commit(did: &Did, rev: &str, blocks: &[u8]) -> Result<Commit,
             message: format!("commit block {commit_cid} missing from sync CAR"),
         })?;
 
-    let computed = Cid::compute(block.cid.codec(), &block.data);
+    let computed = Cid::compute(block.cid.codec(), block.data);
     if computed != block.cid {
         return Err(VerifierError::Car {
             did: Some(did.clone()),
@@ -211,7 +211,7 @@ pub fn decode_sync_commit(did: &Did, rev: &str, blocks: &[u8]) -> Result<Commit,
         });
     }
 
-    Commit::from_cbor(&block.data).map_err(|source| VerifierError::Repo {
+    Commit::from_cbor(block.data).map_err(|source| VerifierError::Repo {
         did: Some(did.clone()),
         rev: Some(rev.to_owned()),
         source,

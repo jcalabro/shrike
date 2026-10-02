@@ -2,7 +2,8 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::car::{Block, Reader};
+use crate::car::{Block, SliceReader};
+use crate::cbor::cid::{CidMap, FastHashState};
 use crate::cbor::{Cid, Codec};
 use crate::crypto::SigningKey;
 use crate::mst::{BlockSource, DetachedTree, MstError};
@@ -117,26 +118,28 @@ impl<S: RepoStore> Repo<S> {
         if store.head().map_err(storage)?.is_some() {
             return Err(RepoError::StoreNotEmpty);
         }
-        let mut reader = Reader::new(car)?;
+        let reader = SliceReader::new(car)?;
         let root = match reader.roots() {
             [root] => *root,
             roots => return Err(RepoError::RootCount(roots.len())),
         };
-        let mut blocks: HashMap<Cid, Vec<u8>> = HashMap::new();
-        let mut block = Block::default();
-        while reader.next_block_into(&mut block)? {
-            if Cid::compute(block.cid.codec(), &block.data) != block.cid {
+        // Blocks stay in `car` until the reachable ones are copied out.
+        let mut blocks = CidMap::default();
+        for block in reader {
+            let block = block?;
+            if Cid::compute(block.cid.codec(), block.data) != block.cid {
                 return Err(RepoError::CidMismatch(block.cid));
             }
-            blocks
-                .entry(block.cid)
-                .or_insert_with(|| std::mem::take(&mut block.data));
+            blocks.entry(block.cid).or_insert(block.data);
         }
 
         if root.codec() != Codec::Drisl {
             return Err(RepoError::Commit(format!("commit {root} is not DRISL")));
         }
-        let commit_bytes = blocks.remove(&root).ok_or(RepoError::MissingBlock(root))?;
+        let commit_bytes = blocks
+            .remove(&root)
+            .ok_or(RepoError::MissingBlock(root))?
+            .to_vec();
         let commit = Commit::from_cbor(&commit_bytes)?;
         let mut new_blocks: BTreeMap<Cid, Vec<u8>> = reachable_blocks(&blocks, commit.data)?
             .into_iter()
@@ -550,7 +553,7 @@ impl<S: RepoStore> Repo<S> {
 /// its entry, each block once.
 fn reachable_blocks(src: &dyn BlockSource, root: Cid) -> Result<Vec<(Cid, Vec<u8>)>, RepoError> {
     let recorder = Recorder::new(src);
-    let mut leaves = HashSet::new();
+    let mut leaves: HashSet<Cid, FastHashState> = HashSet::default();
     let mut leaf_err = None;
     DetachedTree::load(root)
         .walk(&recorder, |_, cid| {
@@ -639,9 +642,8 @@ impl BlockSource for Recorder<'_> {
         let Some(data) = self.src.read_block(cid)? else {
             return Ok(None);
         };
-        let data = data.into_owned();
-        self.seen.borrow_mut().push((*cid, data.clone()));
-        Ok(Some(Cow::Owned(data)))
+        self.seen.borrow_mut().push((*cid, data.to_vec()));
+        Ok(Some(data))
     }
 }
 

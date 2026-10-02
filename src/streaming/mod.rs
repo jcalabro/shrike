@@ -334,7 +334,7 @@ fn parse_commit_blocks(
         return Ok(HashMap::new());
     };
 
-    let (_roots, blocks) = crate::car::read_all(&blocks_bytes[..])
+    let (_roots, blocks) = crate::car::read_slice(&blocks_bytes[..])
         .map_err(|e| StreamError::ParseCbor(format!("failed to decode commit blocks CAR: {e}")))?;
 
     let mut index = HashMap::with_capacity(blocks.len());
@@ -346,7 +346,7 @@ fn parse_commit_blocks(
         // data corruption from untrusted network input. Both atmos (every
         // Next()) and the atproto TS reference (verifyIncomingCarBlocks) verify
         // by default.
-        let computed = crate::cbor::Cid::compute(block.cid.codec(), &block.data);
+        let computed = crate::cbor::Cid::compute(block.cid.codec(), block.data);
         if computed != block.cid {
             return Err(StreamError::ParseCbor(format!(
                 "commit block CID mismatch: declared {}, content hashes to {}",
@@ -356,7 +356,7 @@ fn parse_commit_blocks(
         // A duplicate CID with differing bytes is impossible once the hash
         // check above passes (same CID ⇒ same content), so last-writer-wins is
         // safe here; identical re-inserts are harmless.
-        index.insert(block.cid.to_string(), block.data);
+        index.insert(block.cid.to_string(), block.data.to_vec());
     }
     Ok(index)
 }

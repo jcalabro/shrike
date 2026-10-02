@@ -120,6 +120,7 @@ pub(super) fn check_header_len(len: u64) -> Result<usize, CarError> {
 }
 
 /// Validate a block length prefix (CID + data).
+#[inline]
 pub(super) fn check_block_len(len: u64) -> Result<usize, CarError> {
     if len == 0 {
         return Err(CarError::InvalidBlock("zero-length block".into()));
