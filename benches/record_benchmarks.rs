@@ -6,7 +6,7 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use shrike::cbor::json::{Integers, drisl_to_json, json_to_drisl};
+use shrike::cbor::json::{Integers, drisl_to_json, drisl_to_json_into, json_to_drisl};
 use shrike::lexicon::{Catalog, validate_record};
 
 /// Each collection's records, as DRISL and as JSON text.
@@ -81,8 +81,29 @@ fn bench_validate(c: &mut Criterion) {
 }
 
 fn bench_drisl_to_json(c: &mut Criterion) {
+    let corpora = corpora();
     let mut group = c.benchmark_group("drisl_to_json_bytes");
-    for corpus in corpora() {
+    for corpus in &corpora {
+        group.throughput(Throughput::Elements(corpus.drisl.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new(corpus.short, corpus.drisl.len()),
+            &corpus.drisl,
+            |b, records| {
+                b.iter(|| {
+                    for r in records {
+                        let mut json = Vec::new();
+                        drisl_to_json_into(black_box(r), &mut json).unwrap();
+                        black_box(json);
+                    }
+                });
+            },
+        );
+    }
+    group.finish();
+
+    // The same JSON text by way of a `serde_json::Value`.
+    let mut group = c.benchmark_group("drisl_to_json_tree_bytes");
+    for corpus in &corpora {
         group.throughput(Throughput::Elements(corpus.drisl.len() as u64));
         group.bench_with_input(
             BenchmarkId::new(corpus.short, corpus.drisl.len()),

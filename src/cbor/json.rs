@@ -14,6 +14,8 @@
 //!
 //! DRISL to JSON writes bytes as unpadded `$bytes` and CIDs as base32 `$link`.
 //! The data model has no floats, so both directions reject them.
+//! [`drisl_to_json_into`] writes JSON text straight from DRISL, without
+//! building a [`serde_json::Value`].
 //!
 //! ```
 //! use shrike::cbor::json::{Integers, drisl_to_json, json_to_drisl};
@@ -89,6 +91,28 @@ pub fn value_to_json(value: &Value<'_>) -> Result<Json, CborError> {
     })
 }
 
+/// Convert DRISL bytes to atproto JSON text, appended to `out`: the bytes
+/// `serde_json::to_vec(&drisl_to_json(bytes)?)` writes, compact and with each
+/// object's keys in bytewise order (unless `serde_json`'s `preserve_order`
+/// feature is on), in one pass without building either tree.
+///
+/// Fails as [`drisl_to_json`] does, leaving `out` as it was.
+pub fn drisl_to_json_into(bytes: &[u8], out: &mut Vec<u8>) -> Result<(), CborError> {
+    let len = out.len();
+    let result = JsonWriter::write_document(bytes, out);
+    if result.is_err() {
+        out.truncate(len);
+    }
+    result
+}
+
+/// [`drisl_to_json_into`] a buffer, then write it all to `writer`.
+pub fn drisl_to_json_writer(bytes: &[u8], mut writer: impl Write) -> Result<(), CborError> {
+    let mut out = Vec::new();
+    drisl_to_json_into(bytes, &mut out)?;
+    Ok(writer.write_all(&out)?)
+}
+
 /// Decode `$bytes` base64: the standard alphabet, padded or not.
 pub fn decode_base64(s: &str) -> Option<Vec<u8>> {
     crate::base64::decode(s)
@@ -114,6 +138,279 @@ fn single(key: &str, value: String) -> Json {
     let mut map = Map::with_capacity(1);
     map.insert(key.to_owned(), Json::String(value));
     Json::Object(map)
+}
+
+/// The state of [`drisl_to_json_into`].
+struct JsonWriter<'o> {
+    out: &'o mut Vec<u8>,
+    /// The first float, an error only once the whole input has decoded, as in
+    /// [`drisl_to_json`].
+    float: Option<f64>,
+}
+
+/// A map entry, `"key":value,`, at `out[start..end]`.
+#[derive(Clone, Copy)]
+struct Entry<'a> {
+    key: &'a [u8],
+    start: usize,
+    end: usize,
+}
+
+/// The most entries of a map kept on the stack while it is written.
+const INLINE_ENTRIES: usize = 8;
+
+impl JsonWriter<'_> {
+    fn write_document(bytes: &[u8], out: &mut Vec<u8>) -> Result<(), CborError> {
+        // JSON is usually about a third longer than DRISL, and sorting a map's
+        // entries briefly needs room for a second copy of them. This is only
+        // a hint: `out` grows as needed.
+        let _ = out.try_reserve(bytes.len().saturating_mul(3).saturating_add(64));
+        let mut writer = JsonWriter { out, float: None };
+        let mut dec = super::Decoder::new(bytes);
+        writer.write_value(&mut dec)?;
+        if !dec.is_empty() {
+            return Err(CborError::InvalidCbor("trailing data after value".into()));
+        }
+        match writer.float {
+            Some(f) => Err(CborError::DataModel(format!("float {f}"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Each array item and map entry is written with a trailing comma, so the
+    /// entries can be reordered as units; the last comma becomes the bracket.
+    fn write_value<'a>(&mut self, dec: &mut super::Decoder<'a>) -> Result<(), CborError> {
+        use super::decode::Shallow;
+        match dec.decode_shallow()? {
+            Shallow::Text(text) => write_str(self.out, text),
+            Shallow::Scalar(value) => self.write_scalar(value),
+            Shallow::Array(len) => {
+                self.out.push(b'[');
+                for _ in 0..len {
+                    self.write_value(dec)?;
+                    self.out.push(b',');
+                }
+                dec.leave();
+                self.close(len, b']');
+            }
+            Shallow::Map(len) => {
+                self.out.push(b'{');
+                let empty = Entry {
+                    key: &[],
+                    start: 0,
+                    end: 0,
+                };
+                let mut inline = [empty; INLINE_ENTRIES];
+                let mut heap = Vec::new();
+                let mut previous = &[][..];
+                // DRISL orders keys by length first, so JSON's bytewise order
+                // often differs.
+                let mut sorted = true;
+                let mut last_key = None;
+                for i in 0..len {
+                    let key = dec.read_map_key_utf8(&mut previous)?;
+                    sorted &= last_key.is_none_or(|last| key_cmp(last, key).is_lt());
+                    last_key = Some(key);
+                    let start = self.out.len();
+                    write_str(self.out, key);
+                    self.out.push(b':');
+                    self.write_value(dec)?;
+                    self.out.push(b',');
+                    let entry = Entry {
+                        key,
+                        start,
+                        end: self.out.len(),
+                    };
+                    match inline.get_mut(i) {
+                        Some(slot) if len <= INLINE_ENTRIES => *slot = entry,
+                        _ => heap.push(entry),
+                    }
+                }
+                dec.leave();
+                if !sorted {
+                    let entries = if len <= INLINE_ENTRIES {
+                        &mut inline[..len]
+                    } else {
+                        &mut heap[..]
+                    };
+                    sort_entries(self.out, entries);
+                }
+                self.close(len, b'}');
+            }
+        }
+        Ok(())
+    }
+
+    fn close(&mut self, len: usize, bracket: u8) {
+        if len > 0 {
+            self.out.pop();
+        }
+        self.out.push(bracket);
+    }
+
+    fn write_scalar(&mut self, value: Value<'_>) {
+        let out = &mut *self.out;
+        match value {
+            Value::Unsigned(n) => write_u64(out, n),
+            Value::Signed(n) => {
+                if n < 0 {
+                    out.push(b'-');
+                }
+                write_u64(out, n.unsigned_abs());
+            }
+            Value::Float(f) => {
+                self.float.get_or_insert(f);
+            }
+            Value::Bool(true) => out.extend_from_slice(b"true"),
+            Value::Bool(false) => out.extend_from_slice(b"false"),
+            Value::Null => out.extend_from_slice(b"null"),
+            Value::Text(s) => write_str(out, s.as_bytes()),
+            Value::Bytes(bytes) => {
+                out.extend_from_slice(br#"{"$bytes":""#);
+                let start = out.len();
+                let base64 = data_encoding::BASE64_NOPAD;
+                out.resize(start + base64.encode_len(bytes.len()), 0);
+                if let Some(dst) = out.get_mut(start..) {
+                    base64.encode_mut(bytes, dst);
+                }
+                out.extend_from_slice(br#""}"#);
+            }
+            Value::Cid(cid) => {
+                out.extend_from_slice(br#"{"$link":""#);
+                out.extend_from_slice(&cid.to_multibase());
+                out.extend_from_slice(br#""}"#);
+            }
+            // `decode_shallow` yields arrays and maps as `Shallow`.
+            Value::Array(_) | Value::Map(_) => {}
+        }
+    }
+}
+
+/// Rewrite a map's entries, which end `out`, in key order: copied in order
+/// past the end of `out`, then back over the originals.
+fn sort_entries(out: &mut Vec<u8>, entries: &mut [Entry<'_>]) {
+    let Some(start) = entries.first().map(|e| e.start) else {
+        return;
+    };
+    let end = out.len();
+    entries.sort_unstable_by(|a, b| key_cmp(a.key, b.key));
+    for entry in &*entries {
+        out.extend_from_within(entry.start..entry.end);
+    }
+    out.copy_within(end.., start);
+    out.truncate(end);
+}
+
+/// Bytewise order, mostly settled by the first byte without calling `memcmp`.
+fn key_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    a.first().cmp(&b.first()).then_with(|| a.cmp(b))
+}
+
+fn write_u64(out: &mut Vec<u8>, mut n: u64) {
+    let mut digits = [0; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    out.extend_from_slice(&digits[start..]);
+}
+
+/// Write UTF-8 `text` as a JSON string, escaped as `serde_json` does: `"` and
+/// `\`, the short escapes of backspace, tab, newline, form feed and carriage
+/// return, and `\u00xx` for the other control characters.
+fn write_str(out: &mut Vec<u8>, text: &[u8]) {
+    // Most keys are short and need no escapes: quote them in a buffer.
+    let len = text.len();
+    if len < 8 {
+        let word = short_word(text);
+        if first(escapes(word)) == len {
+            let mut quoted = [b'"'; 10];
+            quoted[1..9].copy_from_slice(&word.to_le_bytes());
+            quoted[1 + len] = b'"';
+            let start = out.len();
+            out.extend_from_slice(&quoted);
+            out.truncate(start + len + 2);
+            return;
+        }
+    }
+    out.push(b'"');
+    let mut rest = text;
+    loop {
+        let (clean, tail) = rest.split_at(clean_len(rest));
+        out.extend_from_slice(clean);
+        let Some((&byte, tail)) = tail.split_first() else {
+            break;
+        };
+        match byte {
+            b'"' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
+            0x08 => out.extend_from_slice(b"\\b"),
+            0x09 => out.extend_from_slice(b"\\t"),
+            0x0a => out.extend_from_slice(b"\\n"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            0x0d => out.extend_from_slice(b"\\r"),
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                let (high, low) = (HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]);
+                out.extend_from_slice(&[b'\\', b'u', b'0', b'0', high, low]);
+            }
+        }
+        rest = tail;
+    }
+    out.push(b'"');
+}
+
+/// The length of the longest prefix of `bytes` that needs no escapes, read a
+/// word at a time: the last word overlaps the one before, and a slice shorter
+/// than a word is padded with zeros.
+fn clean_len(bytes: &[u8]) -> usize {
+    let (words, tail) = bytes.as_chunks::<8>();
+    for (i, word) in words.iter().enumerate() {
+        let found = escapes(u64::from_le_bytes(*word));
+        if found != 0 {
+            return i * 8 + first(found);
+        }
+    }
+    match bytes.last_chunk::<8>() {
+        _ if tail.is_empty() => bytes.len(),
+        Some(last) => bytes.len() - 8 + first(escapes(u64::from_le_bytes(*last))),
+        None => first(escapes(short_word(tail))).min(tail.len()),
+    }
+}
+
+/// The bytes of a slice shorter than eight, then zeros, without a loop.
+fn short_word(bytes: &[u8]) -> u64 {
+    let len = bytes.len();
+    if let (Some(low), Some(high)) = (bytes.first_chunk::<4>(), bytes.last_chunk::<4>()) {
+        return u64::from(u32::from_le_bytes(*low))
+            | u64::from(u32::from_le_bytes(*high)) << (8 * (len - 4));
+    }
+    let byte = |i: usize| bytes.get(i).map_or(0, |&b| u64::from(b) << (8 * i));
+    byte(0) | byte(len / 2) | byte(len.wrapping_sub(1))
+}
+
+/// The high bit of each byte of `word` (little-endian) below 0x20, or `"` or
+/// `\`, and perhaps of bytes after the first such byte, but never before.
+#[inline(always)]
+fn escapes(word: u64) -> u64 {
+    const ONES: u64 = u64::from_ne_bytes([1; 8]);
+    // `v - 1` sets the high bit of each zero byte of `v`, and `v - 0x20` that
+    // of each byte below 0x20; `& !word` drops bytes that had it already. A
+    // byte that borrows can set it wrongly in later bytes, never earlier ones.
+    let quote = word ^ (ONES * u64::from(b'"'));
+    let backslash = word ^ (ONES * u64::from(b'\\'));
+    (word.wrapping_sub(ONES * 0x20) | quote.wrapping_sub(ONES) | backslash.wrapping_sub(ONES))
+        & !word
+        & (ONES * 0x80)
+}
+
+/// The index of the first byte `escapes` found, or 8.
+fn first(found: u64) -> usize {
+    found.trailing_zeros() as usize / 8
 }
 
 fn encode<W: Write>(
@@ -646,6 +943,412 @@ mod tests {
             drisl_to_json(&[0xff]),
             Err(CborError::InvalidCbor(_))
         ));
+    }
+
+    /// `drisl_to_json_into` against `serde_json::to_vec(&drisl_to_json(..))`.
+    mod json_text {
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::BTreeMap;
+
+        /// Asserts both conversions agree on `bytes`, output or error, and
+        /// that `out` keeps what it held, gaining nothing on error.
+        fn assert_same(bytes: &[u8]) {
+            let mut out = b"held".to_vec();
+            let actual = drisl_to_json_into(bytes, &mut out);
+            match drisl_to_json(bytes) {
+                Ok(json) => {
+                    actual.unwrap_or_else(|e| panic!("{e} for {bytes:02x?}"));
+                    assert_eq!(out[..4], *b"held");
+                    let want = serde_json::to_vec(&json).unwrap();
+                    assert_eq!(
+                        String::from_utf8_lossy(&out[4..]),
+                        String::from_utf8_lossy(&want),
+                        "{bytes:02x?}"
+                    );
+                    assert_eq!(out[4..], want);
+                }
+                Err(want) => {
+                    let got = actual
+                        .err()
+                        .unwrap_or_else(|| panic!("accepted {bytes:02x?}"));
+                    assert_eq!(format!("{got:?}"), format!("{want:?}"), "{bytes:02x?}");
+                    assert_eq!(out, b"held");
+                }
+            }
+        }
+
+        fn text(s: &str) -> Vec<u8> {
+            encode_value(&Value::Text(s)).unwrap()
+        }
+
+        /// Every ASCII byte at every position of strings up to 24 bytes, which
+        /// covers short strings, whole words and the overlapping last word, and
+        /// next to multibyte characters, whose bytes are all above 0x7f.
+        #[test]
+        fn strings_escape_as_serde_json_does() {
+            for len in 1..=24 {
+                for at in 0..len {
+                    for byte in 0..=0x7f_u8 {
+                        let mut s = vec![b'a'; len];
+                        s[at] = byte;
+                        assert_same(&text(std::str::from_utf8(&s).unwrap()));
+                    }
+                }
+            }
+            for s in [
+                "",
+                "é",
+                "😀",
+                "/",
+                "\u{7f}",
+                "\u{80}",
+                "\u{2028}",
+                "\u{fffd}",
+                "é\"",
+                "😀\n",
+                "\u{80}\u{80}\u{80}\u{1f}",
+                "ééééé\\",
+                "日本語のテキスト\t",
+                "\"\\\"\\",
+            ] {
+                assert_same(&text(s));
+                assert_same(&text(&s.repeat(9)));
+            }
+        }
+
+        #[test]
+        fn keys_are_written_in_bytewise_order() {
+            let keys = [
+                "b",
+                "a",
+                "aa",
+                "$type",
+                "createdAt",
+                "subject",
+                "",
+                "Z",
+                "é",
+                "\n",
+            ];
+            for n in 0..=keys.len() {
+                let map = Value::Map(keys[..n].iter().map(|k| (*k, Value::Text(k))).collect());
+                assert_same(&encode_value(&map).unwrap());
+            }
+            // More entries than stay on the stack, which DRISL orders the
+            // reverse of bytewise (`z`, `ya`, `xaa`, ...), around a nested map
+            // of the same.
+            let keys: Vec<String> = (0..20)
+                .map(|i| format!("{}{}", char::from(b'z' - i), "a".repeat(i.into())))
+                .collect();
+            let nested = Value::Map(keys.iter().map(|k| (k.as_str(), Value::Null)).collect());
+            let mut entries: Vec<_> = keys.iter().map(|k| (k.as_str(), Value::Null)).collect();
+            entries.push(("nested", nested));
+            assert_same(&encode_value(&Value::Map(entries)).unwrap());
+        }
+
+        #[test]
+        fn scalars() {
+            let cid = Cid::compute(Codec::Drisl, b"x");
+            let raw = Cid::compute(Codec::Raw, b"x");
+            let mut values = vec![
+                Value::Null,
+                Value::Bool(true),
+                Value::Bool(false),
+                Value::Cid(cid),
+                Value::Cid(raw),
+                Value::Array(vec![]),
+                Value::Map(vec![]),
+                Value::Array(vec![Value::Array(vec![]), Value::Map(vec![]), Value::Null]),
+            ];
+            for n in [
+                0,
+                1,
+                9,
+                10,
+                23,
+                24,
+                255,
+                256,
+                65535,
+                65536,
+                u64::from(u32::MAX) + 1,
+            ] {
+                values.push(Value::Unsigned(n));
+            }
+            values.push(Value::Unsigned(i64::MAX as u64));
+            for n in [-1, -10, -24, -25, -256, -257, i64::MIN + 1, i64::MIN] {
+                values.push(Value::Signed(n));
+            }
+            let bytes = [0xfb_u8, 0xff, 0xbf, 0x00, 0x01, 0x80];
+            for n in 0..=bytes.len() {
+                values.push(Value::Bytes(&bytes[..n]));
+            }
+            for value in values {
+                assert_same(&encode_value(&value).unwrap());
+                assert_same(&encode_value(&Value::Map(vec![("k", value)])).unwrap());
+            }
+        }
+
+        #[test]
+        fn errors_match_drisl_to_json() {
+            let float = |f: f64| {
+                let mut b = vec![0xfb];
+                b.extend_from_slice(&f.to_bits().to_be_bytes());
+                b
+            };
+            let mut inputs: Vec<Vec<u8>> = vec![
+                vec![],
+                vec![0xff],
+                vec![0x1c],
+                vec![0x18, 0x17],
+                vec![0x19, 0x00, 0xff],
+                vec![0x01, 0x02],
+                vec![0xa0, 0x00],
+                vec![0x5f],
+                vec![0x7f],
+                vec![0x9f],
+                vec![0xbf],
+                vec![0xf7],
+                vec![0xf8, 0x20],
+                vec![0xf9, 0x00, 0x00],
+                vec![0xfa, 0x00, 0x00, 0x00, 0x00],
+                float(f64::NAN),
+                float(f64::INFINITY),
+                vec![0x1b, 0x80, 0, 0, 0, 0, 0, 0, 0],
+                vec![0x3b, 0x80, 0, 0, 0, 0, 0, 0, 0],
+                // keys: unsorted, duplicate, not text, invalid UTF-8
+                vec![0xa2, 0x61, b'b', 0x01, 0x61, b'a', 0x02],
+                vec![0xa2, 0x61, b'a', 0x01, 0x61, b'a', 0x02],
+                vec![0xa2, 0x62, b'a', b'a', 0x01, 0x61, b'b', 0x02],
+                vec![0xa1, 0x01, 0x02],
+                vec![0xa1, 0x61, 0xff, 0x01],
+                // text: invalid UTF-8, truncated, a length past the end
+                vec![0x62, 0xc3, 0x28],
+                vec![0x63, b'a', b'b'],
+                vec![0x7b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+                // tags: not 42, wrapping an integer, bad prefix, bad codec
+                vec![0xc1, 0x00],
+                vec![0xd8, 0x2a, 0x01],
+                [&[0xd8, 0x2a, 0x58, 0x25, 0x01][..], &[0; 36]].concat(),
+                [
+                    &[0xd8, 0x2a, 0x58, 0x25, 0x00, 0x01, 0x70, 0x12, 0x20][..],
+                    &[0; 32],
+                ]
+                .concat(),
+                // lengths past the limits and the input
+                vec![0x9a, 0x00, 0x10, 0x00, 0x00],
+                vec![0xba, 0x00, 0x10, 0x00, 0x00],
+                vec![0x83, 0x01],
+                vec![0xa2, 0x61, b'a', 0x01],
+            ];
+            // Long invalid UTF-8, which the SIMD validator checks.
+            let mut long = vec![0x78, 100];
+            long.extend(std::iter::repeat_n(b'a', 99));
+            long.push(0xff);
+            inputs.push(long);
+            // A float is an error only after everything else decodes: the
+            // first float in document order, or a later CBOR error first.
+            let mut floats = vec![0x83];
+            floats.extend(float(1.5));
+            floats.extend(float(-0.25));
+            floats.push(0x01);
+            inputs.push(floats.clone());
+            for tail in [&[0x18, 0x00][..], &[0x61, 0xff], &[0x01, 0x01]] {
+                let mut bad = floats.clone();
+                bad.pop();
+                bad.extend_from_slice(tail);
+                inputs.push(bad);
+            }
+            let mut map = vec![0xa2, 0x61, b'b'];
+            map.extend(float(2.0));
+            map.extend([0x61, b'a', 0x01]);
+            inputs.push(map);
+            // Nesting around the depth limit.
+            for depth in 60..=66 {
+                for open in [&[0x81][..], &[0xa1, 0x61, b'k']] {
+                    let mut nested = open.repeat(depth);
+                    nested.push(0x00);
+                    inputs.push(nested.clone());
+                    nested.pop();
+                    nested.push(0x60);
+                    inputs.push(nested);
+                }
+            }
+            // Every truncation of a record with every kind of value.
+            let cid = Cid::compute(Codec::Drisl, b"x");
+            let record = encode_value(&Value::Map(vec![
+                ("text", Value::Text("hi \"there\"\n")),
+                ("n", Value::Signed(-300)),
+                ("bytes", Value::Bytes(&[1, 2, 3])),
+                ("link", Value::Cid(cid)),
+                ("list", Value::Array(vec![Value::Null, Value::Bool(true)])),
+                (
+                    "aa",
+                    Value::Map(vec![("z", Value::Unsigned(1)), ("yy", Value::Null)]),
+                ),
+            ]))
+            .unwrap();
+            for end in 0..=record.len() {
+                inputs.push(record[..end].to_vec());
+            }
+            for input in &inputs {
+                assert_same(input);
+            }
+        }
+
+        #[test]
+        fn writer_writes_once_or_not_at_all() {
+            struct Failing;
+            impl Write for Failing {
+                fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                    Err(std::io::Error::other("full"))
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let bytes =
+                encode_value(&Value::Map(vec![("b", Value::Null), ("aa", Value::Null)])).unwrap();
+            let mut out = Vec::new();
+            drisl_to_json_writer(&bytes, &mut out).unwrap();
+            assert_eq!(out, br#"{"aa":null,"b":null}"#);
+            assert!(matches!(
+                drisl_to_json_writer(&bytes, Failing),
+                Err(CborError::Io(_))
+            ));
+            let mut out = Vec::new();
+            assert!(drisl_to_json_writer(&[0x82, 0x01], &mut out).is_err());
+            assert!(out.is_empty());
+        }
+
+        /// The byte-at-a-time scan `clean_len` replaces.
+        fn clean_len_reference(bytes: &[u8]) -> usize {
+            bytes
+                .iter()
+                .position(|&b| b < 0x20 || b == b'"' || b == b'\\')
+                .unwrap_or(bytes.len())
+        }
+
+        /// Owned DRISL documents, whose maps have unique keys.
+        #[derive(Debug, Clone)]
+        enum Doc {
+            Null,
+            Bool(bool),
+            Int(i64),
+            Float(f64),
+            Text(String),
+            Bytes(Vec<u8>),
+            Cid(bool, [u8; 32]),
+            Array(Vec<Doc>),
+            Map(BTreeMap<String, Doc>),
+        }
+
+        impl Doc {
+            fn value(&self) -> Value<'_> {
+                match self {
+                    Doc::Null => Value::Null,
+                    Doc::Bool(b) => Value::Bool(*b),
+                    Doc::Int(n) if *n < 0 => Value::Signed(*n),
+                    Doc::Int(n) => Value::Unsigned(*n as u64),
+                    Doc::Float(f) => Value::Float(*f),
+                    Doc::Text(s) => Value::Text(s),
+                    Doc::Bytes(b) => Value::Bytes(b),
+                    Doc::Cid(drisl, hash) => {
+                        let codec = if *drisl { 0x71 } else { 0x55 };
+                        let bytes = [&[0x01, codec, 0x12, 0x20][..], hash].concat();
+                        Value::Cid(Cid::from_bytes(&bytes).unwrap())
+                    }
+                    Doc::Array(items) => Value::Array(items.iter().map(Doc::value).collect()),
+                    Doc::Map(entries) => Value::Map(
+                        entries
+                            .iter()
+                            .map(|(k, v)| (k.as_str(), v.value()))
+                            .collect(),
+                    ),
+                }
+            }
+        }
+
+        /// Text from every escape class, ASCII and multibyte characters.
+        fn any_text(max: usize) -> impl Strategy<Value = String> {
+            let char = prop_oneof![
+                8 => proptest::char::range('a', 'z'),
+                2 => (0u8..0x20).prop_map(char::from),
+                1 => prop::sample::select(vec!['"', '\\', '/', '\u{7f}', ' ', '$']),
+                1 => any::<char>(),
+            ];
+            prop::collection::vec(char, 0..max).prop_map(String::from_iter)
+        }
+
+        fn any_doc() -> impl Strategy<Value = Doc> {
+            let int = prop_oneof![
+                any::<i64>(),
+                prop::sample::select(vec![0, -1, 23, 24, -24, -25, i64::MAX, i64::MIN]),
+            ];
+            let leaf = prop_oneof![
+                2 => Just(Doc::Null),
+                2 => any::<bool>().prop_map(Doc::Bool),
+                4 => int.prop_map(Doc::Int),
+                1 => any::<f64>()
+                    .prop_filter("finite", |f| f.is_finite())
+                    .prop_map(Doc::Float),
+                8 => any_text(40).prop_map(Doc::Text),
+                2 => prop::collection::vec(any::<u8>(), 0..12).prop_map(Doc::Bytes),
+                2 => (any::<bool>(), any::<[u8; 32]>()).prop_map(|(d, h)| Doc::Cid(d, h)),
+            ];
+            leaf.prop_recursive(5, 64, 12, |inner| {
+                // Short keys of mixed lengths, whose DRISL and bytewise
+                // orders differ, and sometimes keys that need escapes.
+                let key = prop_oneof![8 => "[a-c$]{0,3}", 1 => any_text(10)];
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..6).prop_map(Doc::Array),
+                    prop::collection::btree_map(key, inner, 0..12).prop_map(Doc::Map),
+                ]
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn clean_len_matches_a_bytewise_scan(
+                bytes in prop_oneof![
+                    prop::collection::vec(any::<u8>(), 0..40),
+                    prop::collection::vec(
+                        prop::sample::select(vec![b'a', b'a', b'a', 0x20, 0x7f, 0x80, 0xff, 0x00, 0x1f, b'"', b'\\']),
+                        0..40,
+                    ),
+                ],
+            ) {
+                prop_assert_eq!(clean_len(&bytes), clean_len_reference(&bytes));
+            }
+
+            #[test]
+            fn documents_match_drisl_to_json(doc in any_doc()) {
+                assert_same(&encode_value(&doc.value()).unwrap());
+            }
+
+            /// Damaged documents fail as `drisl_to_json` does, or convert as
+            /// it does when the damage leaves valid DRISL.
+            #[test]
+            fn damaged_documents_match_drisl_to_json(
+                doc in any_doc(),
+                at in any::<prop::sample::Index>(),
+                byte in any::<u8>(),
+                damage in 0..3,
+            ) {
+                let mut bytes = encode_value(&doc.value()).unwrap();
+                let at = at.index(bytes.len() + 1);
+                match damage {
+                    0 => bytes.truncate(at),
+                    1 => bytes.insert(at, byte),
+                    _ => match bytes.get_mut(at) {
+                        Some(b) => *b = byte,
+                        None => bytes.push(byte),
+                    },
+                }
+                assert_same(&bytes);
+            }
+        }
     }
 
     /// The `data-encoding` decoding `base32_lower` replaced.

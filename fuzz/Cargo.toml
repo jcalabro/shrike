@@ -101,6 +101,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "cbor_json_writer"
+path = "fuzz_targets/cbor_json_writer.rs"
+test = false
+doc = false
+bench = false
+
 # --- CID ---
 [[bin]]
 name = "cid_parse"

@@ -35,7 +35,7 @@ fn cid() -> Cid {
 fn main() {
     println!("generating fuzz seeds...");
 
-    // --- DRISL values (cbor_decode, cbor_decode_differential) ---
+    // --- DRISL values (cbor_decode, cbor_decode_differential, cbor_json_writer) ---
     let values: &[(&str, Value)] = &[
         ("u0", Value::Unsigned(0)),
         ("imax", Value::Unsigned(i64::MAX as u64)),
@@ -61,7 +61,7 @@ fn main() {
     ];
     for (name, v) in values {
         if let Ok(bytes) = encode_value(v) {
-            for t in ["cbor_decode", "cbor_decode_differential"] {
+            for t in ["cbor_decode", "cbor_decode_differential", "cbor_json_writer"] {
                 write_seed(t, name, &bytes);
             }
         }
@@ -82,7 +82,7 @@ fn main() {
             include_bytes!("../../../benches/fixtures/record_profile.cbor").as_slice(),
         ),
     ] {
-        for target in ["cbor_decode", "cbor_decode_differential"] {
+        for target in ["cbor_decode", "cbor_decode_differential", "cbor_json_writer"] {
             write_seed(target, name, bytes);
         }
     }

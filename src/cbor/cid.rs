@@ -216,22 +216,23 @@ impl Cid {
 /// Base32 of 36 CID bytes = ceil(36 * 8 / 5) = 58 characters.
 const CID_BASE32_LEN: usize = 58;
 
-// Display: 'b' prefix + base32lower (RFC 4648 lowercase)
-//
-// Uses encode_mut into a stack buffer + in-place lowercasing to avoid
-// the two heap allocations that encode() + to_lowercase() would require.
+impl Cid {
+    /// The string form on the stack: 'b' prefix + base32lower (RFC 4648
+    /// lowercase), without the two heap allocations that encode() +
+    /// to_lowercase() would require.
+    pub(crate) fn to_multibase(self) -> [u8; CID_BASE32_LEN + 1] {
+        let mut buf = [b'b'; CID_BASE32_LEN + 1];
+        data_encoding::BASE32_NOPAD.encode_mut(&self.to_bytes(), &mut buf[1..]);
+        // Convert A-Z to a-z in-place; digits 2-7 are unchanged
+        buf.make_ascii_lowercase();
+        buf
+    }
+}
+
 impl fmt::Display for Cid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let raw = self.to_bytes();
-        let mut buf = [0u8; CID_BASE32_LEN];
-        data_encoding::BASE32_NOPAD.encode_mut(&raw, &mut buf);
-        // Convert A-Z to a-z in-place; digits 2-7 are unchanged
-        for b in &mut buf {
-            *b = b.to_ascii_lowercase();
-        }
-        f.write_str("b")?;
         // Base32 output is always valid ASCII
-        match std::str::from_utf8(&buf) {
+        match std::str::from_utf8(&self.to_multibase()) {
             Ok(s) => f.write_str(s),
             Err(_) => Err(fmt::Error),
         }
