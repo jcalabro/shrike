@@ -29,7 +29,7 @@ use support::sync1::{
     commit_fixture_cid_data_mismatch, commit_fixture_create, commit_fixture_delete,
     commit_fixture_duplicate_paths, commit_fixture_missing_commit_block,
     commit_fixture_multi_op_disjoint, commit_fixture_root_mismatch, commit_fixture_update,
-    mutate_signed_commit,
+    commit_fixture_update_path_only, mutate_signed_commit,
 };
 
 const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -64,6 +64,17 @@ fn invert_delete_uses_op_prev_cid() {
 #[test]
 fn invert_multi_op_disjoint_returns_previous_root() {
     let fixture = commit_fixture_multi_op_disjoint();
+
+    let previous_root = invert_commit(&fixture.raw_commit).unwrap();
+
+    assert_eq!(previous_root, fixture.prev_data);
+}
+
+/// Regression test: an update commit carrying only the MST path it rewrote
+/// (as indigo-style producers send) inverts to the previous root.
+#[test]
+fn invert_update_from_path_only_car() {
+    let fixture = commit_fixture_update_path_only();
 
     let previous_root = invert_commit(&fixture.raw_commit).unwrap();
 
@@ -906,6 +917,52 @@ async fn verify_commit_accepts_first_sighting_update_without_inversion() {
     assert_eq!(ops.len(), 1);
     assert_eq!(ops[0].action, "update");
     assert_eq!(verifier.stats().inversion_failures, 0);
+    assert_eq!(
+        store.load_chain(&fixture.raw_commit.repo).await.unwrap(),
+        Some(ChainState {
+            rev: fixture.raw_commit.rev.to_string(),
+            data: fixture.post_data,
+        })
+    );
+}
+
+/// Regression test: a chained update commit whose CAR carries only the
+/// rewritten MST path verifies, with no inversion failure or resync. It used
+/// to fail inversion with `BlockNotFound` and fall back to a resync.
+#[tokio::test]
+async fn verify_commit_accepts_chained_update_with_path_only_car() {
+    let fixture = commit_fixture_update_path_only();
+    let (verifier, store, _resolver) = verifier_for_keys(
+        fixture.raw_commit.repo.clone(),
+        vec![fixture.public_key_bytes],
+        VerifierPolicy::Error,
+        HostingPolicy::Track,
+    );
+    store
+        .save_chain(
+            &fixture.raw_commit.repo,
+            ChainState {
+                rev: "3aaaaaaaaaaaa".to_owned(),
+                data: fixture.prev_data,
+            },
+        )
+        .await
+        .unwrap();
+
+    let ops = verifier
+        .verify_commit(&fixture.raw_commit)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].action, "update");
+    assert_eq!(ops[0].cid, fixture.record);
+    let stats = verifier.stats();
+    assert_eq!(stats.inversion_failures, 0);
+    assert_eq!(stats.chain_breaks, 0);
+    assert_eq!(stats.resyncs, 0);
+    assert_eq!(stats.events_verified, 1);
     assert_eq!(
         store.load_chain(&fixture.raw_commit.repo).await.unwrap(),
         Some(ChainState {

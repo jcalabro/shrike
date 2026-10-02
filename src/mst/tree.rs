@@ -133,19 +133,43 @@ impl DetachedTree {
         }
     }
 
-    /// Report the blocks `src` lacks that a get, insert, or remove of any of
-    /// `keys` needs.
+    /// Report the blocks `src` lacks that a get or insert of any of `keys`
+    /// needs: the nodes on each key's search path.
     ///
-    /// Loads every node on those keys' paths that `src` can supply and
-    /// returns the CIDs of the first unavailable node on each path, sorted
-    /// and deduplicated. What lies below an unavailable node is unknown
-    /// until it is supplied, so callers loop: fetch the reported blocks,
-    /// make them visible through `src`, and call again until the result is
-    /// empty. Each round descends at least one tree level.
+    /// Loads every node on those paths that `src` can supply and returns the
+    /// CIDs of the first unavailable node on each path, sorted and
+    /// deduplicated. What lies below an unavailable node is unknown until it
+    /// is supplied, so callers loop: fetch the reported blocks, make them
+    /// visible through `src`, and call again until the result is empty. Each
+    /// round descends at least one tree level.
+    ///
+    /// A remove needs more; use
+    /// [`missing_blocks_for_remove`](Self::missing_blocks_for_remove) for
+    /// keys that will be removed.
     pub fn missing_blocks<'k>(
         &mut self,
         src: &dyn BlockSource,
         keys: impl IntoIterator<Item = &'k str>,
+    ) -> Result<Vec<Cid>, MstError> {
+        self.missing(src, keys, Visit::Lookup)
+    }
+
+    /// Like [`missing_blocks`](Self::missing_blocks), for a remove of any of
+    /// `keys`: each key's search path, plus the two subtrees beside the key
+    /// that removing it merges.
+    pub fn missing_blocks_for_remove<'k>(
+        &mut self,
+        src: &dyn BlockSource,
+        keys: impl IntoIterator<Item = &'k str>,
+    ) -> Result<Vec<Cid>, MstError> {
+        self.missing(src, keys, Visit::Remove)
+    }
+
+    fn missing<'k>(
+        &mut self,
+        src: &dyn BlockSource,
+        keys: impl IntoIterator<Item = &'k str>,
+        visit: Visit,
     ) -> Result<Vec<Cid>, MstError> {
         self.check_usable()?;
         let mut missing = Vec::new();
@@ -155,7 +179,7 @@ impl DetachedTree {
                 persisted: &mut self.persisted,
             };
             for key in keys {
-                visit_key_path(&mut ld, root, key, true, &mut missing)?;
+                visit_key_path(&mut ld, root, key, visit, true, &mut missing)?;
             }
         }
         missing.sort_unstable();
@@ -189,7 +213,7 @@ impl DetachedTree {
         val: Cid,
     ) -> Result<Option<Cid>, MstError> {
         self.check_usable()?;
-        let prev = self.load_key_path(src, &key)?;
+        let prev = self.load_key_path(src, &key, Visit::Lookup)?;
         if prev == Some(val) {
             return Ok(prev);
         }
@@ -210,7 +234,7 @@ impl DetachedTree {
     /// removal touches, leaving the tree unchanged.
     pub fn remove(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
         self.check_usable()?;
-        if self.load_key_path(src, key)?.is_none() {
+        if self.load_key_path(src, key, Visit::Remove)?.is_none() {
             return Ok(None);
         }
         let Some(root) = self.root.take() else {
@@ -348,9 +372,14 @@ impl DetachedTree {
         Ok(out)
     }
 
-    /// Load every node an insert or remove of `key` touches, and return the
-    /// key's current value.
-    fn load_key_path(&mut self, src: &dyn BlockSource, key: &str) -> Result<Option<Cid>, MstError> {
+    /// Load every node an insert or remove (per `visit`) of `key` touches,
+    /// and return the key's current value.
+    fn load_key_path(
+        &mut self,
+        src: &dyn BlockSource,
+        key: &str,
+        visit: Visit,
+    ) -> Result<Option<Cid>, MstError> {
         let Some(root) = self.root.as_deref_mut() else {
             return Ok(None);
         };
@@ -359,7 +388,7 @@ impl DetachedTree {
             persisted: &mut self.persisted,
         };
         let mut missing = Vec::new();
-        visit_key_path(&mut ld, root, key, true, &mut missing)?;
+        visit_key_path(&mut ld, root, key, visit, true, &mut missing)?;
         if let Some(cid) = missing.first() {
             return Err(MstError::BlockNotFound(cid.to_string()));
         }
@@ -427,20 +456,31 @@ fn require_loaded(n: &Node) -> Result<(), MstError> {
     ))
 }
 
+/// Which operation a [`visit_key_path`] loads nodes for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Visit {
+    /// A get or insert, which follows only the key's search path.
+    Lookup,
+    /// A remove, which also merges the subtrees beside the key.
+    Remove,
+}
+
 /// Load the nodes below `n` that a get, insert, or remove of `key`
 /// touches, collecting the CIDs of stubs the source cannot supply. `top`
 /// is set for the root.
 ///
-/// That is the key's search path, continued into both subtrees next to an
-/// entry equal to `key` when both exist. A remove merges those two subtrees
-/// along their facing edges, which is exactly where `key` sorts within
-/// each; a lone neighbour is re-linked without being read. A new key's
-/// split follows the search path. Removing the root's only entry leaves a
-/// chain of emptied nodes for `trim_top` to collapse, which this loads.
+/// A get, an update of an existing key, and a new key's split all follow
+/// the search path alone; an update leaves the tree's shape unchanged.
+/// A remove continues into both subtrees next to an entry equal to `key`
+/// when both exist: it merges them along their facing edges, which is
+/// exactly where `key` sorts within each; a lone neighbour is re-linked
+/// without being read. Removing the root's only entry leaves a chain of
+/// emptied nodes for `trim_top` to collapse, which this loads.
 fn visit_key_path(
     ld: &mut Loader<'_>,
     n: &mut Node,
     key: &str,
+    visit: Visit,
     top: bool,
     missing: &mut Vec<Cid>,
 ) -> Result<(), MstError> {
@@ -449,12 +489,13 @@ fn visit_key_path(
         return Ok(());
     }
     match n.entries.binary_search_by(|e| e.key.as_str().cmp(key)) {
+        Ok(_) if visit == Visit::Lookup => {}
         Ok(i) => {
             let only = top && n.entries.len() == 1;
             match neighbours(n, i) {
                 (Some(left), Some(right)) => {
-                    visit_key_path(ld, left, key, false, missing)?;
-                    visit_key_path(ld, right, key, false, missing)?;
+                    visit_key_path(ld, left, key, visit, false, missing)?;
+                    visit_key_path(ld, right, key, visit, false, missing)?;
                 }
                 (Some(child), None) | (None, Some(child)) if only => {
                     visit_root_chain(ld, child, missing)?;
@@ -464,7 +505,7 @@ fn visit_key_path(
         }
         Err(i) => {
             if let Some(child) = child_before(n, i) {
-                visit_key_path(ld, child, key, false, missing)?;
+                visit_key_path(ld, child, key, visit, false, missing)?;
             }
         }
     }
@@ -2322,9 +2363,9 @@ mod tests {
         assert!(failures > 0, "no hidden block affected the remove");
     }
 
-    /// `missing_blocks` prefetches everything the operations need, one tree
-    /// level per round, after which they run against a source with no
-    /// blocks at all.
+    /// `missing_blocks` and `missing_blocks_for_remove` prefetch everything
+    /// the operations need, one tree level per round, after which they run
+    /// against a source with no blocks at all.
     #[test]
     fn missing_blocks_prefetch_rounds() {
         let base: std::collections::BTreeMap<String, Cid> = (0..200)
@@ -2343,15 +2384,20 @@ mod tests {
             Op::Remove(record_key(114)),
             Op::Insert(record_key(301), test_value_cid()),
         ];
-        let keys = [record_key(54), record_key(114), record_key(301)];
+        let removed = [record_key(54), record_key(114)];
+        let inserted = [record_key(301)];
 
         let mut tree = DetachedTree::load(base_write.root);
         let mut fetched = std::collections::HashMap::new();
         let mut rounds = 0;
         loop {
-            let missing = tree
-                .missing_blocks(&fetched, keys.iter().map(String::as_str))
+            let mut missing = tree
+                .missing_blocks_for_remove(&fetched, removed.iter().map(String::as_str))
                 .unwrap();
+            missing.extend(
+                tree.missing_blocks(&fetched, inserted.iter().map(String::as_str))
+                    .unwrap(),
+            );
             if missing.is_empty() {
                 break;
             }
@@ -2446,7 +2492,11 @@ mod tests {
         store.hidden.borrow_mut().insert(child);
 
         let mut tree = DetachedTree::load(root);
-        assert_eq!(tree.missing_blocks(&store, [a.as_str()]).unwrap(), []);
+        assert_eq!(
+            tree.missing_blocks_for_remove(&store, [a.as_str()])
+                .unwrap(),
+            []
+        );
         assert!(tree.remove(&store, &a).unwrap().is_some());
         let write = tree.flush().unwrap();
         assert_eq!(write.root, child);
@@ -2465,7 +2515,11 @@ mod tests {
 
         store.hidden.borrow_mut().insert(filler);
         let mut tree = DetachedTree::load(root);
-        assert_eq!(tree.missing_blocks(&store, [a.as_str()]).unwrap(), [filler]);
+        assert_eq!(
+            tree.missing_blocks_for_remove(&store, [a.as_str()])
+                .unwrap(),
+            [filler]
+        );
         assert!(matches!(
             tree.remove(&store, &a),
             Err(MstError::BlockNotFound(_))
@@ -2510,6 +2564,97 @@ mod tests {
                 canonical_root(&rest),
                 "height {height}"
             );
+        }
+    }
+
+    /// A tree of `low` height-0 keys and `high` height-1 keys interleaved,
+    /// and a height-1 key with a height-0 subtree on both sides.
+    fn two_level_tree(low: usize, high: usize) -> (Vec<String>, String) {
+        let mut keys: Vec<String> = keys_at(0, 0, low).into_iter().map(|(_, k)| k).collect();
+        let highs: Vec<String> = keys_at(1, 0, high).into_iter().map(|(_, k)| k).collect();
+        keys.extend(highs.iter().cloned());
+        keys.sort();
+        let flanked = highs
+            .iter()
+            .find(|h| {
+                let i = keys.binary_search(h).unwrap();
+                i > 0
+                    && i + 1 < keys.len()
+                    && height_for_key(&keys[i - 1]) == 0
+                    && height_for_key(&keys[i + 1]) == 0
+            })
+            .expect("no height-1 key with subtrees on both sides")
+            .clone();
+        (keys, flanked)
+    }
+
+    /// Regression test: undoing an update (inserting a key's previous
+    /// value) needs only the root-to-key path the update rewrote, which is
+    /// all an indigo-style producer ships for an update op. The insert used
+    /// to load the subtrees on both sides of the key, as a remove does, and
+    /// failed with `BlockNotFound` on a commit that carried just the path.
+    #[test]
+    fn update_inverts_with_only_the_key_path() {
+        let (keys, key) = two_level_tree(60, 3);
+        let old = Cid::compute(Codec::Drisl, b"v");
+        let new = Cid::compute(Codec::Drisl, b"new");
+        let base = write_of(&keys);
+        let all: std::collections::HashMap<Cid, Vec<u8>> =
+            base.new_blocks.iter().cloned().collect();
+
+        let mut tree = DetachedTree::load(base.root);
+        assert_eq!(tree.insert(&all, key.clone(), new).unwrap(), Some(old));
+        let update = tree.flush().unwrap();
+        // The key is in the root: the update rewrote only that node.
+        assert_eq!(update.new_blocks.len(), 1);
+        let path: std::collections::HashMap<Cid, Vec<u8>> = update.new_blocks.into_iter().collect();
+
+        let mut inv = DetachedTree::load(update.root);
+        assert_eq!(inv.missing_blocks(&path, [key.as_str()]).unwrap(), []);
+        assert_eq!(inv.get(&path, &key).unwrap(), Some(new));
+        assert_eq!(inv.insert(&path, key.clone(), old).unwrap(), Some(new));
+        assert_eq!(inv.flush().unwrap().root, base.root);
+
+        // A remove of the same key still needs both neighbours, and fails
+        // cleanly without them.
+        let mut inv = DetachedTree::load(update.root);
+        assert_eq!(
+            inv.missing_blocks_for_remove(&path, [key.as_str()])
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            inv.remove(&path, &key),
+            Err(MstError::BlockNotFound(_))
+        ));
+        assert_eq!(inv.flush().unwrap().root, update.root);
+    }
+
+    /// Every key of a multi-level tree can be updated and the update undone
+    /// from the blocks the update wrote alone.
+    #[test]
+    fn every_update_inverts_from_its_own_new_blocks() {
+        let base: std::collections::BTreeMap<String, Cid> = (0..300)
+            .map(|i| (record_key(i), test_value_cid()))
+            .collect();
+        let base_write = canonical_write(&base);
+        let all: std::collections::HashMap<Cid, Vec<u8>> =
+            base_write.new_blocks.iter().cloned().collect();
+        let new = Cid::compute(Codec::Drisl, b"new");
+
+        for key in base.keys() {
+            let mut tree = DetachedTree::load(base_write.root);
+            tree.insert(&all, key.clone(), new).unwrap();
+            let update = tree.flush().unwrap();
+            let path: std::collections::HashMap<Cid, Vec<u8>> =
+                update.new_blocks.into_iter().collect();
+
+            let mut inv = DetachedTree::load(update.root);
+            assert_eq!(inv.missing_blocks(&path, [key.as_str()]).unwrap(), []);
+            inv.insert(&NoBlocks, key.clone(), test_value_cid())
+                .unwrap_or_else(|e| panic!("{key}: {e}"));
+            assert_eq!(inv.flush().unwrap().root, base_write.root, "{key}");
         }
     }
 }

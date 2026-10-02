@@ -49,6 +49,7 @@ pub fn parse_at_uri(value: &str) -> Result<JsValue, JsValue> {
         "authority": uri.authority(),
         "collection": uri.collection(),
         "rkey": uri.rkey(),
+        "fragment": uri.fragment(),
     }))
 }
 

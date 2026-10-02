@@ -452,7 +452,9 @@ mod tests {
         for (s, want) in [
             ("", &b""[..]),
             ("TQ", b"M"),
+            ("TQ=", b"M"),
             ("TQ==", b"M"),
+            ("TWE", b"Ma"),
             ("TWE=", b"Ma"),
             ("TWFu", b"Man"),
             ("+/+/", &[0xfb, 0xff, 0xbf]),
@@ -464,11 +466,24 @@ mod tests {
         assert_eq!(drisl_to_json(&bytes).unwrap(), json!({"$bytes": "TWE"}));
     }
 
+    /// Regression test: partially padded base64 stayed a plain map, so the
+    /// same JSON hashed to a different CID than in the reference.
+    #[test]
+    fn partially_padded_bytes_decode() {
+        let j = json!({"a": {"$bytes": "AQ="}});
+        assert_eq!(
+            json_to_drisl(&j, Integers::Any).unwrap(),
+            [0xa1, 0x61, b'a', 0x41, 0x01]
+        );
+    }
+
     #[test]
     fn malformed_bytes_stay_plain_maps() {
         for json in [
             json!({"$bytes": "🐻"}),
-            json!({"$bytes": "TQ="}),
+            json!({"$bytes": "TQ==="}),
+            json!({"$bytes": "TWE=="}),
+            json!({"$bytes": "TWFu="}),
             json!({"$bytes": "-_"}),
             json!({"$bytes": [1, 2, 3]}),
             json!({"$bytes": "TQ", "other": 1}),

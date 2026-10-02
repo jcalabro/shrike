@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use data_encoding::BASE64_NOPAD;
 use proptest::prelude::*;
+use shrike::cbor::json::decode_base64;
 use shrike::cbor::{Cid, Codec, Value, decode, encode_value};
 
 proptest! {
@@ -103,5 +105,19 @@ proptest! {
         let s = cid.to_string();
         let parsed: Cid = s.parse().unwrap();
         prop_assert_eq!(cid, parsed);
+    }
+
+    // `$bytes` takes padding from none up to the full final group, as the
+    // reference does, and nothing past it.
+    #[test]
+    fn bytes_base64_accepts_padding_within_the_final_group(
+        data in prop::collection::vec(any::<u8>(), 0..64),
+        pad in 0usize..4,
+    ) {
+        let unpadded = BASE64_NOPAD.encode(&data);
+        let full = unpadded.len().next_multiple_of(4) - unpadded.len();
+        let s = format!("{unpadded}{}", "=".repeat(pad));
+        let want = (pad <= full).then_some(data);
+        prop_assert_eq!(decode_base64(&s), want, "{}", s);
     }
 }

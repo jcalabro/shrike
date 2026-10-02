@@ -324,11 +324,11 @@ fn label_bytes_sig_json_uses_dollar_bytes() {
 fn bytes_json_accepts_padded_and_unpadded_base64() {
     use shrike::api::Bytes;
 
-    for s in ["3q2+7w", "3q2+7w=="] {
+    for s in ["3q2+7w", "3q2+7w=", "3q2+7w=="] {
         let bytes: Bytes = serde_json::from_value(serde_json::json!({ "$bytes": s })).unwrap();
         assert_eq!(bytes.0, vec![0xDE, 0xAD, 0xBE, 0xEF], "{s}");
     }
-    for s in ["3q2+7w=", "3q2-7w", "3q2+ 7w"] {
+    for s in ["3q2+7w===", "3q2-7w", "3q2+ 7w"] {
         assert!(
             serde_json::from_value::<Bytes>(serde_json::json!({ "$bytes": s })).is_err(),
             "{s}"

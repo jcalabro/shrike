@@ -306,6 +306,10 @@ name = "oauth_scopes_interop"
 required-features = ["oauth"]
 
 [[test]]
+name = "syntax_interop"
+required-features = ["syntax"]
+
+[[test]]
 name = "oauth_scopes_property_tests"
 required-features = ["oauth"]
 

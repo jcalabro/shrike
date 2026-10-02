@@ -445,6 +445,11 @@ mod tests {
         // Unpadded base64 counts the same.
         let unpadded = serde_json::json!({"by": {"$bytes": "AAA"}});
         validate_record(&catalog, "com.example.by", &unpadded).unwrap();
+        // So does partially padded base64, but not over-padded.
+        let partial = serde_json::json!({"by": {"$bytes": "AQ="}});
+        validate_record(&catalog, "com.example.by", &partial).unwrap();
+        let over = serde_json::json!({"by": {"$bytes": "AAA=="}});
+        assert!(validate_record(&catalog, "com.example.by", &over).is_err());
         // A bare string is not bytes.
         let bare = serde_json::json!({"by": "AA"});
         assert!(validate_record(&catalog, "com.example.by", &bare).is_err());

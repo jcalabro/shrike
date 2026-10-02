@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6e1769c60818679a20d26c68cc0f6179726fa98c0be08f1cb3314f92b4c30564 # shrinks to base = {70, 197, 235, 299, 323, 348, 358, 458, 478, 495, 513, 514, 518, 532, 538, 563, 592, 665, 692, 763, 811, 894, 920, 969, 992, 1005, 1023, 1043, 1046, 1089, 1100, 1111, 1176, 1212, 1216, 1232, 1252, 1435, 1527, 1542, 1574, 1586, 1629, 1696, 1763, 1793, 1882, 1885, 1994, 2054, 2080, 2122, 2127, 2149, 2154, 2156, 2213, 2305, 2314, 2325, 2365, 2367, 2434, 2469, 2483, 2495, 2514, 2543, 2564, 2726, 2776, 2794, 2814, 2824, 2977}, updated = [Index(5323423754186167834), Index(15687744715356051252), Index(11873003204547651813), Index(4037539734190527724), Index(9871104454974033838)]
+cc 96a3e2c37bc0a5a4c4e1830f48e25a430bb2cc37ebb238abb9d95e09f51a3eb5 # shrinks to base = {24, 139, 351, 2198, 2692, 2886, 2959}, ops = [(176, 1), (814, 0), (1118, 1), (1611, 0), (1934, 0), (2071, 0), (2404, 0), (2596, 0), (2653, 1), (2856, 0), (2886, 0)]

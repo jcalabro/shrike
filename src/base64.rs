@@ -5,19 +5,19 @@ use data_encoding::BASE64_NOPAD;
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/// Decode standard-alphabet base64, padded or not. Non-zero trailing bits are
-/// accepted, as the reference does. Whitespace, the URL-safe alphabet and
-/// malformed padding are rejected.
+/// Decode standard-alphabet base64, padded, unpadded, or partially padded
+/// (`AQ=`). Non-zero trailing bits are accepted, as the reference does.
+/// Whitespace, the URL-safe alphabet and padding that runs past the final
+/// four-character group are rejected.
 pub(crate) fn decode(s: &str) -> Option<Vec<u8>> {
     let bytes = s.as_bytes();
     let body = bytes
         .strip_suffix(b"==")
-        .or_else(|| bytes.strip_suffix(b"="));
-    let body = match body {
-        Some(body) if bytes.len().is_multiple_of(4) => body,
-        Some(_) => return None,
-        None => bytes,
-    };
+        .or_else(|| bytes.strip_suffix(b"="))
+        .unwrap_or(bytes);
+    if bytes.len() > body.len().next_multiple_of(4) {
+        return None;
+    }
     let mut body = body.to_vec();
     // BASE64_NOPAD insists that trailing bits are zero, so clear them.
     let trailing_mask = match body.len() % 4 {
@@ -63,6 +63,24 @@ mod tests {
         }
     }
 
+    /// Regression test: partial padding, which the reference accepts, was
+    /// rejected.
+    #[test]
+    fn accepts_partial_padding() {
+        assert_eq!(decode("AQ="), Some(vec![1]));
+        assert_eq!(decode("AQ=="), Some(vec![1]));
+        assert_eq!(decode("TQ="), Some(b"M".to_vec()));
+        assert_eq!(decode("TWFuTQ="), Some(b"ManM".to_vec()));
+        for raw in [&b"\x01"[..], b"Ma", b"ManMa", &[0xff; 7]] {
+            let unpadded = BASE64_NOPAD.encode(raw);
+            let padded = data_encoding::BASE64.encode(raw);
+            for pad in 0..=padded.len() - unpadded.len() {
+                let s = format!("{unpadded}{}", "=".repeat(pad));
+                assert_eq!(decode(&s).as_deref(), Some(raw), "{s}");
+            }
+        }
+    }
+
     #[test]
     fn accepts_non_zero_trailing_bits() {
         // "TR" and "TWF" carry set bits after the last whole byte.
@@ -98,9 +116,17 @@ mod tests {
             "TQ===",
             "TQ====",
             "T===",
+            "T=",
+            "T==",
             "=",
             "==",
-            "TQ=",
+            "===",
+            "AQI==",
+            "QUJD=",
+            "QUJD==",
+            "AQ=A",
+            "AQ=Q",
+            "A=Q=",
             "T",
             "TWFhT",
             "TW E",
