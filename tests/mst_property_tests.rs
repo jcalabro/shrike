@@ -88,6 +88,90 @@ impl BlockSource for FlakySource<'_> {
     }
 }
 
+/// Keys drawn from a dense index space, so trees reach height 2 or more and
+/// ops hit existing keys often.
+fn indexed_key(i: u16) -> String {
+    format!("com.example.k/{i:05}")
+}
+
+/// A commit's ops on distinct keys: (key index, kind), where kind 0 creates
+/// or updates (whichever applies) and kind 1 deletes if the key exists.
+fn gen_commit_ops(max: usize) -> impl Strategy<Value = Vec<(u16, u8)>> {
+    prop::collection::btree_map(0u16..3000, 0u8..2, 1..max).prop_map(|m| m.into_iter().collect())
+}
+
+/// What a firehose commit op did, with the key's previous value.
+enum CommitOp {
+    Create(String),
+    Update(String, Cid),
+    Delete(String, Cid),
+}
+
+/// Apply `ops` to the tree of `base` and return the new tree's flush, the
+/// ops as a producer reports them, and the post-commit tree.
+fn commit(
+    base: &BTreeMap<String, Cid>,
+    ops: &[(u16, u8)],
+    val: Cid,
+) -> (
+    TreeWrite,
+    Vec<CommitOp>,
+    DetachedTree,
+    HashMap<Cid, Vec<u8>>,
+) {
+    let base_write = canonical_write(base);
+    let mut store: HashMap<Cid, Vec<u8>> = base_write.new_blocks.into_iter().collect();
+    let mut tree = DetachedTree::load(base_write.root);
+    let mut done = Vec::new();
+    for &(i, kind) in ops {
+        let key = indexed_key(i);
+        match (base.get(&key), kind) {
+            (None, _) => {
+                tree.insert(&store, key.clone(), val).unwrap();
+                done.push(CommitOp::Create(key));
+            }
+            (Some(&prev), 0) => {
+                tree.insert(&store, key.clone(), val).unwrap();
+                done.push(CommitOp::Update(key, prev));
+            }
+            (Some(&prev), _) => {
+                tree.remove(&store, &key).unwrap();
+                done.push(CommitOp::Delete(key, prev));
+            }
+        }
+    }
+    let write = tree.flush().unwrap();
+    store.extend(write.new_blocks.iter().cloned());
+    (write, done, tree, store)
+}
+
+/// Undo `ops` on the tree rooted at `root` using only `blocks`, prefetching
+/// each op's blocks through `missing_blocks*` first, as an async caller
+/// would. Fails if anything outside `blocks` is needed.
+fn invert(root: Cid, ops: &[CommitOp], blocks: &HashMap<Cid, Vec<u8>>) -> Result<Cid, MstError> {
+    let mut tree = DetachedTree::load(root);
+    for op in ops.iter().rev() {
+        let missing = match op {
+            CommitOp::Create(k) => tree.missing_blocks_for_remove(blocks, [k.as_str()])?,
+            CommitOp::Update(k, _) | CommitOp::Delete(k, _) => {
+                tree.missing_blocks(blocks, [k.as_str()])?
+            }
+        };
+        if let Some(cid) = missing.first() {
+            return Err(MstError::BlockNotFound(cid.to_string()));
+        }
+        match op {
+            CommitOp::Create(k) => {
+                tree.remove(&NoBlocks, k)?;
+            }
+            CommitOp::Update(k, prev) | CommitOp::Delete(k, prev) => {
+                tree.insert(&NoBlocks, k.clone(), *prev)?;
+            }
+        }
+    }
+    Ok(tree.flush()?.root)
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
@@ -298,5 +382,54 @@ proptest! {
             prop_assert!(window[0].0 < window[1].0,
                 "entries must be sorted: {:?} should be < {:?}", window[0].0, window[1].0);
         }
+    }
+
+    #[test]
+    fn updates_invert_from_the_rewritten_path_alone(
+        base in prop::collection::btree_set(0u16..3000, 1..400),
+        updated in prop::collection::vec(any::<Index>(), 1..8),
+    ) {
+        // An update commit from an indigo-style producer carries only the
+        // nodes the update rewrote (the root-to-key paths), not the
+        // neighbouring subtrees a covering proof adds. That must suffice
+        // to undo it.
+        let val = Cid::compute(Codec::Drisl, b"new");
+        let present: Vec<u16> = base.iter().copied().collect();
+        let ops: BTreeMap<u16, u8> = updated.iter().map(|ix| (*ix.get(&present), 0)).collect();
+        let ops: Vec<(u16, u8)> = ops.into_iter().collect();
+        let base: BTreeMap<String, Cid> =
+            base.into_iter().map(|i| (indexed_key(i), op_value(0))).collect();
+
+        let (write, done, _, _) = commit(&base, &ops, val);
+        prop_assert!(done.iter().all(|op| matches!(op, CommitOp::Update(..))));
+        let path: HashMap<Cid, Vec<u8>> = write.new_blocks.into_iter().collect();
+        prop_assert_eq!(invert(write.root, &done, &path).unwrap(), canonical_write(&base).root);
+    }
+
+    #[test]
+    fn commits_invert_from_indigo_style_proofs(
+        base in prop::collection::btree_set(0u16..3000, 0..400),
+        ops in gen_commit_ops(12),
+    ) {
+        // indigo's proveMutation (and producers porting it) ships the
+        // rewritten nodes plus covering proofs for creates and deletes
+        // only. The previous root must be recoverable from exactly that.
+        let val = Cid::compute(Codec::Drisl, b"new");
+        let base: BTreeMap<String, Cid> =
+            base.into_iter().map(|i| (indexed_key(i), op_value(0))).collect();
+        let (write, done, mut post, store) = commit(&base, &ops, val);
+
+        let mut blocks: HashMap<Cid, Vec<u8>> = write.new_blocks.into_iter().collect();
+        let proved: Vec<&str> = done
+            .iter()
+            .filter_map(|op| match op {
+                CommitOp::Create(k) | CommitOp::Delete(k, _) => Some(k.as_str()),
+                CommitOp::Update(..) => None,
+            })
+            .collect();
+        for cid in post.covering_proof(&store, proved).unwrap() {
+            blocks.insert(cid, store[&cid].clone());
+        }
+        prop_assert_eq!(invert(write.root, &done, &blocks).unwrap(), canonical_write(&base).root);
     }
 }

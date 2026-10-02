@@ -69,6 +69,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "mst_invert"
+path = "fuzz_targets/mst_invert.rs"
+test = false
+doc = false
+bench = false
+
 # --- CBOR / DRISL ---
 [[bin]]
 name = "cbor_decode"

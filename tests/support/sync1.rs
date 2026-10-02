@@ -12,7 +12,7 @@ use std::rc::Rc;
 use shrike::car::Block;
 use shrike::cbor::{Cid, Codec, Encoder, Value, encode_text_map};
 use shrike::crypto::{P256SigningKey, SigningKey};
-use shrike::mst::{BlockStore, MstError, Tree};
+use shrike::mst::{BlockStore, DetachedTree, MstError, NoBlocks, Tree, height_for_key};
 use shrike::repo::Commit;
 use shrike::sync::{RawCommit, RawRepoOp};
 use shrike::syntax::{Did, Tid};
@@ -256,6 +256,77 @@ pub fn commit_fixture_multi_op_disjoint() -> CommitFixture {
         },
         prev_data,
         post_data,
+        prev_record: Some(old_cid),
+        record: Some(new_cid),
+        signing_key_bytes: signed_commit.signing_key_bytes,
+        public_key_bytes: signed_commit.public_key_bytes,
+    }
+}
+
+/// An update commit shaped like an indigo-style producer's: the CAR holds
+/// the signed commit, the new record, and only the MST nodes the update
+/// rewrote. The updated key has subtrees on both sides, which a covering
+/// proof would include and this CAR leaves out.
+pub fn commit_fixture_update_path_only() -> CommitFixture {
+    let did = Did::try_from(FIXTURE_DID).unwrap();
+    let old_cid = Cid::compute(Codec::Drisl, RECORD_V1);
+    let new_cid = Cid::compute(Codec::Drisl, RECORD_V2);
+    let keys: Vec<String> = (0..400)
+        .map(|i| format!("app.bsky.feed.post/{i:06}"))
+        .collect();
+    // A height-1 key between two height-0 keys has a subtree on each side.
+    let path = keys
+        .windows(3)
+        .find(|w| {
+            height_for_key(&w[1]) == 1 && height_for_key(&w[0]) == 0 && height_for_key(&w[2]) == 0
+        })
+        .unwrap()[1]
+        .clone();
+
+    let mut tree = DetachedTree::new();
+    for key in &keys {
+        tree.insert(&NoBlocks, key.clone(), old_cid).unwrap();
+    }
+    let base = tree.flush().unwrap();
+    let base_blocks: HashMap<Cid, Vec<u8>> = base.new_blocks.into_iter().collect();
+    tree.insert(&base_blocks, path.clone(), new_cid).unwrap();
+    let update = tree.flush().unwrap();
+
+    let mut blocks: Vec<Block> = update
+        .new_blocks
+        .into_iter()
+        .map(|(cid, data)| Block { cid, data })
+        .collect();
+    blocks.push(Block {
+        cid: new_cid,
+        data: RECORD_V2.to_vec(),
+    });
+    let rev = Tid::new(1_700_000_000_000_000, 2).unwrap();
+    let signed_commit = push_commit_block(&did, rev, update.root, &mut blocks);
+    let car = shrike::car::write_all(&[signed_commit.cid], &blocks).unwrap();
+
+    CommitFixture {
+        raw_commit: RawCommit {
+            repo: did,
+            rev,
+            seq: 44,
+            time: FIXTURE_TIME.to_owned(),
+            since: None,
+            commit: signed_commit.cid,
+            blocks: car,
+            ops: vec![RawRepoOp {
+                action: "update".to_owned(),
+                path,
+                cid: Some(new_cid),
+                prev: Some(old_cid),
+            }],
+            blobs: Vec::new(),
+            prev_data: Some(base.root),
+            too_big: false,
+            rebase: false,
+        },
+        prev_data: base.root,
+        post_data: update.root,
         prev_record: Some(old_cid),
         record: Some(new_cid),
         signing_key_bytes: signed_commit.signing_key_bytes,

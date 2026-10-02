@@ -46,6 +46,7 @@ cargo +nightly fuzz run cbor_decode_differential
 | `mst_load_and_walk` | `Tree::load` + traverse (the prefix-reslice / key-order path; H2/H3/H4) never panics |
 | `mst_height_for_key` | height is panic-free, deterministic, in `[0,128]` |
 | `mst_insert_get` | every inserted key is retrievable; **root CID is insertion-order-independent** |
+| `mst_invert` | undoing a commit's ops from only the blocks an indigo-style or reference producer ships **restores the previous root** |
 | `syntax_parsers` | all 9 identifier parsers never panic; normalization is **idempotent** (canonical form re-parses to itself) |
 | `repo_commit_from_cbor` | commit decode never panics; signed commits round-trip |
 | `firehose_frame` | `parse_firehose_frame` + `parse_raw_sync_frame` never panic |

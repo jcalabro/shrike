@@ -324,9 +324,18 @@ impl<S: RepoStore> Repo<S> {
             .collect();
 
         // Load every node the batch touches, so applying it reads nothing.
-        let missing = self
+        let (deleted, written): (Vec<_>, Vec<_>) = writes
+            .iter()
+            .zip(&keys)
+            .partition(|(w, _)| matches!(w, WriteOp::Delete { .. }));
+        let src = StoreSource(&self.store);
+        let mut missing = self
             .tree
-            .missing_blocks(&StoreSource(&self.store), keys.iter().map(String::as_str))?;
+            .missing_blocks(&src, written.iter().map(|(_, k)| k.as_str()))?;
+        missing.extend(
+            self.tree
+                .missing_blocks_for_remove(&src, deleted.iter().map(|(_, k)| k.as_str()))?,
+        );
         if let Some(cid) = missing.first() {
             return Err(RepoError::MissingBlock(*cid));
         }

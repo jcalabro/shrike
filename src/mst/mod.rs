@@ -8,8 +8,9 @@
 //! DetachedTree is the sans-IO core: it provides insert, get, remove, and
 //! walk operations, reads nodes it has not decoded yet from a BlockSource
 //! the caller supplies, and hands back new and retired node blocks from
-//! `flush` instead of writing them. Its `missing_blocks` method lets callers
-//! with asynchronous storage prefetch every node an operation needs.
+//! `flush` instead of writing them. Its `missing_blocks` and
+//! `missing_blocks_for_remove` methods let callers with asynchronous storage
+//! prefetch every node an operation needs.
 //!
 //! Tree wraps a DetachedTree around a synchronous BlockStore, loading nodes
 //! from it on demand and writing new nodes back when the root CID is
