@@ -58,44 +58,44 @@ impl Hash for Cid {
     }
 }
 
-/// A [`BuildHasher`] for maps and sets keyed by [`Cid`]: one keyed multiply
-/// per lookup instead of SipHash.
+/// A [`BuildHasher`] for maps keyed by [`Cid`]s or short strings: a keyed
+/// multiply per 8 bytes instead of SipHash.
 ///
-/// The key is random per instance, so blocks an attacker chooses cannot be
+/// The key is random per instance, so keys an attacker chooses cannot be
 /// aimed at one bucket.
 #[derive(Clone)]
-pub(crate) struct CidHashState {
+pub(crate) struct FastHashState {
     seed: u64,
     multiplier: u64,
 }
 
-impl Default for CidHashState {
+impl Default for FastHashState {
     fn default() -> Self {
         let random = RandomState::new();
-        CidHashState {
+        FastHashState {
             seed: random.hash_one(0u64),
             multiplier: random.hash_one(1u64) | 1,
         }
     }
 }
 
-impl BuildHasher for CidHashState {
-    type Hasher = CidHasher;
+impl BuildHasher for FastHashState {
+    type Hasher = FastHasher;
 
-    fn build_hasher(&self) -> CidHasher {
-        CidHasher {
+    fn build_hasher(&self) -> FastHasher {
+        FastHasher {
             state: self.seed,
             multiplier: self.multiplier,
         }
     }
 }
 
-pub(crate) struct CidHasher {
+pub(crate) struct FastHasher {
     state: u64,
     multiplier: u64,
 }
 
-impl Hasher for CidHasher {
+impl Hasher for FastHasher {
     #[inline]
     fn write_u64(&mut self, n: u64) {
         // A folded 64x64->128 multiply spreads every input bit over the
@@ -110,6 +110,8 @@ impl Hasher for CidHasher {
             word[..chunk.len()].copy_from_slice(chunk);
             self.write_u64(u64::from_le_bytes(word));
         }
+        // Otherwise "a" and "a\0" would fill the same words.
+        self.write_u64(bytes.len() as u64);
     }
 
     #[inline]
@@ -118,8 +120,8 @@ impl Hasher for CidHasher {
     }
 }
 
-/// A `HashMap` keyed by [`Cid`] with [`CidHashState`].
-pub(crate) type CidMap<V> = std::collections::HashMap<Cid, V, CidHashState>;
+/// A `HashMap` keyed by [`Cid`] with [`FastHashState`].
+pub(crate) type CidMap<V> = std::collections::HashMap<Cid, V, FastHashState>;
 
 impl Cid {
     /// Create a CID with all-zero hash. Not valid for content addressing —
@@ -286,6 +288,7 @@ impl<'de> Deserialize<'de> for Cid {
 )]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn compute_cid_drisl() {
@@ -398,7 +401,7 @@ mod tests {
 
     #[test]
     fn hash_separates_codecs_and_digests() {
-        let state = CidHashState::default();
+        let state = FastHashState::default();
         let raw = Cid::compute(Codec::Raw, b"same");
         let drisl = Cid::compute(Codec::Drisl, b"same");
         assert_eq!(raw.hash(), drisl.hash());
@@ -406,12 +409,20 @@ mod tests {
         assert_eq!(state.hash_one(raw), state.hash_one(raw));
 
         // Two instances key the hash differently.
-        let other = CidHashState::default();
+        let other = FastHashState::default();
         let differ = (0..32u8)
             .map(|i| Cid::compute(Codec::Drisl, &[i]))
             .filter(|c| state.hash_one(c) != other.hash_one(c))
             .count();
         assert!(differ > 30);
+    }
+
+    #[test]
+    fn hash_tells_zero_padded_strings_apart() {
+        let state = FastHashState::default();
+        let keys = ["", "\0", "a", "a\0", "a\0\0", "abcdefgh", "abcdefgh\0"];
+        let hashes: HashSet<u64> = keys.iter().map(|k| state.hash_one(k)).collect();
+        assert_eq!(hashes.len(), keys.len());
     }
 
     #[test]

@@ -192,11 +192,11 @@ fn parse_link(s: &str) -> Result<Option<Cid>, CborError> {
     }
     let v0 = s.starts_with('Q');
     let bytes = if v0 {
-        base_x(s, BASE58BTC)
+        base_x(s, BASE58BTC).map(LinkBytes::Heap)
     } else if let Some(rest) = s.strip_prefix('z') {
-        base_x(rest, BASE58BTC)
+        base_x(rest, BASE58BTC).map(LinkBytes::Heap)
     } else if let Some(rest) = s.strip_prefix('k') {
-        base_x(rest, BASE36)
+        base_x(rest, BASE36).map(LinkBytes::Heap)
     } else if let Some(rest) = s.strip_prefix('b') {
         base32_lower(rest)
     } else {
@@ -212,8 +212,9 @@ fn parse_link(s: &str) -> Result<Option<Cid>, CborError> {
         digest,
     } = parts;
     if version == 1 && (codec == 0x71 || codec == 0x55) && hash == 0x12 && digest.len() == 32 {
-        let mut canonical = [0x01, codec as u8, 0x12, 0x20].to_vec();
-        canonical.extend_from_slice(digest);
+        let mut canonical = [0; 36];
+        canonical[..4].copy_from_slice(&[0x01, codec as u8, 0x12, 0x20]);
+        canonical[4..].copy_from_slice(digest);
         return Cid::from_bytes(&canonical).map(Some);
     }
     Err(CborError::InvalidCid(format!(
@@ -285,16 +286,78 @@ fn base_x(s: &str, alphabet: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Room for a CID with a 64-byte digest.
+const INLINE_LINK: usize = 72;
+
+/// Binary CID decoded from a string: on the stack unless unusually long.
+enum LinkBytes {
+    Inline([u8; INLINE_LINK], usize),
+    Heap(Vec<u8>),
+}
+
+impl std::ops::Deref for LinkBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            LinkBytes::Inline(buf, len) => buf.get(..*len).unwrap_or_default(),
+            LinkBytes::Heap(bytes) => bytes,
+        }
+    }
+}
+
+/// Each byte's value as a lowercase base32 symbol, or 0xff.
+const BASE32_LOWER: [u8; 256] = {
+    let mut table = [0xff; 256];
+    let mut i = 0;
+    while i < 32 {
+        let symbol = if i < 26 { b'a' + i } else { b'2' + i - 26 };
+        table[symbol as usize] = i;
+        i += 1;
+    }
+    table
+};
+
 /// Decode lowercase RFC 4648 base32. Like `multiformats`, trailing `=` are
 /// ignored and trailing bits must be zero.
-fn base32_lower(s: &str) -> Option<Vec<u8>> {
-    let s = s.trim_end_matches('=');
-    if s.bytes().any(|b| b.is_ascii_uppercase()) {
+fn base32_lower(s: &str) -> Option<LinkBytes> {
+    let s = s.trim_end_matches('=').as_bytes();
+    // No byte count leaves 1, 3 or 6 symbols in the last group of 8.
+    if matches!(s.len() % 8, 1 | 3 | 6) {
         return None;
     }
-    data_encoding::BASE32_NOPAD
-        .decode(s.to_ascii_uppercase().as_bytes())
-        .ok()
+    let len = s.len() * 5 / 8;
+    let mut out = if len <= INLINE_LINK {
+        LinkBytes::Inline([0; INLINE_LINK], len)
+    } else {
+        LinkBytes::Heap(vec![0; len])
+    };
+    let bytes = match &mut out {
+        LinkBytes::Inline(buf, len) => buf.get_mut(..*len)?,
+        LinkBytes::Heap(bytes) => bytes,
+    };
+    // Each group of 8 symbols is 40 bits, 5 bytes. A shorter last group
+    // fills fewer bytes and leaves spare bits, which must be zero.
+    let mut symbols = 0;
+    let mut group_bits = |group: &[u8]| {
+        group.iter().fold(0u64, |bits, &c| {
+            let value = BASE32_LOWER[usize::from(c)];
+            symbols |= value;
+            bits << 5 | u64::from(value & 31)
+        })
+    };
+    let (groups, last) = s.as_chunks::<8>();
+    let (whole, partial) = bytes.as_chunks_mut::<5>();
+    for (group, out) in groups.iter().zip(whole) {
+        out.copy_from_slice(&group_bits(group).to_be_bytes()[3..]);
+    }
+    let spare = last.len() * 5 - partial.len() * 8;
+    let bits = group_bits(last);
+    if bits & ((1 << spare) - 1) != 0 {
+        return None;
+    }
+    partial.copy_from_slice(&(bits >> spare).to_be_bytes()[8 - partial.len()..]);
+    (symbols < 32).then_some(out)
 }
 
 #[cfg(test)]
@@ -583,6 +646,54 @@ mod tests {
             drisl_to_json(&[0xff]),
             Err(CborError::InvalidCbor(_))
         ));
+    }
+
+    /// The `data-encoding` decoding `base32_lower` replaced.
+    fn base32_lower_reference(s: &str) -> Option<Vec<u8>> {
+        let s = s.trim_end_matches('=');
+        if s.bytes().any(|b| b.is_ascii_uppercase()) {
+            return None;
+        }
+        data_encoding::BASE32_NOPAD
+            .decode(s.to_ascii_uppercase().as_bytes())
+            .ok()
+    }
+
+    proptest::proptest! {
+        /// Valid symbols of every length (across the inline/heap boundary)
+        /// and every final-group size, with one symbol sometimes replaced by
+        /// an arbitrary char.
+        #[test]
+        fn base32_lower_matches_data_encoding(
+            s in "[a-z2-7]{0,200}=?",
+            swap in proptest::option::of((0usize..200, proptest::char::any())),
+        ) {
+            let mut s = s;
+            if let Some((at, c)) = swap
+                && let Some((i, _)) = s.char_indices().nth(at % (s.len() + 1))
+            {
+                s.replace_range(i..i + 1, c.encode_utf8(&mut [0; 4]));
+            }
+            let decoded = base32_lower(&s).map(|b| b.to_vec());
+            proptest::prop_assert_eq!(decoded, base32_lower_reference(&s), "{:?}", s);
+        }
+    }
+
+    #[test]
+    fn base32_lower_rejects_what_data_encoding_rejects() {
+        for s in [
+            "a", "aaa", "aaaaaa", "ab", "aaab", "aaaab", "aaaaaab", "A", "8", "a=a", "é",
+        ] {
+            assert_eq!(
+                base32_lower(s).as_deref(),
+                base32_lower_reference(s).as_deref(),
+                "{s:?}"
+            );
+        }
+        // Trailing bits set (`ab` is 0b00000_00001): a different encoding of
+        // the same byte, which canonical decoders refuse.
+        assert!(base32_lower("ab").is_none());
+        assert_eq!(base32_lower("aa").as_deref(), Some(&[0][..]));
     }
 
     #[test]

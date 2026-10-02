@@ -365,11 +365,22 @@ pub struct ArrayTypeDef {
 /// - `"com.atproto.repo.defs#commitMeta"` → `("com.atproto.repo.defs", "commitMeta")`
 /// - `"com.atproto.repo.strongRef"` → `("com.atproto.repo.strongRef", "main")`
 pub fn split_ref<'a>(context_nsid: &str, reference: &'a str) -> (String, &'a str) {
+    match reference.strip_prefix('#') {
+        Some(def_name) => (context_nsid.to_owned(), def_name),
+        None => {
+            let (nsid, def_name) = resolve_ref("", reference);
+            (nsid.to_owned(), def_name)
+        }
+    }
+}
+
+/// [`split_ref`] without allocating.
+pub(crate) fn resolve_ref<'a>(context_nsid: &'a str, reference: &'a str) -> (&'a str, &'a str) {
     if let Some(def_name) = reference.strip_prefix('#') {
-        (context_nsid.to_owned(), def_name)
-    } else if let Some(hash_pos) = reference.rfind('#') {
-        (reference[..hash_pos].to_owned(), &reference[hash_pos + 1..])
+        (context_nsid, def_name)
+    } else if let Some((nsid, def_name)) = reference.rsplit_once('#') {
+        (nsid, def_name)
     } else {
-        (reference.to_owned(), "main")
+        (reference, "main")
     }
 }

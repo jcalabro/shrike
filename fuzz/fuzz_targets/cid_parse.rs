@@ -2,9 +2,11 @@
 //! CID parsing must never panic, and parsing is a fixed point: any CID accepted
 //! from bytes must re-encode to the identical 36 bytes (and likewise for the
 //! base32 string form). Catches non-canonical aliases and round-trip drift.
+//! The lenient JSON `$link` parser must agree on every canonical string.
 
 use libfuzzer_sys::fuzz_target;
 use shrike::cbor::Cid;
+use shrike::cbor::json::parse_cid;
 
 #[derive(arbitrary::Arbitrary, Debug)]
 struct Input<'a> {
@@ -29,5 +31,9 @@ fuzz_target!(|input: Input| {
         );
         let reparsed: Cid = cid.to_string().parse().expect("Display must re-parse");
         assert_eq!(cid, reparsed, "Cid Display/FromStr round-trip mismatch");
+        // The lenient `$link` parser accepts every canonical string too.
+        assert_eq!(parse_cid(input.text).ok(), Some(cid), "parse_cid disagrees");
+    } else {
+        let _ = parse_cid(input.text);
     }
 });
