@@ -6,7 +6,7 @@
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use shrike::cbor::json::{Integers, drisl_to_json, drisl_to_json_into, json_to_drisl};
+use shrike::cbor::json::{Integers, drisl_to_json, drisl_to_json_into, json_slice_to_drisl};
 use shrike::lexicon::{Catalog, validate_record};
 
 /// Each collection's records, as DRISL and as JSON text.
@@ -131,8 +131,7 @@ fn bench_json_to_drisl(c: &mut Criterion) {
             |b, records| {
                 b.iter(|| {
                     for j in records {
-                        let json: serde_json::Value = serde_json::from_slice(black_box(j)).unwrap();
-                        black_box(json_to_drisl(&json, Integers::Safe).unwrap());
+                        black_box(json_slice_to_drisl(black_box(j), Integers::Safe).unwrap());
                     }
                 });
             },

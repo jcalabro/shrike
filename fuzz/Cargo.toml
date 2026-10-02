@@ -108,6 +108,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "json_slice_to_drisl"
+path = "fuzz_targets/json_slice_to_drisl.rs"
+test = false
+doc = false
+bench = false
+
 # --- CID ---
 [[bin]]
 name = "cid_parse"

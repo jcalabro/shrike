@@ -219,6 +219,20 @@ fn main() {
         }
     }
 
+    // --- Record JSON (json_slice_to_drisl) ---
+    for (name, s) in [
+        (
+            "post",
+            r#"{"$type":"app.bsky.feed.post","text":"hi \u00e9\ud83d\ude00","createdAt":"2024-01-01T00:00:00.000Z","langs":["en"],"embed":{"$type":"app.bsky.embed.images","images":[{"alt":"","image":{"$type":"blob","ref":{"$link":"bafkreig77vqcdozl2wyk6z3cscaj5q5fggi53aoh64fewkdiri3cdauyn4"},"mimeType":"image/jpeg","size":10000},"aspectRatio":{"width":3,"height":2}}]}}"#,
+        ),
+        (
+            "edge",
+            r#"{"b":[1,-0,1.0,1e3,9007199254740991],"a":{"$bytes":"TQ=="},"a":{"$link":"x","$link":"bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a"},"aaaaaaaaaaaaaaaaaaaaaaaa":{"$bytes":"-_","x":null}}"#,
+        ),
+    ] {
+        write_seed("json_slice_to_drisl", name, s.as_bytes());
+    }
+
     // --- Syntax identifiers (syntax_parsers) ---
     for (name, s) in [
         ("did_plc", "did:plc:z72i7hdynmk6r22z27h6tvur"),

@@ -37,6 +37,7 @@ cargo +nightly fuzz run cbor_decode_differential
 | `cbor_decode_differential` | `decode` (heap) and `decode_bump` (arena, the firehose hot path) **must agree** — both accept with identical structure or both reject (the H1 bug class) |
 | `cbor_encode_roundtrip` | structured (`arbitrary`) value → encode → decode → re-encode is a **fixed point** |
 | `cbor_json_writer` | `drisl_to_json_into` writes **exactly** the JSON `serde_json` writes of `drisl_to_json`, or fails with the same error |
+| `json_slice_to_drisl` | `json_slice_to_drisl` and `serde_json::from_slice` + `json_to_drisl` **must agree**, output and error, on raw bytes and on structured JSON |
 | `cid_parse` | CID parse never panics; bytes/string forms are **fixed points** (no non-canonical aliases) |
 | `car_read_all` | CAR v1 reader never panics on malformed framing |
 | `repo_record_proof` | record proof verifier never panics, and never accepts a record the fixed signing key did not commit to |

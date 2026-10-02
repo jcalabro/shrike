@@ -11,6 +11,8 @@
 //! - numbers must be integers; see [`Integers`].
 //!
 //! `serde_json` keeps the last value of a duplicated key, as the reference does.
+//! [`json_slice_to_drisl`] converts JSON text as [`json_to_drisl`] does after
+//! `serde_json::from_slice`, without building a `serde_json::Value`.
 //!
 //! DRISL to JSON writes bytes as unpadded `$bytes` and CIDs as base32 `$link`.
 //! The data model has no floats, so both directions reject them.
@@ -27,8 +29,11 @@
 //! # Ok::<(), shrike::cbor::CborError>(())
 //! ```
 
+use std::cmp::Ordering;
+use std::fmt;
 use std::io::Write;
 
+use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Number, Value as Json};
 
 use super::varint::decode_varint;
@@ -58,6 +63,30 @@ pub fn json_to_drisl(json: &Json, integers: Integers) -> Result<Vec<u8>, CborErr
     let mut buf = Vec::new();
     encode(&mut Encoder::new(&mut buf), json, integers)?;
     Ok(buf)
+}
+
+/// Convert atproto JSON text to canonical DRISL bytes.
+///
+/// The same as [`json_to_drisl`] over `serde_json::from_slice(json)`, with
+/// the same output and errors, but it encodes as it parses instead of
+/// building a [`serde_json::Value`]. If that fails, it takes those two steps
+/// for their error.
+pub fn json_slice_to_drisl(json: &[u8], integers: Integers) -> Result<Vec<u8>, JsonError> {
+    match encode_json(json, integers) {
+        Some(drisl) => Ok(drisl),
+        None => Ok(json_to_drisl(&serde_json::from_slice(json)?, integers)?),
+    }
+}
+
+/// Why [`json_slice_to_drisl`] failed.
+#[derive(Debug, thiserror::Error)]
+pub enum JsonError {
+    /// `serde_json` cannot parse the input.
+    #[error("invalid JSON: {0}")]
+    Parse(#[from] serde_json::Error),
+    /// The JSON parses, but [`json_to_drisl`] rejects it.
+    #[error(transparent)]
+    Drisl(#[from] CborError),
 }
 
 /// Decode DRISL bytes to atproto JSON.
@@ -475,11 +504,310 @@ fn special(map: &Map<String, Json>) -> Result<Option<Special>, CborError> {
     let (Some((key, Json::String(s))), None) = (entries.next(), entries.next()) else {
         return Ok(None);
     };
-    Ok(match key.as_str() {
-        "$link" => parse_link(s)?.map(Special::Cid),
-        "$bytes" => decode_base64(s).map(Special::Bytes),
+    special_member(key.as_bytes(), s)
+}
+
+/// What an object whose only member is `key: s` stands for.
+fn special_member(key: &[u8], s: &str) -> Result<Option<Special>, CborError> {
+    Ok(match key {
+        b"$link" => parse_link(s)?.map(Special::Cid),
+        b"$bytes" => decode_base64(s).map(Special::Bytes),
         _ => None,
     })
+}
+
+/// [`json_slice_to_drisl`] without a `Value`, or `None` if it fails or needs
+/// one.
+fn encode_json(json: &[u8], integers: Integers) -> Option<Vec<u8>> {
+    // Checking all the UTF-8 at once is faster than string by string.
+    let text = std::str::from_utf8(json).ok()?;
+    let mut writer = DrislWriter {
+        out: Vec::with_capacity(json.len()),
+        members: Vec::with_capacity(16),
+        scratch: Vec::with_capacity(json.len()),
+        integers,
+    };
+    let mut de = serde_json::Deserializer::from_str(text);
+    let kind = ValueSeed(&mut writer).deserialize(&mut de).ok()?;
+    de.end().ok()?;
+    (kind != Encoded::Invalid).then_some(writer.out)
+}
+
+/// `serde_json`'s `Value` takes an object whose first key is one of its
+/// private tokens for something else: a number (`arbitrary_precision`), or a
+/// string to parse as JSON (`raw_value`). [`encode_json`] leaves those to it.
+const PRIVATE_KEY: &str = "$serde_json::private::";
+
+/// What a value encoded at the end of [`DrislWriter::out`] is.
+#[derive(Clone, Copy, PartialEq)]
+enum Encoded {
+    /// A string, its UTF-8 from this offset to the end of the value.
+    Text(usize),
+    Other,
+    /// Outside the data model, so [`json_to_drisl`] fails on it, unless a
+    /// duplicate key replaces it.
+    Invalid,
+}
+
+/// An object member in [`DrislWriter::out`]: the encoded key from `start`, its
+/// UTF-8 from `key`, then the value from `value` to `end`.
+#[derive(Clone, Copy)]
+struct Member {
+    start: usize,
+    key: usize,
+    value: usize,
+    end: usize,
+    kind: Encoded,
+}
+
+/// Encodes JSON as `serde_json` parses it, so the syntax, numbers and
+/// recursion limit are those of `serde_json::from_slice`.
+struct DrislWriter {
+    out: Vec<u8>,
+    /// The members of every unfinished object, innermost last.
+    members: Vec<Member>,
+    /// An object's members while they are written back in order.
+    scratch: Vec<u8>,
+    integers: Integers,
+}
+
+impl DrislWriter {
+    /// Encode a value other than a string.
+    fn write(
+        &mut self,
+        f: impl FnOnce(&mut Encoder<&mut Vec<u8>>) -> Result<(), CborError>,
+    ) -> Encoded {
+        match f(&mut Encoder::new(&mut self.out)) {
+            Ok(()) => Encoded::Other,
+            Err(_) => Encoded::Invalid,
+        }
+    }
+
+    fn text(&mut self, s: &str) -> Encoded {
+        match Encoder::new(&mut self.out).encode_text(s) {
+            Ok(()) => Encoded::Text(self.out.len() - s.len()),
+            Err(_) => Encoded::Invalid,
+        }
+    }
+
+    fn number(&mut self, n: Number) -> Encoded {
+        match integer(&n, self.integers) {
+            Ok(n) => self.write(|enc| enc.encode_i64(n)),
+            Err(_) => Encoded::Invalid,
+        }
+    }
+
+    /// Fill in the one-byte head written at `start` for `len` items.
+    fn finish_array(&mut self, start: usize, len: u64) -> Encoded {
+        if len < 24 {
+            self.out[start] |= len as u8;
+        } else {
+            self.scratch.clear();
+            if Encoder::new(&mut self.scratch)
+                .encode_array_header(len)
+                .is_err()
+            {
+                return Encoded::Invalid;
+            }
+            self.out.splice(start..=start, self.scratch.iter().copied());
+        }
+        Encoded::Other
+    }
+
+    /// Finish the object written from `start`, whose members are
+    /// `members[base..]`.
+    fn finish_map(&mut self, start: usize, base: usize) -> Encoded {
+        let kind = self.sort_map(start, base);
+        self.members.truncate(base);
+        kind
+    }
+
+    /// Keep the last value of each key, as `serde_json` does, then encode a
+    /// `$link` or `$bytes`, or write the members back in key order.
+    fn sort_map(&mut self, start: usize, base: usize) -> Encoded {
+        let DrislWriter {
+            out,
+            members,
+            scratch,
+            ..
+        } = self;
+        let key = |m: &Member| &out[m.key..m.value];
+        let in_order = members[base..]
+            .windows(2)
+            .all(|pair| drisl_key_cmp(key(&pair[0]), key(&pair[1])).is_lt());
+        if !in_order {
+            members[base..].sort_by(|a, b| drisl_key_cmp(key(a), key(b)));
+        }
+        if !in_order && members[base..].windows(2).any(|p| key(&p[0]) == key(&p[1])) {
+            // The sort is stable, so the last of equal keys is the latest.
+            let mut kept = base;
+            for i in base..members.len() {
+                if kept > base && key(&members[kept - 1]) == key(&members[i]) {
+                    kept -= 1;
+                }
+                members[kept] = members[i];
+                kept += 1;
+            }
+            members.truncate(kept);
+        }
+        let members = &members[base..];
+        if let [m] = members
+            && let Encoded::Text(text) = m.kind
+            && let Ok(s) = std::str::from_utf8(&out[text..m.end])
+        {
+            match special_member(key(m), s) {
+                Ok(None) => {}
+                Ok(Some(special)) => {
+                    out.truncate(start);
+                    let mut enc = Encoder::new(&mut *out);
+                    let encoded = match special {
+                        Special::Cid(cid) => enc.encode_cid(&cid),
+                        Special::Bytes(bytes) => enc.encode_bytes(&bytes),
+                    };
+                    return encoded.map_or(Encoded::Invalid, |()| Encoded::Other);
+                }
+                Err(_) => return Encoded::Invalid,
+            }
+        }
+        if members.iter().any(|m| m.kind == Encoded::Invalid) {
+            return Encoded::Invalid;
+        }
+        if in_order && members.len() < 24 {
+            out[start] |= members.len() as u8;
+        } else {
+            scratch.clear();
+            scratch.extend_from_slice(&out[start..]);
+            out.truncate(start);
+            if Encoder::new(&mut *out)
+                .encode_map_header(members.len() as u64)
+                .is_err()
+            {
+                return Encoded::Invalid;
+            }
+            for m in members {
+                out.extend_from_slice(&scratch[m.start - start..m.end - start]);
+            }
+        }
+        Encoded::Other
+    }
+}
+
+/// [`cbor_key_cmp`] over UTF-8: a longer key never has a shorter head, so
+/// encoded keys sort by length, then bytewise.
+fn drisl_key_cmp(a: &[u8], b: &[u8]) -> Ordering {
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+}
+
+/// Encodes any JSON value, as `serde_json`'s `Value` would parse it.
+struct ValueSeed<'w>(&'w mut DrislWriter);
+
+impl<'de> DeserializeSeed<'de> for ValueSeed<'_> {
+    type Value = Encoded;
+
+    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<Encoded, D::Error> {
+        de.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for ValueSeed<'_> {
+    type Value = Encoded;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("any valid JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Encoded, E> {
+        Ok(self.0.write(|enc| enc.encode_null()))
+    }
+
+    fn visit_bool<E>(self, b: bool) -> Result<Encoded, E> {
+        Ok(self.0.write(|enc| enc.encode_bool(b)))
+    }
+
+    fn visit_u64<E>(self, n: u64) -> Result<Encoded, E> {
+        Ok(self.0.number(n.into()))
+    }
+
+    fn visit_i64<E>(self, n: i64) -> Result<Encoded, E> {
+        Ok(self.0.number(n.into()))
+    }
+
+    fn visit_f64<E>(self, f: f64) -> Result<Encoded, E> {
+        // No JSON parses to a float that is not finite.
+        Ok(Number::from_f64(f).map_or(Encoded::Invalid, |n| self.0.number(n)))
+    }
+
+    fn visit_str<E>(self, s: &str) -> Result<Encoded, E> {
+        Ok(self.0.text(s))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Encoded, A::Error> {
+        let w = self.0;
+        let start = w.out.len();
+        w.out.push(0x80);
+        let mut len = 0;
+        let mut valid = true;
+        while let Some(kind) = seq.next_element_seed(ValueSeed(w))? {
+            len += 1;
+            valid &= kind != Encoded::Invalid;
+        }
+        Ok(if valid {
+            w.finish_array(start, len)
+        } else {
+            Encoded::Invalid
+        })
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Encoded, A::Error> {
+        let w = self.0;
+        let start = w.out.len();
+        let base = w.members.len();
+        w.out.push(0xa0);
+        let mut first = true;
+        while let Some((member, key)) = map.next_key_seed(KeySeed(w, first))? {
+            first = false;
+            let value = w.out.len();
+            let kind = map.next_value_seed(ValueSeed(w))?;
+            w.members.push(Member {
+                start: member,
+                key,
+                value,
+                end: w.out.len(),
+                kind,
+            });
+        }
+        Ok(w.finish_map(start, base))
+    }
+}
+
+/// Encodes an object key, giving where it starts and where its UTF-8 does.
+/// The flag marks the first key, which must not start with [`PRIVATE_KEY`].
+struct KeySeed<'w>(&'w mut DrislWriter, bool);
+
+impl<'de> DeserializeSeed<'de> for KeySeed<'_> {
+    type Value = (usize, usize);
+
+    fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<(usize, usize), D::Error> {
+        de.deserialize_str(self)
+    }
+}
+
+impl<'de> Visitor<'de> for KeySeed<'_> {
+    type Value = (usize, usize);
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a string key")
+    }
+
+    fn visit_str<E: de::Error>(self, s: &str) -> Result<(usize, usize), E> {
+        let KeySeed(w, first) = self;
+        if first && s.starts_with(PRIVATE_KEY) {
+            return Err(E::custom("serde_json private key"));
+        }
+        let start = w.out.len();
+        Encoder::new(&mut w.out).encode_text(s).map_err(E::custom)?;
+        Ok((start, w.out.len() - s.len()))
+    }
 }
 
 /// `Ok(None)` if `s` is not a CID string, so the map stays plain.
@@ -662,6 +990,7 @@ fn base32_lower(s: &str) -> Option<LinkBytes> {
 mod tests {
     use super::*;
     use crate::cbor::{Codec, decode, encode_value};
+    use proptest::prelude::*;
     use serde_json::json;
 
     const CID: &str = "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a";
@@ -928,6 +1257,346 @@ mod tests {
         );
     }
 
+    const RAW_VALUE: &str = "$serde_json::private::RawValue";
+
+    /// What `json_slice_to_drisl` must agree with.
+    fn two_steps(json: &[u8], integers: Integers) -> Result<Vec<u8>, JsonError> {
+        Ok(json_to_drisl(&serde_json::from_slice(json)?, integers)?)
+    }
+
+    /// Asserts `json_slice_to_drisl` gives what the two steps give, and does
+    /// without them whenever it can.
+    fn assert_agrees(json: &[u8]) {
+        let text = String::from_utf8_lossy(json);
+        for integers in [Integers::Safe, Integers::Any] {
+            let want = two_steps(json, integers);
+            let fast = encode_json(json, integers);
+            if let Some(fast) = &fast {
+                assert_eq!(Some(fast), want.as_ref().ok(), "{text}");
+            }
+            if !text.contains(PRIVATE_KEY) {
+                assert_eq!(fast.is_some(), want.is_ok(), "{text}: {want:?}");
+            }
+            let got = json_slice_to_drisl(json, integers);
+            assert_eq!(format!("{got:?}"), format!("{want:?}"), "{text}");
+        }
+    }
+
+    #[test]
+    fn json_slice_matches_the_two_steps() {
+        let many = |n: usize, order: fn(usize) -> usize| {
+            let members: Vec<_> = (0..n)
+                .map(|i| format!(r#""k{:03}":{i}"#, order(i)))
+                .collect();
+            format!("{{{}}}", members.join(","))
+        };
+        let mut cases: Vec<String> = [
+            "null",
+            "[true, false]",
+            r#"["", "\u00e9\ud83d\ude00\n"]"#,
+            "[[], {}, [[{}]]]",
+            r#"{"b": 1, "a": 2, "aa": 3, "$type": "t"}"#,
+            r#"{"bb": 1, "a": [{"d": 1, "c": 2}]}"#,
+            // Duplicates collapse first, so the last `$link` or `$bytes` counts.
+            r#"{"$link": "x", "$link": "<cid>"}"#,
+            r#"{"$link": "<cid>", "$link": "x"}"#,
+            r#"{"$bytes": "TQ", "$bytes": 1}"#,
+            r#"{"$bytes": 1, "a": 2, "$bytes": "TQ"}"#,
+            r#"{"a": 1, "\u0061": 2, "a": 3}"#,
+            r#"{"a": 1.5, "a": 1}"#,
+            r#"{"a": {"$link": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"}, "a": 0}"#,
+            r#"{"$link": "<cid>", "a": 1}"#,
+            r#"{"$link": {"$link": "<cid>"}}"#,
+            r#"[{"$bytes": "+/+/"}, {"$bytes": "-_"}, {"$link": "bafy"}]"#,
+            // Keys on either side of a longer head.
+            r#"{"aaaaaaaaaaaaaaaaaaaaaaaa": 1, "bbbbbbbbbbbbbbbbbbbbbbb": 2, "c": 3}"#,
+            // A first key `Value` treats specially, here or nested.
+            r#"{"$serde_json::private::RawValue": "[3, {\"b\": 2, \"a\": 1}]"}"#,
+            r#"{"$link": {"$serde_json::private::RawValue": "\"<cid>\""}}"#,
+            r#"{"$serde_json::private::RawValue": "[1]", "a": 1}"#,
+            r#"{"$serde_json::private::RawValue": 1}"#,
+            r#"{"$serde_json::private::RawValue": "{"}"#,
+            r#"{"$serde_json::private::Number": "1"}"#,
+            r#"{"a": 1, "$serde_json::private::RawValue": "[1]"}"#,
+        ]
+        .map(|s| s.replace("<cid>", CID))
+        .into();
+        for n in [23, 24, 255, 256] {
+            cases.push(format!("[{}]", vec!["0"; n].join(",")));
+            cases.push(many(n, |i| i));
+            cases.push(many(n, |i| 999 - i));
+        }
+        for number in [
+            "0",
+            "-0",
+            "-0.0",
+            "1.0",
+            "1e10",
+            "1E+2",
+            "100e-2",
+            "1.5",
+            "1e400",
+            "1e-400",
+            "9007199254740991",
+            "9007199254740992",
+            "-9007199254740992",
+            "9007199254740991.0",
+            "9007199254740992.0",
+            "9223372036854775807",
+            "9223372036854775808",
+            "-9223372036854775808",
+            "-9223372036854775809",
+            "18446744073709551616",
+        ] {
+            cases.push(number.to_owned());
+            cases.push(format!(r#"{{"a": [{number}]}}"#));
+        }
+        for case in &cases {
+            assert_agrees(case.as_bytes());
+        }
+    }
+
+    #[test]
+    fn json_slice_fails_as_the_two_steps_do() {
+        let parse = |json: &[u8]| {
+            matches!(
+                json_slice_to_drisl(json, Integers::Any),
+                Err(JsonError::Parse(_))
+            )
+        };
+        for json in [
+            "",
+            "{",
+            "[1,]",
+            r#"{"a" 1}"#,
+            "{1: 2}",
+            "nul",
+            "1 2",
+            "01",
+            "1e400",
+            r#""\ud83d""#,
+            "\"\u{1}\"",
+            r#"{"$serde_json::private::RawValue": 1}"#,
+            // A syntax error comes before an earlier float.
+            "[1.5,",
+        ] {
+            assert!(parse(json.as_bytes()), "{json}");
+        }
+        assert!(parse(b"\"\xff\""));
+        assert!(parse(b"[1] \xff"));
+
+        let deep = |n| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        assert!(json_slice_to_drisl(deep(127).as_bytes(), Integers::Safe).is_ok());
+        let err = json_slice_to_drisl(deep(128).as_bytes(), Integers::Safe).unwrap_err();
+        assert!(
+            err.to_string().contains("recursion limit exceeded"),
+            "{err}"
+        );
+
+        let drisl = |json: &str, integers| match json_slice_to_drisl(json.as_bytes(), integers) {
+            Err(JsonError::Drisl(err)) => err,
+            other => panic!("{json}: {other:?}"),
+        };
+        for (json, integers) in [
+            ("1.5", Integers::Any),
+            (r#"{"a": [{"b": 0.5}]}"#, Integers::Any),
+            ("9007199254740992", Integers::Safe),
+            ("-9223372036854775809", Integers::Any),
+        ] {
+            assert!(matches!(drisl(json, integers), CborError::DataModel(_)));
+        }
+        let unsupported = r#"{"$link": "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"}"#;
+        assert!(matches!(
+            drisl(unsupported, Integers::Safe),
+            CborError::InvalidCid(_)
+        ));
+    }
+
+    /// The reference vectors, and every block of a real repository.
+    #[test]
+    fn json_slice_agrees_on_real_documents() {
+        let dir = env!("CARGO_MANIFEST_DIR");
+        let vectors: Json = serde_json::from_slice(
+            &std::fs::read(format!("{dir}/testdata/lex_json_vectors.json")).unwrap(),
+        )
+        .unwrap();
+        for kind in ["special", "plain", "rejected"] {
+            for v in vectors[kind].as_array().unwrap() {
+                assert_agrees(&serde_json::to_vec(&v["json"]).unwrap());
+                assert_agrees(&serde_json::to_vec_pretty(&v["json"]).unwrap());
+            }
+        }
+        #[cfg(feature = "car")]
+        {
+            let car = std::fs::read(format!("{dir}/benches/fixtures/calabro.car")).unwrap();
+            let (_, blocks) = crate::car::read_slice(&car).unwrap();
+            assert!(blocks.len() > 4000);
+            for block in blocks {
+                assert_agrees(&serde_json::to_vec(&drisl_to_json(block.data).unwrap()).unwrap());
+            }
+        }
+    }
+
+    /// A JSON number, mostly well-formed, near every limit `integer` has.
+    fn number_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            any::<i64>().prop_map(|n| n.to_string()),
+            any::<u64>().prop_map(|n| n.to_string()),
+            (-2i64..=2).prop_map(|d| (MAX_SAFE_INTEGER + d).to_string()),
+            (-2i64..=2).prop_map(|d| (-MAX_SAFE_INTEGER - d).to_string()),
+            any::<f64>().prop_map(|f| format!("{f:?}")),
+            any::<f64>().prop_map(|f| format!("{f:e}")),
+            "-?(0|[1-9][0-9]{0,21})(\\.[0-9]{1,3})?([eE][+-]?[0-9]{1,3})?",
+            prop::sample::select(vec![
+                "-0",
+                "-0.0",
+                "1.0",
+                "9007199254740992.0",
+                "9223372036854775808",
+                "-9223372036854775809",
+                "18446744073709551616",
+                "1e400",
+                "1e-400",
+                "01",
+                "1.",
+                ".5",
+                "+1",
+                "-",
+            ])
+            .prop_map(str::to_owned),
+        ]
+    }
+
+    /// A JSON string with escapes, now and then a bad one.
+    fn string_text() -> impl Strategy<Value = String> {
+        let piece = prop_oneof![
+            8 => "[a-z$]{1,3}",
+            4 => any::<char>().prop_map(|c| {
+                let quoted = serde_json::to_string(&c).unwrap();
+                quoted[1..quoted.len() - 1].to_owned()
+            }),
+            4 => prop::sample::select(vec![
+                r"\n", r#"\""#, r"\\", r"\/", r"\u0061", r"\u00e9", r"\ud83d\ude00", r"\u0000",
+                "é", "😀",
+            ])
+            .prop_map(str::to_owned),
+            1 => prop::sample::select(vec![r"\ud83d", r"\ude00", "\u{1}", r"\x", "\""])
+                .prop_map(str::to_owned),
+        ];
+        prop::collection::vec(piece, 0..5).prop_map(|parts| format!("\"{}\"", parts.concat()))
+    }
+
+    /// An object key, often one that repeats or that DRISL orders apart.
+    fn key_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            12 => prop::sample::select(vec!["a", "b", "aa", "ab", "$link", "$bytes", "$type"])
+                .prop_map(|k| format!("\"{k}\"")),
+            2 => Just(r#""\u0061""#.to_owned()),
+            2 => (prop::sample::select(vec![23, 24, 25, 255, 256]), "[ab]")
+                .prop_map(|(n, c)| format!("\"{}\"", c.repeat(n))),
+            6 => string_text(),
+        ]
+    }
+
+    /// A string for `$link`, mostly a CID it takes.
+    fn link_text() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            CID,
+            CID,
+            "zdpuAsDo7UZTXQtgvtq6uKnJCYMkEvf8XAgPxn8rtopYnpTDh",
+            "k2jvsl7wph2xec9tldt5guqsv8bqse480mslfjw2lyfdlxfws95udh3k",
+            "bafyreidfayvfuwqa7qlnopdjiqrxzs6blmoeu4rujcjtnci5beludirz2a==",
+            "bafy",
+            "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ])
+        .prop_map(|s| format!("\"{s}\""))
+    }
+
+    /// A string for `$bytes`, mostly base64 it takes.
+    fn bytes_text() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "", "TQ", "TQ=", "TQ==", "TWFu", "+/+/", "aGk", "TQ===", "-_", "🐻",
+        ])
+        .prop_map(|s| format!("\"{s}\""))
+    }
+
+    fn object(members: impl IntoIterator<Item = (String, String)>) -> String {
+        let members: Vec<_> = members
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect();
+        format!("{{{}}}", members.join(","))
+    }
+
+    fn json_text() -> impl Strategy<Value = String> {
+        let leaf = prop_oneof![
+            prop::sample::select(vec!["null", "true", "false"]).prop_map(str::to_owned),
+            number_text(),
+            string_text(),
+            link_text(),
+            bytes_text(),
+        ];
+        leaf.prop_recursive(4, 64, 6, |inner| {
+            let members = || prop::collection::vec((key_text(), inner.clone()), 0..6);
+            prop_oneof![
+                12 => prop::collection::vec(inner.clone(), 0..6)
+                    .prop_map(|items| format!("[{}]", items.join(","))),
+                12 => members().prop_map(object),
+                // `$link` or `$bytes`, perhaps repeated or with company.
+                12 => (
+                    prop_oneof![
+                        Just("\"$link\"").prop_flat_map(|k| (Just(k), link_text())),
+                        Just("\"$bytes\"").prop_flat_map(|k| (Just(k), bytes_text())),
+                    ],
+                    prop::collection::vec(inner.clone(), 0..2),
+                    prop::collection::vec((key_text(), inner.clone()), 0..4),
+                    any::<bool>(),
+                )
+                    .prop_map(|((key, value), before, rest, alone)| {
+                        let first = before.into_iter().map(|v| (key.to_owned(), v));
+                        let rest = rest.into_iter().filter(|_| !alone);
+                        object(first.chain([(key.to_owned(), value)]).chain(rest))
+                    }),
+                2 => (inner.clone(), 20..30usize).prop_map(|(item, n)| format!("[{}]", vec![item; n].join(","))),
+                // Many members, in DRISL order or not.
+                2 => (members(), 20..30usize, any::<bool>()).prop_map(|(m, n, up)| object(
+                    (0..n)
+                        .map(|i| (format!("\"k{:02}\"", if up { i } else { n - i }), "0".to_owned()))
+                        .chain(m)
+                )),
+                1 => inner.prop_map(|doc| format!(
+                    "{{\"{RAW_VALUE}\":{}}}",
+                    serde_json::to_string(&doc).unwrap()
+                )),
+            ]
+        })
+    }
+
+    proptest::proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+
+        /// Generated JSON, sometimes with a byte changed or cut off.
+        #[test]
+        fn json_slice_matches_the_two_steps_on_generated_json(
+            text in json_text(),
+            edit in proptest::option::of((any::<prop::sample::Index>(), any::<u8>(), any::<bool>())),
+        ) {
+            let mut json = text.into_bytes();
+            if let Some((at, byte, cut)) = edit
+                && !json.is_empty()
+            {
+                let at = at.index(json.len());
+                if cut {
+                    json.truncate(at);
+                } else {
+                    json[at] = byte;
+                }
+            }
+            assert_agrees(&json);
+        }
+    }
+
     #[test]
     fn drisl_floats_and_oversized_integers_are_rejected() {
         let float = encode_value(&Value::Map(vec![("a", Value::Float(1.5))])).unwrap();
@@ -948,7 +1617,6 @@ mod tests {
     /// `drisl_to_json_into` against `serde_json::to_vec(&drisl_to_json(..))`.
     mod json_text {
         use super::*;
-        use proptest::prelude::*;
         use std::collections::BTreeMap;
 
         /// Asserts both conversions agree on `bytes`, output or error, and
