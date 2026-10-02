@@ -64,7 +64,7 @@ pub fn decode(data: &[u8]) -> Result<Value<'_>, CborError> {
 /// reallocation. For hot loops, use [`encode_value_into`] to reuse a buffer.
 pub fn encode_value(value: &Value) -> Result<Vec<u8>, CborError> {
     let mut buf = Vec::with_capacity(estimated_size(value));
-    encode_value_to(&mut Encoder::new(&mut buf), value)?;
+    write_value(&mut buf, value)?;
     Ok(buf)
 }
 
@@ -84,13 +84,13 @@ pub fn encode_value(value: &Value) -> Result<Vec<u8>, CborError> {
 /// }
 /// ```
 pub fn encode_value_into(value: &Value, buf: &mut Vec<u8>) -> Result<(), CborError> {
-    buf.reserve(estimated_size(value));
-    encode_value_to(&mut Encoder::new(buf), value)
+    write_value(buf, value)
 }
 
 /// Estimate the encoded size of a Value. Slightly over-estimates to avoid
 /// reallocation, since CBOR headers are 1-9 bytes and we assume worst-case
 /// for small types.
+#[inline(always)]
 fn estimated_size(value: &Value) -> usize {
     match value {
         Value::Unsigned(_) | Value::Signed(_) => 9,
@@ -99,59 +99,120 @@ fn estimated_size(value: &Value) -> usize {
         Value::Text(s) => 5 + s.len(),
         Value::Bytes(b) => 5 + b.len(),
         Value::Cid(_) => 41,
-        Value::Array(items) => 5 + items.iter().map(|i| estimated_size(i)).sum::<usize>(),
-        Value::Map(entries) => {
-            5 + entries
-                .iter()
-                .map(|(k, v)| 5 + k.len() + estimated_size(v))
-                .sum::<usize>()
-        }
+        // Scalars are sized inline; only containers cost a call.
+        Value::Array(items) => estimated_array_size(items),
+        Value::Map(entries) => estimated_map_size(entries),
     }
 }
 
-#[inline]
-fn encode_value_to<W: std::io::Write>(
-    enc: &mut Encoder<W>,
-    value: &Value,
-) -> Result<(), CborError> {
-    match value {
-        Value::Unsigned(n) => enc.encode_u64(*n),
-        Value::Signed(n) => enc.encode_i64(*n),
-        Value::Float(f) => enc.encode_f64(*f),
-        Value::Bool(b) => enc.encode_bool(*b),
-        Value::Null => enc.encode_null(),
-        Value::Text(s) => enc.encode_text(s),
-        Value::Bytes(b) => enc.encode_bytes(b),
-        Value::Cid(c) => enc.encode_cid(c),
-        Value::Array(items) => {
-            enc.encode_array_header(items.len() as u64)?;
-            for item in items {
-                encode_value_to(enc, item)?;
-            }
-            Ok(())
-        }
-        Value::Map(entries) => {
-            enc.encode_map_header(entries.len() as u64)?;
-            // Check if keys are already in canonical CBOR order (common case
-            // for data that came through the decoder). If so, skip the sort
-            // entirely — avoids a Vec allocation and O(n log n) comparisons.
-            let already_sorted = entries.windows(2).all(|w| {
-                crate::cbor::encode::cbor_key_cmp(w[0].0, w[1].0) == std::cmp::Ordering::Less
-            });
-            if already_sorted {
-                for (key, value) in entries {
-                    enc.encode_text(key)?;
-                    encode_value_to(enc, value)?;
-                }
-            } else {
-                let mut sorted: Vec<_> = entries.iter().collect();
-                sorted.sort_by(|a, b| crate::cbor::encode::cbor_key_cmp(a.0, b.0));
-                for (key, value) in sorted {
-                    enc.encode_text(key)?;
-                    encode_value_to(enc, value)?;
-                }
-            }
-            Ok(())
-        }
+fn estimated_array_size(items: &[Value]) -> usize {
+    let mut size = 5;
+    for item in items {
+        size += estimated_size(item);
     }
+    size
+}
+
+fn estimated_map_size(entries: &[(&str, Value)]) -> usize {
+    let mut size = 5;
+    for (key, value) in entries {
+        size += 5 + key.len() + estimated_size(value);
+    }
+    size
+}
+
+/// Append the encoding of `value` to `buf`.
+///
+/// Values are written straight into the `Vec`, which cannot fail to accept
+/// bytes, rather than through [`Encoder`]. The first pass assumes every map
+/// is already in canonical key order, as decoded values always are, and
+/// checks each key against the one before it as it goes. If a key is out of
+/// order (or a float is not finite), it starts over with a pass that sorts
+/// maps that need it, so the result, error included, is what that pass
+/// alone would give.
+fn write_value(buf: &mut Vec<u8>, value: &Value) -> Result<(), CborError> {
+    let start = buf.len();
+    if write_item::<false>(buf, value).is_ok() {
+        return Ok(());
+    }
+    buf.truncate(start);
+    write_item::<true>(buf, value).map_err(|Rejected| encode::non_finite())
+}
+
+/// Why a [`write_item`] pass stopped: a float was not finite, or, in a pass
+/// that does not sort, a map key was out of order.
+struct Rejected;
+
+/// One pass of [`write_value`]; `SORT` selects the pass that sorts maps.
+/// Scalars are written inline; only containers cost a call.
+#[inline(always)]
+fn write_item<const SORT: bool>(buf: &mut Vec<u8>, value: &Value) -> Result<(), Rejected> {
+    use encode::{put_cid, put_head, put_text};
+    match value {
+        Value::Unsigned(n) => put_head(buf, 0, *n),
+        Value::Signed(n) => {
+            if *n >= 0 {
+                put_head(buf, 0, *n as u64)
+            } else {
+                put_head(buf, 1, (-1 - *n) as u64)
+            }
+        }
+        Value::Float(f) => {
+            if !f.is_finite() {
+                return Err(Rejected);
+            }
+            buf.push(0xfb);
+            buf.extend_from_slice(&f.to_bits().to_be_bytes());
+        }
+        Value::Bool(b) => buf.push(if *b { 0xf5 } else { 0xf4 }),
+        Value::Null => buf.push(0xf6),
+        Value::Text(s) => put_text(buf, s),
+        Value::Bytes(b) => {
+            put_head(buf, 2, b.len() as u64);
+            buf.extend_from_slice(b);
+        }
+        Value::Cid(c) => put_cid(buf, c),
+        Value::Array(items) => return write_array::<SORT>(buf, items),
+        Value::Map(entries) => return write_map::<SORT>(buf, entries),
+    }
+    Ok(())
+}
+
+fn write_array<const SORT: bool>(buf: &mut Vec<u8>, items: &[Value]) -> Result<(), Rejected> {
+    encode::put_head(buf, 4, items.len() as u64);
+    for item in items {
+        write_item::<SORT>(buf, item)?;
+    }
+    Ok(())
+}
+
+fn write_map<const SORT: bool>(
+    buf: &mut Vec<u8>,
+    entries: &[(&str, Value)],
+) -> Result<(), Rejected> {
+    encode::put_head(buf, 5, entries.len() as u64);
+    // Sorting allocates, so the sorting pass first checks whether it must.
+    if SORT
+        && !entries
+            .windows(2)
+            .all(|w| cbor_key_cmp(w[0].0, w[1].0).is_lt())
+    {
+        let mut sorted: Vec<_> = entries.iter().collect();
+        sorted.sort_by(|a, b| cbor_key_cmp(a.0, b.0));
+        for (key, value) in sorted {
+            encode::put_text(buf, key);
+            write_item::<SORT>(buf, value)?;
+        }
+        return Ok(());
+    }
+    let mut prev: Option<&str> = None;
+    for (key, value) in entries {
+        if !SORT && prev.is_some_and(|prev| !cbor_key_cmp(prev, key).is_lt()) {
+            return Err(Rejected);
+        }
+        encode::put_text(buf, key);
+        write_item::<SORT>(buf, value)?;
+        prev = Some(key);
+    }
+    Ok(())
 }

@@ -54,10 +54,8 @@ impl<W: Write> Encoder<W> {
 
     /// Encode a 64-bit float. DRISL requires ALWAYS 64-bit. Rejects NaN and Infinity.
     pub fn encode_f64(&mut self, v: f64) -> Result<(), CborError> {
-        if v.is_nan() || v.is_infinite() {
-            return Err(CborError::InvalidCbor(
-                "NaN and Infinity not allowed in DRISL".into(),
-            ));
+        if !v.is_finite() {
+            return Err(non_finite());
         }
         let be = v.to_bits().to_be_bytes();
         self.writer
@@ -96,17 +94,7 @@ impl<W: Write> Encoder<W> {
     /// Writes tag(42) + bytestring(37) + [0x00 + 36-byte CID] in a single call.
     #[inline]
     pub fn encode_cid(&mut self, cid: &Cid) -> Result<(), CborError> {
-        // Tag 42 (0xd8 0x2a) + bytestring header for 37 bytes (0x58 0x25)
-        // + 0x00 prefix + 36-byte binary CID = 41 bytes total
-        let cid_bytes = cid.to_bytes();
-        let mut buf = [0u8; 41];
-        buf[0] = 0xd8; // tag follows in 1 byte
-        buf[1] = 0x2a; // tag 42
-        buf[2] = 0x58; // bytestring, 1-byte length follows
-        buf[3] = 0x25; // 37 bytes
-        buf[4] = 0x00; // tag 42 prefix byte
-        buf[5..].copy_from_slice(&cid_bytes);
-        self.writer.write_all(&buf)?;
+        self.writer.write_all(&tag42(cid))?;
         Ok(())
     }
 
@@ -145,6 +133,59 @@ impl<W: Write> Encoder<W> {
     }
 }
 
+/// The error for a NaN or infinite float, which DRISL cannot represent.
+pub(crate) fn non_finite() -> CborError {
+    CborError::InvalidCbor("NaN and Infinity not allowed in DRISL".into())
+}
+
+/// Append a CBOR head (major type and argument) to `buf`, minimally encoded.
+#[inline(always)]
+pub(crate) fn put_head(buf: &mut Vec<u8>, major: u8, value: u64) {
+    let major = major << 5;
+    if value < 24 {
+        buf.push(major | value as u8);
+    } else if value <= u8::MAX as u64 {
+        buf.extend_from_slice(&[major | 24, value as u8]);
+    } else if value <= u16::MAX as u64 {
+        let [a, b] = (value as u16).to_be_bytes();
+        buf.extend_from_slice(&[major | 25, a, b]);
+    } else if value <= u32::MAX as u64 {
+        let [a, b, c, d] = (value as u32).to_be_bytes();
+        buf.extend_from_slice(&[major | 26, a, b, c, d]);
+    } else {
+        let [a, b, c, d, e, f, g, h] = value.to_be_bytes();
+        buf.extend_from_slice(&[major | 27, a, b, c, d, e, f, g, h]);
+    }
+}
+
+/// Append a text string to `buf`.
+#[inline(always)]
+pub(crate) fn put_text(buf: &mut Vec<u8>, s: &str) {
+    put_head(buf, 3, s.len() as u64);
+    buf.extend_from_slice(s.as_bytes());
+}
+
+/// Append a CID (tag 42, then a byte string of 0x00 and the binary CID).
+#[inline(always)]
+pub(crate) fn put_cid(buf: &mut Vec<u8>, cid: &Cid) {
+    buf.extend_from_slice(&tag42(cid));
+}
+
+/// A CID's complete tag 42 encoding.
+#[inline(always)]
+fn tag42(cid: &Cid) -> [u8; 41] {
+    // Tag 42 (0xd8 0x2a) + bytestring header for 37 bytes (0x58 0x25)
+    // + 0x00 prefix + 36-byte binary CID = 41 bytes total
+    let mut buf = [0u8; 41];
+    buf[0] = 0xd8; // tag follows in 1 byte
+    buf[1] = 0x2a; // tag 42
+    buf[2] = 0x58; // bytestring, 1-byte length follows
+    buf[3] = 0x25; // 37 bytes
+    buf[4] = 0x00; // tag 42 prefix byte
+    buf[5..].copy_from_slice(&cid.to_bytes());
+    buf
+}
+
 /// Sort string keys by their CBOR-encoded form and encode as a map.
 ///
 /// CBOR key ordering: shorter encoded keys first, then bytewise comparison.
@@ -172,43 +213,30 @@ where
 /// Compare two string keys by CBOR encoding order.
 ///
 /// For DAG-CBOR text string keys: shorter strings sort first (because their
-/// CBOR headers encode to fewer bytes), and equal-length strings sort
+/// CBOR encodings are shorter), and equal-length strings sort
 /// lexicographically by their raw bytes.
-///
-/// Fast path: all AT Protocol field names are < 24 bytes, so the CBOR header
-/// is always 1 byte and total encoded length = 1 + string length. Comparing
-/// string lengths directly avoids calling `cbor_header_len` on every comparison.
 #[inline]
 pub fn cbor_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_len = a.len();
-    let b_len = b.len();
-    if a_len < 24 && b_len < 24 {
-        // Header is 1 byte for both, so encoded length order = string length order
-        return a_len
-            .cmp(&b_len)
-            .then_with(|| a.as_bytes().cmp(b.as_bytes()));
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    // A longer string never has a shorter head, so the encoded lengths order
+    // as the string lengths do.
+    if a.len() != b.len() {
+        return a.len().cmp(&b.len());
     }
-    let a_encoded_len = cbor_header_len(a_len as u64) + a_len;
-    let b_encoded_len = cbor_header_len(b_len as u64) + b_len;
-    a_encoded_len
-        .cmp(&b_encoded_len)
-        .then_with(|| a.as_bytes().cmp(b.as_bytes()))
-}
-
-/// Return the byte length of a CBOR type+value header for the given value.
-#[inline]
-fn cbor_header_len(value: u64) -> usize {
-    if value < 24 {
-        1
-    } else if value <= u8::MAX as u64 {
-        2
-    } else if value <= u16::MAX as u64 {
-        3
-    } else if value <= u32::MAX as u64 {
-        5
-    } else {
-        9
+    // Keys are short and usually differ early: compare eight bytes at a
+    // time, then byte by byte, rather than call `memcmp`.
+    let ((a_words, a_rest), (b_words, b_rest)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    for (x, y) in a_words.iter().zip(b_words) {
+        if x != y {
+            return u64::from_be_bytes(*x).cmp(&u64::from_be_bytes(*y));
+        }
     }
+    a_rest
+        .iter()
+        .zip(b_rest)
+        .map(|(x, y)| x.cmp(y))
+        .find(|order| order.is_ne())
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 #[cfg(test)]
@@ -325,11 +353,94 @@ mod tests {
 
     #[test]
     fn encode_cid_tag42() {
-        let cid = Cid::compute(Codec::Drisl, b"test");
-        let buf = encode_to_bytes(|e| e.encode_cid(&cid));
-        assert_eq!(buf[0], 0xd8); // tag follows in 1 byte
-        assert_eq!(buf[1], 0x2a); // tag 42
-        // Then bytestring header + 37 bytes (0x00 prefix + 36 CID bytes)
+        for cid in [
+            Cid::compute(Codec::Drisl, b"test"),
+            Cid::compute(Codec::Raw, b"test"),
+        ] {
+            // Tag 42, a 37-byte string header, the 0x00 prefix, the CID.
+            let mut want = vec![0xd8, 0x2a, 0x58, 0x25, 0x00];
+            want.extend_from_slice(&cid.to_bytes());
+            assert_eq!(encode_to_bytes(|e| e.encode_cid(&cid)), want);
+            let mut buf = vec![0xaa];
+            put_cid(&mut buf, &cid);
+            assert_eq!(buf[1..], want);
+        }
+    }
+
+    #[test]
+    fn put_head_matches_encoder() {
+        let boundaries = [
+            0,
+            1,
+            23,
+            24,
+            255,
+            256,
+            65535,
+            65536,
+            u32::MAX as u64,
+            u32::MAX as u64 + 1,
+            u64::MAX,
+        ];
+        for major in 0..8 {
+            for value in boundaries {
+                let want = encode_to_bytes(|e| e.write_type_value(major, value));
+                let mut buf = vec![0xaa];
+                put_head(&mut buf, major, value);
+                assert_eq!(buf[1..], want, "major {major}, value {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn put_text_matches_encoder() {
+        for len in [0, 1, 23, 24, 255, 256, 65535, 65536] {
+            let s = "é".repeat(len / 2) + &"x".repeat(len % 2);
+            let mut buf = Vec::new();
+            put_text(&mut buf, &s);
+            assert_eq!(buf, encode_to_bytes(|e| e.encode_text(&s)), "length {len}");
+        }
+    }
+
+    /// The canonical order by definition: shorter encodings first, then
+    /// bytewise on the encodings.
+    fn encoded_key_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+        let (a, b) = (
+            encode_to_bytes(|e| e.encode_text(a)),
+            encode_to_bytes(|e| e.encode_text(b)),
+        );
+        a.len().cmp(&b.len()).then_with(|| a.cmp(&b))
+    }
+
+    #[test]
+    fn cbor_key_cmp_across_head_sizes() {
+        // Lengths either side of each head size change, each in a variant
+        // that differs from the base key in its first, middle or last byte.
+        let mut keys = Vec::new();
+        for len in [0, 1, 7, 8, 9, 16, 23, 24, 255, 256, 65535, 65536] {
+            let base = "k".repeat(len);
+            for at in [0, len / 2, len.saturating_sub(1)] {
+                for c in ["j", "l"] {
+                    let mut key = base.clone();
+                    if len > 0 {
+                        key.replace_range(at..=at, c);
+                    }
+                    keys.push(key);
+                }
+            }
+            keys.push(base);
+        }
+        for a in &keys {
+            for b in &keys {
+                assert_eq!(
+                    cbor_key_cmp(a, b),
+                    encoded_key_cmp(a, b),
+                    "lengths {} and {}",
+                    a.len(),
+                    b.len()
+                );
+            }
+        }
     }
 
     #[test]

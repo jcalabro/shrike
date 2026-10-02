@@ -3,7 +3,8 @@
 //! `decode` (heap `Value`) and the bump-allocated `decode_bump` (the path the
 //! firehose hot loop uses) — MUST agree on every input: both accept with an
 //! identical structure, or both reject. A divergence is a real bug (this is
-//! exactly the class of the H1 silent-truncation defect).
+//! exactly the class of the H1 silent-truncation defect). Whatever they
+//! accept is canonical, so `encode_value` must reproduce it byte for byte.
 
 use bumpalo::Bump;
 use libfuzzer_sys::fuzz_target;
@@ -45,6 +46,10 @@ fn decode_std(data: &[u8]) -> Option<Value<'_>> {
 
 fuzz_target!(|data: &[u8]| {
     let std = decode_std(data);
+    if let Some(value) = &std {
+        let encoded = shrike::cbor::encode_value(value).expect("decoded values encode");
+        assert_eq!(encoded, data, "decode→encode changed canonical input");
+    }
 
     // Generated streaming decoders must retain the generic parser's strict
     // wire checks, and preserve unknown fields through typed round trips.
