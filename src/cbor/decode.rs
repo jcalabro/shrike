@@ -98,9 +98,8 @@ impl<'a> Decoder<'a> {
             2 => Ok(Value::Bytes(self.read_string(additional)?)),
             3 => {
                 let bytes = self.read_string(additional)?;
-                // Safety: simdutf8 validates UTF-8 using SIMD instructions
-                // (AVX2/SSE4.2) for ~4x throughput on strings > 64 bytes.
-                // After validation succeeds, from_utf8_unchecked is safe.
+                // simdutf8 validates UTF-8 with SIMD instructions (AVX2/SSE4.2
+                // on x86, NEON on aarch64): ~4x throughput on strings > 64 bytes.
                 let text = match simdutf8::basic::from_utf8(bytes) {
                     Ok(s) => s,
                     Err(_) => {
