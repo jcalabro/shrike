@@ -1002,6 +1002,62 @@ mod tests {
         crate::car::write_all(&roots, &blocks).unwrap()
     }
 
+    /// Regression test: a CAR whose MST links blocks from several places,
+    /// or nests far deeper than any MST, made `load_car` take exponential
+    /// time or overflow the stack. Both now fail promptly.
+    #[test]
+    fn load_car_rejects_hostile_trees() {
+        use crate::mst::node::{EntryData, NodeData, encode_node_data};
+        let value = Cid::compute(Codec::Drisl, b"\xa0");
+        let mut blocks = vec![Block {
+            cid: value,
+            data: b"\xa0".to_vec(),
+        }];
+        let mut put = |left: Option<Cid>, key: Option<String>, right: Option<Cid>| {
+            let entries = key
+                .map(|k| EntryData {
+                    prefix_len: 0,
+                    key_suffix: k.into_bytes(),
+                    value,
+                    right,
+                })
+                .into_iter()
+                .collect();
+            let data = encode_node_data(&NodeData { left, entries }).unwrap();
+            let cid = Cid::compute(Codec::Drisl, &data);
+            blocks.push(Block { cid, data });
+            cid
+        };
+        // Each level's two nodes both link both nodes of the level below.
+        let mut level = [0, 1].map(|j| put(None, Some(format!("com.example.lvl0/{j}")), None));
+        for i in 1..40 {
+            let [a, b] = level;
+            level = [(a, b, 0), (b, a, 1)]
+                .map(|(l, r, j)| put(Some(l), Some(format!("com.example.lvl{i}/{j}")), Some(r)));
+        }
+        let diamond = level[0];
+        let mut chain = put(None, Some("com.example.record/a".into()), None);
+        for _ in 0..100_000 {
+            chain = put(Some(chain), None, None);
+        }
+
+        let key = P256SigningKey::generate();
+        for data in [diamond, chain] {
+            let commit =
+                Commit::create_signed(did(), TidClock::new(0).unwrap().next(), data, &key).unwrap();
+            let mut car_blocks = vec![Block {
+                cid: commit.cid,
+                data: commit.bytes,
+            }];
+            car_blocks.extend(blocks.iter().cloned());
+            let car = crate::car::write_all(&[commit.cid], &car_blocks).unwrap();
+            assert!(matches!(
+                Repo::load_car(&car),
+                Err(RepoError::Mst(MstError::InvalidNode(_)))
+            ));
+        }
+    }
+
     #[test]
     fn load_car_checks_the_car() {
         let key = P256SigningKey::generate();

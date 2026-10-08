@@ -64,6 +64,20 @@ mod tests {
     }
 
     #[test]
+    fn height_for_key_example_keys() {
+        // atproto-interop-tests mst/example_keys.txt: each key's second
+        // character is its height.
+        let keys = include_str!("../../testdata/mst_example_keys.txt");
+        let mut count = 0;
+        for key in keys.lines().filter(|l| !l.is_empty()) {
+            let want = key.as_bytes()[1] - b'0';
+            assert_eq!(height_for_key(key), want, "height_for_key({key:?})");
+            count += 1;
+        }
+        assert_eq!(count, 156);
+    }
+
+    #[test]
     fn height_for_key_additional() {
         // Additional vectors
         assert_eq!(height_for_key("2653ae71"), 0);

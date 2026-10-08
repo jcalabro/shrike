@@ -551,8 +551,11 @@ fn generated_multi_record_proofs_match_reference() {
 /// so the check is that the commit's blocks suffice to invert its ops.
 /// 4623075231 creates a repo's only root-level key, so inverting it leaves
 /// the root's lone subtree, absent from the CAR, as the new root; indigo
-/// inverts it too. The other three, from the bridgyfed PDS, omit blocks
-/// that indigo also needs.
+/// inverts it too. 4621332152 creates 42 keys; undoing them merges
+/// subtrees whose deeper levels are absent from the CAR, which the merge
+/// re-links without reading, as the reference implementation's does
+/// (indigo reads them, and fails). The other two, from the bridgyfed PDS,
+/// omit nodes that even the merge must read.
 #[cfg(feature = "sync")]
 #[test]
 fn indigo_firehose_commits_invert() {
@@ -565,7 +568,10 @@ fn indigo_firehose_commits_invert() {
         ),
         (4621317030, None),
         (4621317332, None),
-        (4621332152, None),
+        (
+            4621332152,
+            Some("bafyreid4lxi7jmskjiigk6lfsmm55qmyy5zepfqlus5csbo37i4uc7drs4"),
+        ),
     ] {
         let path = format!(
             "{}/testdata/repo_proofs/firehose_commits/firehose_commit_{seq}.json",

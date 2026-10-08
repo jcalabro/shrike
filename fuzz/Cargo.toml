@@ -79,6 +79,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "mst_hostile_tree"
+path = "fuzz_targets/mst_hostile_tree.rs"
+test = false
+doc = false
+bench = false
+
 # --- CBOR / DRISL ---
 [[bin]]
 name = "cbor_decode"
