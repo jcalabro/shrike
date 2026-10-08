@@ -14,7 +14,7 @@ const MAX_ENTRIES_PER_NODE: usize = 10_000;
 /// (which would also decode differently on 32-bit via `n as usize`) from
 /// reaching the load path, where it could only be caught by an incidental
 /// `Vec::truncate` no-op. Matches atmos `maxKeyLen`.
-const MAX_KEY_LEN: u64 = 1024;
+pub(crate) const MAX_KEY_LEN: u64 = 1024;
 
 /// On-disk CBOR representation of an MST node.
 #[derive(Debug, Clone)]

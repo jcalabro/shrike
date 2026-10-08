@@ -260,8 +260,9 @@ impl DetachedTree {
 
     /// Insert or update a key/value pair, returning the value it replaced.
     ///
-    /// Fails with [`MstError::BlockNotFound`] if `src` lacks a node on the
-    /// key's path, leaving the tree unchanged.
+    /// Fails with [`MstError::InvalidKey`] if `key` is not a valid MST key
+    /// (see [`is_valid_key`]), and with [`MstError::BlockNotFound`] if `src`
+    /// lacks a node on the key's path, leaving the tree unchanged.
     pub fn insert(
         &mut self,
         src: &dyn BlockSource,
@@ -269,6 +270,9 @@ impl DetachedTree {
         val: Cid,
     ) -> Result<Option<Cid>, MstError> {
         self.check_usable()?;
+        if !is_valid_key(&key) {
+            return Err(MstError::InvalidKey(key));
+        }
         let prev = self.load_key_path(src, &key, Visit::Lookup)?;
         if prev == Some(val) {
             return Ok(prev);
@@ -1502,7 +1506,8 @@ impl Tree {
         self.inner.get(&StoreSource(&*self.store), key)
     }
 
-    /// Insert or update a key/value pair.
+    /// Insert or update a key/value pair. Fails with [`MstError::InvalidKey`]
+    /// if `key` is not a valid MST key (see [`is_valid_key`]).
     pub fn insert(&mut self, key: String, cid: Cid) -> Result<(), MstError> {
         self.inner
             .insert(&StoreSource(&*self.store), key, cid)
@@ -1694,6 +1699,9 @@ fn for_each_key(nd: &NodeData, mut f: impl FnMut(usize, &EntryData, &str)) -> Re
         key.extend_from_slice(&ed.key_suffix);
         let text = std::str::from_utf8(&key)
             .map_err(|_| MstError::InvalidNode("key is not valid UTF-8".into()))?;
+        if !is_valid_key(text) {
+            return Err(MstError::InvalidNode(format!("invalid MST key {text:?}")));
+        }
 
         // Entries within a node must be in strictly ascending key order; the
         // whole tree's get/diff/binary-search logic relies on it. A block whose
@@ -1772,6 +1780,23 @@ fn search_blocks(
         hi = above.or(hi);
         depth += 1;
     }
+}
+
+/// Whether `key` is a valid MST key, as the reference implementation
+/// requires of every key it inserts or loads: a collection and a record key
+/// separated by one `/`, neither empty, using only ASCII letters, digits and
+/// `_~-:.`, and at most 1024 bytes in all.
+pub fn is_valid_key(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    let Some(slash) = bytes.iter().position(|&b| b == b'/') else {
+        return false;
+    };
+    let allowed = |b: &u8| b.is_ascii_alphanumeric() || b"_~-:.".contains(b);
+    bytes.len() as u64 <= node::MAX_KEY_LEN
+        && slash > 0
+        && slash + 1 < bytes.len()
+        && bytes[..slash].iter().all(allowed)
+        && bytes[slash + 1..].iter().all(allowed)
 }
 
 /// Find the entry index where key would be found.
@@ -2206,10 +2231,10 @@ mod tests {
         let store = MemBlockStore::new();
         let mut tree = Tree::new(Box::new(store));
         let cid = Cid::compute(Codec::Raw, b"v");
-        tree.insert("key".to_string(), cid).unwrap();
-        let removed = tree.remove("key").unwrap();
+        tree.insert("col/key".to_string(), cid).unwrap();
+        let removed = tree.remove("col/key").unwrap();
         assert_eq!(removed, Some(cid));
-        assert_eq!(tree.get("key").unwrap(), None);
+        assert_eq!(tree.get("col/key").unwrap(), None);
     }
 
     #[test]
@@ -2218,29 +2243,29 @@ mod tests {
         let mut tree = Tree::new(Box::new(store));
         let val1 = Cid::compute(Codec::Drisl, b"v1");
         let val2 = Cid::compute(Codec::Drisl, b"v2");
-        tree.insert("key".to_string(), val1).unwrap();
-        assert_eq!(tree.get("key").unwrap(), Some(val1));
-        tree.insert("key".to_string(), val2).unwrap();
-        assert_eq!(tree.get("key").unwrap(), Some(val2));
+        tree.insert("col/key".to_string(), val1).unwrap();
+        assert_eq!(tree.get("col/key").unwrap(), Some(val1));
+        tree.insert("col/key".to_string(), val2).unwrap();
+        assert_eq!(tree.get("col/key").unwrap(), Some(val2));
     }
 
     #[test]
     fn entries_sorted() {
         let store = MemBlockStore::new();
         let mut tree = Tree::new(Box::new(store));
-        for key in ["c", "a", "b"] {
+        for key in ["col/c", "col/a", "col/b"] {
             tree.insert(key.to_string(), Cid::compute(Codec::Raw, key.as_bytes()))
                 .unwrap();
         }
         let entries = tree.entries().unwrap();
-        assert_eq!(entries[0].0, "a");
-        assert_eq!(entries[1].0, "b");
-        assert_eq!(entries[2].0, "c");
+        assert_eq!(entries[0].0, "col/a");
+        assert_eq!(entries[1].0, "col/b");
+        assert_eq!(entries[2].0, "col/c");
     }
 
     #[test]
     fn root_cid_deterministic_regardless_of_insertion_order() {
-        let keys: Vec<(&str, &[u8])> = vec![("a", b"va"), ("b", b"vb"), ("c", b"vc")];
+        let keys: Vec<(&str, &[u8])> = vec![("col/a", b"va"), ("col/b", b"vb"), ("col/c", b"vc")];
 
         let store1 = MemBlockStore::new();
         let mut t1 = Tree::new(Box::new(store1));
@@ -2264,10 +2289,10 @@ mod tests {
         let store = MemBlockStore::new();
         let mut tree = Tree::new(Box::new(store));
         let val = Cid::compute(Codec::Drisl, b"val");
-        for key in ["a", "b", "c"] {
+        for key in ["col/a", "col/b", "col/c"] {
             tree.insert(key.to_string(), val).unwrap();
         }
-        for key in ["a", "b", "c"] {
+        for key in ["col/a", "col/b", "col/c"] {
             tree.remove(key).unwrap();
         }
         let cid = tree.root_cid().unwrap();
@@ -2282,10 +2307,10 @@ mod tests {
         let store = MemBlockStore::new();
         let mut tree = Tree::new(Box::new(store));
         let val = Cid::compute(Codec::Drisl, b"val");
-        tree.insert("a".to_string(), val).unwrap();
+        tree.insert("col/a".to_string(), val).unwrap();
         let removed = tree.remove("nonexistent").unwrap();
         assert!(removed.is_none());
-        assert!(tree.get("a").unwrap().is_some());
+        assert!(tree.get("col/a").unwrap().is_some());
     }
 
     #[test]
@@ -2300,7 +2325,7 @@ mod tests {
         let store = MemBlockStore::new();
         let mut tree = Tree::new(Box::new(store));
         let val = Cid::compute(Codec::Drisl, b"val");
-        for key in ["a", "b", "c"] {
+        for key in ["col/a", "col/b", "col/c"] {
             tree.insert(key.to_string(), val).unwrap();
         }
         let root_cid = tree.root_cid().unwrap();
@@ -2308,9 +2333,9 @@ mod tests {
         // Walk to verify entries are correct
         let entries = tree.entries().unwrap();
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].0, "a");
-        assert_eq!(entries[1].0, "b");
-        assert_eq!(entries[2].0, "c");
+        assert_eq!(entries[0].0, "col/a");
+        assert_eq!(entries[1].0, "col/b");
+        assert_eq!(entries[2].0, "col/c");
 
         // Verify root CID is stable
         let root_cid2 = tree.root_cid().unwrap();
@@ -3222,15 +3247,14 @@ mod tests {
         reference_encode_node_data(&NodeData { left, entries })
     }
 
-    /// Keys that share long prefixes, hold multi-byte UTF-8 (so a shared
-    /// prefix can end inside a character), and reach heights 2 and 3 (so
-    /// trees have nodes with no entries, only a left subtree).
+    /// Keys that share long prefixes and reach heights 2 and 3 (so trees
+    /// have nodes with no entries, only a left subtree).
     fn node_key() -> impl proptest::strategy::Strategy<Value = String> {
         use proptest::prelude::*;
         prop_oneof![
             (0usize..2000).prop_map(record_key),
-            "[aéè☃★]{0,6}",
-            "x{0,40}[ab]{0,3}",
+            "c/[a-z]{1,6}",
+            "x/x{0,40}[ab]{1,3}",
             "app\\.bsky\\.feed\\.(post|like)/3k[a-z2-7]{0,11}",
         ]
     }
@@ -3355,6 +3379,97 @@ mod tests {
                 fresh().search_path(src, key, &mut Vec::new()).map(drop),
             ),
         ]
+    }
+
+    /// The reference implementation's "MST Interop Allowable Keys" cases.
+    #[test]
+    fn valid_keys_match_reference() {
+        let long = format!("coll/{}", "a".repeat(1019));
+        assert_eq!(long.len(), 1024);
+        for key in [
+            "coll/3jui7kd54zh2y",
+            "coll/self",
+            "coll/example.com",
+            "com.example/rkey",
+            "coll/~1.2-3_",
+            "coll/dHJ1ZQ",
+            "coll/pre:fix",
+            "coll/_",
+            &long,
+        ] {
+            assert!(is_valid_key(key), "{key:?} should be valid");
+        }
+        let too_long = format!("{long}a");
+        for key in [
+            "",
+            "asdf",
+            "nested/collection/asdf",
+            "coll/",
+            "/rkey",
+            "coll/jalapeñoA",
+            "coll/coöperative",
+            "coll/abc💩",
+            "coll/key$",
+            "coll/key%",
+            "coll/key(",
+            "coll/key)",
+            "coll/key+",
+            "coll/key=",
+            "coll/@handle",
+            "coll/any space",
+            "coll/#extra",
+            "coll/any+space",
+            "coll/number[3]",
+            "coll/number(3)",
+            "coll/dHJ1ZQ==",
+            "coll/\"quote\"",
+            &too_long,
+        ] {
+            assert!(!is_valid_key(key), "{key:?} should be invalid");
+        }
+    }
+
+    /// Inserting an invalid key fails and changes nothing, as in the
+    /// reference implementation.
+    #[test]
+    fn insert_rejects_invalid_keys() {
+        let mut tree = DetachedTree::new();
+        tree.insert(&NoBlocks, "coll/a".into(), test_value_cid())
+            .unwrap();
+        let before = tree.flush().unwrap().root;
+        for key in ["", "a", "coll/", "coll/a b", "coll/a/b", "coll/é"] {
+            assert!(
+                matches!(
+                    tree.insert(&NoBlocks, key.into(), test_value_cid()),
+                    Err(MstError::InvalidKey(k)) if k == key
+                ),
+                "{key:?}"
+            );
+        }
+        assert_eq!(tree.flush().unwrap().root, before);
+
+        let mut tree = Tree::new(Box::new(MemBlockStore::new()));
+        assert!(matches!(
+            tree.insert("a".into(), test_value_cid()),
+            Err(MstError::InvalidKey(_))
+        ));
+        assert!(tree.entries().unwrap().is_empty());
+    }
+
+    /// A node holding a key the reference implementation would reject does
+    /// not load, on any path that reads it.
+    #[test]
+    fn nodes_with_invalid_keys_are_rejected() {
+        for bad in ["a", "coll/a b", "coll/a/b", "coll/é"] {
+            let mut blocks = std::collections::HashMap::new();
+            let root = put_node(&mut blocks, None, &[(bad, None)]);
+            for (op, result) in every_op(root, &blocks, "coll/z") {
+                assert!(
+                    matches!(&result, Err(MstError::InvalidNode(e)) if e.contains("invalid MST key")),
+                    "{bad:?} {op}: {result:?}"
+                );
+            }
+        }
     }
 
     /// Regression test: a tree that links one block from two places was
@@ -3837,15 +3952,15 @@ mod tests {
             let bad_cid = Cid::compute(Codec::Drisl, &bad);
             let root = encode_node_data(&NodeData {
                 left: Some(bad_cid),
-                entries: vec![entry(0, b"m")],
+                entries: vec![entry(0, b"m/m")],
             })
             .unwrap();
             let root_cid = Cid::compute(Codec::Drisl, &root);
             let store: std::collections::HashMap<Cid, Vec<u8>> =
                 [(bad_cid, bad.clone()), (root_cid, root)].into();
-            // Only the root is loaded: "n" sorts after its one entry.
+            // Only the root is loaded: "n/n" sorts after its one entry.
             let mut partial = DetachedTree::load(root_cid);
-            assert_eq!(partial.get(&store, "n").unwrap(), None);
+            assert_eq!(partial.get(&store, "n/n").unwrap(), None);
 
             for (tree, top) in [(partial, root_cid), (DetachedTree::load(bad_cid), bad_cid)] {
                 for key in ["a/a", "a/b", "a/bb", "a/z"] {

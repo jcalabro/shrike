@@ -88,15 +88,15 @@ mod tests {
         let cid_a = Cid::compute(Codec::Raw, b"a");
         let cid_b = Cid::compute(Codec::Raw, b"b");
         let cid_c = Cid::compute(Codec::Raw, b"c");
-        t1.insert("a".to_string(), cid_a).unwrap();
-        t1.insert("b".to_string(), cid_b).unwrap();
-        t2.insert("a".to_string(), cid_a).unwrap();
-        t2.insert("c".to_string(), cid_c).unwrap();
+        t1.insert("col/a".to_string(), cid_a).unwrap();
+        t1.insert("col/b".to_string(), cid_b).unwrap();
+        t2.insert("col/a".to_string(), cid_a).unwrap();
+        t2.insert("col/c".to_string(), cid_c).unwrap();
         let d = diff(&mut t1, &mut t2).unwrap();
         assert_eq!(d.removed.len(), 1);
-        assert_eq!(d.removed[0].0, "b");
+        assert_eq!(d.removed[0].0, "col/b");
         assert_eq!(d.added.len(), 1);
-        assert_eq!(d.added[0].0, "c");
+        assert_eq!(d.added[0].0, "col/c");
     }
 
     #[test]
@@ -107,19 +107,19 @@ mod tests {
         let mut t2 = Tree::new(Box::new(store2));
         let cid_v1 = Cid::compute(Codec::Drisl, b"v1");
         let cid_v2 = Cid::compute(Codec::Drisl, b"v2");
-        t1.insert("a".to_string(), cid_v1).unwrap();
-        t1.insert("b".to_string(), cid_v1).unwrap();
-        t1.insert("c".to_string(), cid_v1).unwrap();
-        t2.insert("a".to_string(), cid_v1).unwrap(); // unchanged
-        t2.insert("b".to_string(), cid_v2).unwrap(); // updated
-        t2.insert("d".to_string(), cid_v1).unwrap(); // created
+        t1.insert("col/a".to_string(), cid_v1).unwrap();
+        t1.insert("col/b".to_string(), cid_v1).unwrap();
+        t1.insert("col/c".to_string(), cid_v1).unwrap();
+        t2.insert("col/a".to_string(), cid_v1).unwrap(); // unchanged
+        t2.insert("col/b".to_string(), cid_v2).unwrap(); // updated
+        t2.insert("col/d".to_string(), cid_v1).unwrap(); // created
         let d = diff(&mut t1, &mut t2).unwrap();
         assert_eq!(d.updated.len(), 1);
-        assert_eq!(d.updated[0].0, "b");
+        assert_eq!(d.updated[0].0, "col/b");
         assert_eq!(d.removed.len(), 1);
-        assert_eq!(d.removed[0].0, "c");
+        assert_eq!(d.removed[0].0, "col/c");
         assert_eq!(d.added.len(), 1);
-        assert_eq!(d.added[0].0, "d");
+        assert_eq!(d.added[0].0, "col/d");
     }
 
     #[test]
@@ -129,8 +129,8 @@ mod tests {
         let mut t1 = Tree::new(Box::new(store1));
         let mut t2 = Tree::new(Box::new(store2));
         let val = Cid::compute(Codec::Raw, b"v");
-        t1.insert("a".to_string(), val).unwrap();
-        t2.insert("a".to_string(), val).unwrap();
+        t1.insert("col/a".to_string(), val).unwrap();
+        t2.insert("col/a".to_string(), val).unwrap();
         let d = diff(&mut t1, &mut t2).unwrap();
         assert!(d.added.is_empty());
         assert!(d.updated.is_empty());

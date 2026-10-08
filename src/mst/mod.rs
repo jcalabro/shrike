@@ -29,7 +29,7 @@ pub mod tree;
 pub use block_store::{BlockSource, BlockStore, MemBlockStore, NoBlocks};
 pub use diff::{Diff, diff};
 pub use height::height_for_key;
-pub use tree::{DetachedTree, Tree, TreeWrite};
+pub use tree::{DetachedTree, Tree, TreeWrite, is_valid_key};
 
 use thiserror::Error;
 
@@ -42,6 +42,9 @@ pub enum MstError {
     /// A node's structure or data is malformed.
     #[error("invalid node: {0}")]
     InvalidNode(String),
+    /// A key to insert is not a valid MST key (see [`is_valid_key`]).
+    #[error("invalid MST key: {0:?}")]
+    InvalidKey(String),
     /// Failed to encode or decode CBOR data for a node.
     #[error("CBOR error: {0}")]
     Cbor(String),
