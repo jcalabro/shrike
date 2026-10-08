@@ -89,6 +89,8 @@ pub enum RepoError {
     Storage(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("MST error: {0}")]
     Mst(crate::mst::MstError),
+    #[error("MST key {0:?} is not a record path")]
+    InvalidPath(String),
     #[error("CBOR error: {0}")]
     Cbor(#[from] crate::cbor::CborError),
     #[error("crypto error: {0}")]

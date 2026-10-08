@@ -542,20 +542,27 @@ impl<S: RepoStore> Repo<S> {
         // Pre-compute prefix length: "{collection}/" — avoids format! + String alloc
         let prefix_len = col_str.len() + 1; // +1 for '/'
         let mut results = Vec::new();
+        let mut invalid = None;
 
         let src = StoreSource(&self.store);
-        self.tree.walk(&src, |key, cid| {
-            // Fast prefix check: verify length, then collection match, then '/' separator
-            if key.len() > prefix_len
-                && key.as_bytes()[col_str.len()] == b'/'
-                && key.as_bytes()[..col_str.len()] == *col_str.as_bytes()
-            {
-                let rkey = RecordKey::try_from(&key[prefix_len..])
-                    .map_err(|e| MstError::Internal(format!("invalid record key in MST: {e}")))?;
-                results.push((rkey, cid));
-            }
-            Ok(())
-        })?;
+        self.tree
+            .walk(&src, |key, cid| {
+                // Fast prefix check: verify length, then collection match, then '/' separator
+                if key.len() > prefix_len
+                    && key.as_bytes()[col_str.len()] == b'/'
+                    && key.as_bytes()[..col_str.len()] == *col_str.as_bytes()
+                {
+                    // A valid MST key can still be an invalid record key,
+                    // such as "..", in a repository built elsewhere.
+                    let Ok(rkey) = RecordKey::try_from(&key[prefix_len..]) else {
+                        invalid = Some(RepoError::InvalidPath(key.to_owned()));
+                        return Err(MstError::InvalidNode(key.to_owned()));
+                    };
+                    results.push((rkey, cid));
+                }
+                Ok(())
+            })
+            .map_err(|e| invalid.take().unwrap_or_else(|| e.into()))?;
 
         Ok(results)
     }
@@ -1055,6 +1062,59 @@ mod tests {
                 Repo::load_car(&car),
                 Err(RepoError::Mst(MstError::InvalidNode(_)))
             ));
+        }
+    }
+
+    /// Regression test: a record key that is a valid MST key but not a
+    /// valid record key, such as "..", in a repository built elsewhere
+    /// made `list` fail with an internal error. It is invalid data.
+    #[test]
+    fn list_rejects_invalid_record_keys() {
+        let value = Cid::compute(Codec::Drisl, b"\xa0");
+        let long = "a".repeat(513);
+        for bad in ["..", ".", long.as_str()] {
+            let bad_key = format!("{}/{bad}", col().as_str());
+            let mut tree = DetachedTree::new();
+            for key in [
+                bad_key.clone(),
+                format!("{}/ok", col().as_str()),
+                "com.example.other/ok".into(),
+            ] {
+                tree.insert(&crate::mst::NoBlocks, key, value).unwrap();
+            }
+            let write = tree.flush().unwrap();
+            let commit = Commit::create_signed(
+                did(),
+                TidClock::new(0).unwrap().next(),
+                write.root,
+                &P256SigningKey::generate(),
+            )
+            .unwrap();
+            let mut blocks = vec![
+                Block {
+                    cid: commit.cid,
+                    data: commit.bytes,
+                },
+                Block {
+                    cid: value,
+                    data: b"\xa0".to_vec(),
+                },
+            ];
+            blocks.extend(
+                write
+                    .new_blocks
+                    .into_iter()
+                    .map(|(cid, data)| Block { cid, data }),
+            );
+            let car = crate::car::write_all(&[commit.cid], &blocks).unwrap();
+
+            let mut repo = Repo::load_car(&car).unwrap();
+            assert!(
+                matches!(repo.list(&col()), Err(RepoError::InvalidPath(k)) if k == bad_key),
+                "{bad:?}"
+            );
+            let other = Nsid::try_from("com.example.other").unwrap();
+            assert_eq!(repo.list(&other).unwrap().len(), 1);
         }
     }
 
