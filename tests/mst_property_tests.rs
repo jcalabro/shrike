@@ -288,36 +288,46 @@ proptest! {
     }
 
     #[test]
-    fn diff_is_symmetric(
-        keys_a in gen_unique_keys(30),
-        keys_b in gen_unique_keys(30),
+    fn diff_matches_model(
+        a in prop::collection::btree_map("[a-z]{1,3}/[a-z0-9]{1,4}", 0u8..3, 0..40),
+        b in prop::collection::btree_map("[a-z]{1,3}/[a-z0-9]{1,4}", 0u8..3, 0..40),
+        shared in prop::collection::btree_map("[a-z]{1,3}/[a-z0-9]{1,4}", (0u8..3, 0u8..3), 0..40),
     ) {
-        let store_a = MemBlockStore::new();
-        let mut tree_a = Tree::new(Box::new(store_a));
-        for key in &keys_a {
-            let val = Cid::compute(Codec::Drisl, key.as_bytes());
-            tree_a.insert(key.clone(), val).unwrap();
+        // Two trees with keys of their own and keys in common, some with
+        // the same value and some not. The diff must report exactly what a
+        // comparison of the two maps does, both ways round.
+        let mut left: BTreeMap<String, Cid> = a.iter().map(|(k, &v)| (k.clone(), op_value(v))).collect();
+        let mut right: BTreeMap<String, Cid> = b.iter().map(|(k, &v)| (k.clone(), op_value(v))).collect();
+        for (k, &(l, r)) in &shared {
+            left.insert(k.clone(), op_value(l));
+            right.insert(k.clone(), op_value(r));
         }
-        tree_a.root_cid().unwrap();
+        let tree = |m: &BTreeMap<String, Cid>| {
+            let mut t = Tree::new(Box::new(MemBlockStore::new()));
+            for (k, v) in m {
+                t.insert(k.clone(), *v).unwrap();
+            }
+            t.root_cid().unwrap();
+            t
+        };
+        let (mut tree_l, mut tree_r) = (tree(&left), tree(&right));
 
-        let store_b = MemBlockStore::new();
-        let mut tree_b = Tree::new(Box::new(store_b));
-        for key in &keys_b {
-            let val = Cid::compute(Codec::Drisl, key.as_bytes());
-            tree_b.insert(key.clone(), val).unwrap();
+        let only = |x: &BTreeMap<String, Cid>, y: &BTreeMap<String, Cid>| -> Vec<(String, Cid)> {
+            x.iter().filter(|(k, _)| !y.contains_key(*k)).map(|(k, v)| (k.clone(), *v)).collect()
+        };
+        let changed = |x: &BTreeMap<String, Cid>, y: &BTreeMap<String, Cid>| -> Vec<(String, Cid, Cid)> {
+            x.iter()
+                .filter_map(|(k, v)| y.get(k).filter(|w| *w != v).map(|w| (k.clone(), *v, *w)))
+                .collect()
+        };
+        for (d, (x, y)) in [
+            (diff(&mut tree_l, &mut tree_r).unwrap(), (&left, &right)),
+            (diff(&mut tree_r, &mut tree_l).unwrap(), (&right, &left)),
+        ] {
+            prop_assert_eq!(d.added, only(y, x));
+            prop_assert_eq!(d.removed, only(x, y));
+            prop_assert_eq!(d.updated, changed(x, y));
         }
-        tree_b.root_cid().unwrap();
-
-        let d_ab = diff(&mut tree_a, &mut tree_b).unwrap();
-        let d_ba = diff(&mut tree_b, &mut tree_a).unwrap();
-
-        // added in A→B should be removed in B→A and vice versa
-        prop_assert_eq!(d_ab.added.len(), d_ba.removed.len(),
-            "added(A→B) count must equal removed(B→A) count");
-        prop_assert_eq!(d_ab.removed.len(), d_ba.added.len(),
-            "removed(A→B) count must equal added(B→A) count");
-        prop_assert_eq!(d_ab.updated.len(), d_ba.updated.len(),
-            "updated count must be same both ways");
     }
 
     #[test]
@@ -432,4 +442,154 @@ proptest! {
         }
         prop_assert_eq!(invert(write.root, &done, &blocks).unwrap(), canonical_write(&base).root);
     }
+}
+
+#[path = "support/mst_hostile.rs"]
+mod mst_hostile;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+    #[test]
+    fn trees_from_elsewhere_behave(
+        seed in any::<u64>(),
+        keys in any::<u8>(),
+        shape in any::<u8>(),
+        hide in any::<u64>(),
+        ops in prop::collection::vec((any::<u8>(), any::<u8>(), any::<bool>()), 1..16),
+    ) {
+        // See `support/mst_hostile.rs` for what this checks.
+        let case = mst_hostile::Case { seed, keys, shape, hide, ops };
+        if let Err(e) = mst_hostile::run(&case) {
+            return Err(TestCaseError::fail(e));
+        }
+    }
+}
+
+/// A port of the reference implementation's `mst.test.ts` "Merkle Search
+/// Tree" suite: 1000 records added in random order, then 100 edited, 100
+/// deleted, the tree rebuilt in another order, saved and reloaded, and
+/// diffed against a copy with 100 records added, edited, and deleted each.
+#[test]
+fn reference_bulk_scenario() {
+    let mut rng = 0x5eedu64;
+    let mut next = move || {
+        rng = rng
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        rng >> 11
+    };
+    let shuffle = |v: &mut Vec<(String, Cid)>, next: &mut dyn FnMut() -> u64| {
+        for i in (1..v.len()).rev() {
+            v.swap(i, (next() % (i as u64 + 1)) as usize);
+        }
+    };
+    let fresh = |n: usize, next: &mut dyn FnMut() -> u64| -> Vec<(String, Cid)> {
+        (0..n)
+            .map(|_| {
+                let r = next();
+                (
+                    format!("com.example.record/{r:013x}"),
+                    Cid::compute(Codec::Drisl, &r.to_be_bytes()),
+                )
+            })
+            .collect()
+    };
+    let mapping = fresh(1000, &mut next);
+    let mut shuffled = mapping.clone();
+    shuffle(&mut shuffled, &mut next);
+
+    // adds records
+    let mut mst = DetachedTree::new();
+    for (k, v) in &shuffled {
+        mst.insert(&NoBlocks, k.clone(), *v).unwrap();
+    }
+    for (k, v) in &shuffled {
+        assert_eq!(mst.get(&NoBlocks, k).unwrap(), Some(*v));
+    }
+    assert_eq!(mst.entries(&NoBlocks).unwrap().len(), 1000);
+    let base = mst.flush().unwrap();
+    let mut store: HashMap<Cid, Vec<u8>> = base.new_blocks.iter().cloned().collect();
+
+    // edits records
+    let mut edited = DetachedTree::load(base.root);
+    let edits: Vec<(String, Cid)> = shuffled[..100]
+        .iter()
+        .map(|(k, _)| (k.clone(), Cid::compute(Codec::Drisl, &next().to_be_bytes())))
+        .collect();
+    for (k, v) in &edits {
+        edited.insert(&store, k.clone(), *v).unwrap();
+    }
+    for (k, v) in &edits {
+        assert_eq!(edited.get(&store, k).unwrap(), Some(*v));
+    }
+    assert_eq!(edited.entries(&store).unwrap().len(), 1000);
+
+    // deletes records
+    let mut deleted = DetachedTree::load(base.root);
+    for (k, v) in &shuffled[..100] {
+        assert_eq!(deleted.remove(&store, k).unwrap(), Some(*v));
+    }
+    assert_eq!(deleted.entries(&store).unwrap().len(), 900);
+    for (k, _) in &shuffled[..100] {
+        assert_eq!(deleted.get(&store, k).unwrap(), None);
+    }
+    for (k, v) in &shuffled[100..] {
+        assert_eq!(deleted.get(&store, k).unwrap(), Some(*v));
+    }
+
+    // is order independent: the same root and the same nodes
+    let mut reshuffled = mapping.clone();
+    shuffle(&mut reshuffled, &mut next);
+    let mut recreated = DetachedTree::new();
+    for (k, v) in &reshuffled {
+        recreated.insert(&NoBlocks, k.clone(), *v).unwrap();
+    }
+    let rebuilt = recreated.flush().unwrap();
+    assert_eq!(rebuilt.root, base.root);
+    let nodes = |w: &TreeWrite| w.new_blocks.iter().map(|(c, _)| *c).collect::<HashSet<_>>();
+    assert_eq!(nodes(&rebuilt), nodes(&base));
+
+    // saves and loads from blockstore
+    let mut sorted = mapping.clone();
+    sorted.sort();
+    assert_eq!(
+        DetachedTree::load(base.root).entries(&store).unwrap(),
+        sorted
+    );
+
+    // diffs
+    let mut to_diff = DetachedTree::load(base.root);
+    let adds = fresh(100, &mut next);
+    for (k, v) in &adds {
+        assert_eq!(to_diff.insert(&store, k.clone(), *v).unwrap(), None);
+    }
+    let mut updates = Vec::new();
+    for (k, prev) in &shuffled[500..600] {
+        let v = Cid::compute(Codec::Drisl, &next().to_be_bytes());
+        to_diff.insert(&store, k.clone(), v).unwrap();
+        updates.push((k.clone(), *prev, v));
+    }
+    let dels = shuffled[400..500].to_vec();
+    for (k, _) in &dels {
+        to_diff.remove(&store, k).unwrap();
+    }
+    let changed = to_diff.flush().unwrap();
+    store.extend(changed.new_blocks);
+    let tree_of = |root: Cid| {
+        let mem = MemBlockStore::new();
+        for (cid, data) in &store {
+            shrike::mst::BlockStore::put_block(&mem, *cid, data.clone()).unwrap();
+        }
+        Tree::load(Box::new(mem), root)
+    };
+    let d = diff(&mut tree_of(base.root), &mut tree_of(changed.root)).unwrap();
+    let sorted = |mut v: Vec<(String, Cid)>| {
+        v.sort();
+        v
+    };
+    updates.sort();
+    assert_eq!(d.added, sorted(adds));
+    assert_eq!(d.updated, updates);
+    assert_eq!(d.removed, sorted(dels));
 }

@@ -5,28 +5,49 @@
 //!      the same logical key/value set must produce the same content address);
 //!   3. the node blocks a flush writes load back to the same entries.
 //! Structured input (a list of keys) drives real tree shapes: splits, merges,
-//! shared prefixes, varying heights.
+//! shared prefixes, varying heights. Each input string is used as a key if it
+//! is a valid MST key, and otherwise (after checking the tree refuses it)
+//! turned into one by keeping its allowed characters as a record key.
 
 use libfuzzer_sys::fuzz_target;
 use shrike::Cid;
 use shrike::cbor::Codec;
-use shrike::mst::{DetachedTree, MemBlockStore, NoBlocks, Tree};
+use shrike::mst::{DetachedTree, MemBlockStore, MstError, NoBlocks, Tree, is_valid_key};
 
 fn val_for(key: &str) -> Cid {
     Cid::compute(Codec::Drisl, key.as_bytes())
 }
 
-fuzz_target!(|keys: Vec<String>| {
+fuzz_target!(|input: Vec<String>| {
     // Insert in given order, recording which keys were accepted.
     let mut tree = Tree::new(Box::new(MemBlockStore::new()));
+    let mut keys = Vec::new();
+    for k in input {
+        if is_valid_key(&k) {
+            keys.push(k);
+            continue;
+        }
+        assert!(
+            matches!(tree.insert(k.clone(), val_for(&k)), Err(MstError::InvalidKey(_))),
+            "invalid key {k:?} accepted"
+        );
+        let rkey: String = k
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || "_~-:.".contains(*c))
+            .take(1000)
+            .collect();
+        if !rkey.is_empty() {
+            keys.push(format!("com.example/{rkey}"));
+        }
+    }
     let mut accepted: Vec<String> = Vec::new();
     for k in &keys {
-        if tree.insert(k.clone(), val_for(k)).is_ok() {
-            // Deduplicate: a re-insert overwrites, which is fine, but we only
-            // want one copy in `accepted` for the order-independence check.
-            if !accepted.iter().any(|a| a == k) {
-                accepted.push(k.clone());
-            }
+        tree.insert(k.clone(), val_for(k))
+            .expect("insert of a valid key must succeed");
+        // Deduplicate: a re-insert overwrites, which is fine, but we only
+        // want one copy in `accepted` for the order-independence check.
+        if !accepted.iter().any(|a| a == k) {
+            accepted.push(k.clone());
         }
     }
 
